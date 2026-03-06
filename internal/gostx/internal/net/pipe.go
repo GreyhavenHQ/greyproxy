@@ -43,7 +43,11 @@ func Pipe(ctx context.Context, rw1, rw2 io.ReadWriteCloser) error {
 	select {
 	case <-done:
 	case <-ctx.Done():
-		return nil
+		// Close both sides to unblock the pipeBuffer goroutines.
+		rw1.Close()
+		rw2.Close()
+		<-done
+		return ctx.Err()
 	}
 
 	select {

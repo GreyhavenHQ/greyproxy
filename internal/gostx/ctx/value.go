@@ -90,3 +90,30 @@ func ClientIDFromContext(ctx context.Context) ClientID {
 	v, _ := ctx.Value(clientIDKey{}).(ClientID)
 	return v
 }
+
+// ConnCanceller allows registering connection cancel functions by rule ID.
+// Implemented by greyproxy.ConnTracker.
+type ConnCanceller interface {
+	Register(ruleID int64, cancel context.CancelFunc) uint64
+	Unregister(ruleID int64, id uint64)
+}
+
+// BypassResult is a mutable container placed in the context before calling
+// bypass.Contains. The bypass plugin fills in the RuleID and Tracker when
+// a connection is allowed by a rule, so the handler can register the
+// connection for cancellation if the rule is later deleted.
+type BypassResult struct {
+	RuleID  int64
+	Tracker ConnCanceller
+}
+
+type bypassResultKey struct{}
+
+func ContextWithBypassResult(ctx context.Context, result *BypassResult) context.Context {
+	return context.WithValue(ctx, bypassResultKey{}, result)
+}
+
+func BypassResultFromContext(ctx context.Context) *BypassResult {
+	v, _ := ctx.Value(bypassResultKey{}).(*BypassResult)
+	return v
+}

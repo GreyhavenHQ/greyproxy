@@ -297,17 +297,32 @@ func (h *httpHandler) handleRequest(ctx context.Context, conn net.Conn, req *htt
 
 	ctx = xctx.ContextWithClientID(ctx, xctx.ClientID(clientID))
 
-	if h.options.Bypass != nil &&
-		h.options.Bypass.Contains(ctx, network, addr, bypass.WithService(h.options.Service)) {
-		resp.StatusCode = http.StatusForbidden
+	var bypassResult *xctx.BypassResult
+	if h.options.Bypass != nil {
+		bypassResult = &xctx.BypassResult{}
+		checkCtx := xctx.ContextWithBypassResult(ctx, bypassResult)
+		if h.options.Bypass.Contains(checkCtx, network, addr, bypass.WithService(h.options.Service)) {
+			resp.StatusCode = http.StatusForbidden
 
-		if log.IsLevelEnabled(logger.TraceLevel) {
-			dump, _ := httputil.DumpResponse(resp, false)
-			log.Trace(string(dump))
+			if log.IsLevelEnabled(logger.TraceLevel) {
+				dump, _ := httputil.DumpResponse(resp, false)
+				log.Trace(string(dump))
+			}
+			log.Debug("bypass: ", addr)
+			resp.Write(conn)
+			return xbypass.ErrBypass
 		}
-		log.Debug("bypass: ", addr)
-		resp.Write(conn)
-		return xbypass.ErrBypass
+
+		// Register this connection for cancellation if the rule is later deleted.
+		if bypassResult.RuleID != 0 && bypassResult.Tracker != nil {
+			var pipeCancel context.CancelFunc
+			ctx, pipeCancel = context.WithCancel(ctx)
+			connID := bypassResult.Tracker.Register(bypassResult.RuleID, pipeCancel)
+			defer func() {
+				bypassResult.Tracker.Unregister(bypassResult.RuleID, connID)
+				pipeCancel()
+			}()
+		}
 	}
 
 	if network == "udp" {

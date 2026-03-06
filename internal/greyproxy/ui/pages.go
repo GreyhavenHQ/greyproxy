@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"log/slog"
+
 	"github.com/gin-gonic/gin"
 	greyproxy "github.com/greyhavenhq/greyproxy/internal/greyproxy"
 )
@@ -261,7 +263,7 @@ func RegisterPageRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 }
 
 // RegisterHTMXRoutes registers the HTMX partial routes.
-func RegisterHTMXRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.EventBus, waiters *greyproxy.WaiterTracker) {
+func RegisterHTMXRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.EventBus, waiters *greyproxy.WaiterTracker, connTracker *greyproxy.ConnTracker) {
 	prefix := strings.TrimRight(r.BasePath(), "/")
 	htmx := r.Group("/htmx")
 
@@ -486,13 +488,21 @@ func RegisterHTMXRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 			input.Notes = &notes
 		}
 
-		greyproxy.UpdateRule(db, id, input)
+		rule, _ := greyproxy.UpdateRule(db, id, input)
+		if rule != nil && rule.Action == "deny" && connTracker != nil {
+			connTracker.CancelByRule(id)
+		}
 		renderRulesList(c, db, prefix)
 	})
 
 	htmx.DELETE("/rules/:id", func(c *gin.Context) {
 		id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
-		greyproxy.DeleteRule(db, id)
+		slog.Info("htmx: deleting rule", "rule_id", id)
+		deleted, _ := greyproxy.DeleteRule(db, id)
+		slog.Info("htmx: rule deleted, cancelling connections", "rule_id", id, "deleted", deleted)
+		if deleted && connTracker != nil {
+			connTracker.CancelByRule(id)
+		}
 		c.Status(http.StatusOK)
 	})
 

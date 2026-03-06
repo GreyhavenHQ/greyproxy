@@ -1,6 +1,7 @@
 package api
 
 import (
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -81,6 +82,11 @@ func RulesUpdateHandler(s *Shared) gin.HandlerFunc {
 			return
 		}
 
+		// If the rule was changed to deny, cancel connections that relied on it.
+		if rule.Action == "deny" && s.ConnTracker != nil {
+			s.ConnTracker.CancelByRule(id)
+		}
+
 		c.JSON(http.StatusOK, rule.ToJSON())
 	}
 }
@@ -111,10 +117,17 @@ func RulesDeleteHandler(s *Shared) gin.HandlerFunc {
 			return
 		}
 
+		slog.Info("api: deleting rule", "rule_id", id)
+
 		deleted, err := greyproxy.DeleteRule(s.DB, id)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
+		}
+
+		slog.Info("api: rule deleted, cancelling connections", "rule_id", id, "deleted", deleted)
+		if deleted && s.ConnTracker != nil {
+			s.ConnTracker.CancelByRule(id)
 		}
 
 		c.JSON(http.StatusOK, gin.H{"status": "ok", "deleted": deleted})

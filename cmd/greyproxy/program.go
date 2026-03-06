@@ -262,6 +262,7 @@ func (p *program) buildGreyproxyService() error {
 	shared.Cache = tmpSvc.Cache
 	shared.Bus = tmpSvc.Bus
 	shared.Waiters = tmpSvc.Waiters
+	shared.ConnTracker = greyproxy.NewConnTracker()
 	shared.Version = version
 
 	// Collect listening ports for the health endpoint
@@ -288,7 +289,7 @@ func (p *program) buildGreyproxyService() error {
 	// Create and register gost plugins
 	autherPlugin := greyproxy_plugins.NewAuther()
 	admissionPlugin := greyproxy_plugins.NewAdmission()
-	bypassPlugin := greyproxy_plugins.NewBypass(shared.DB, shared.Cache, shared.Bus, shared.Waiters)
+	bypassPlugin := greyproxy_plugins.NewBypass(shared.DB, shared.Cache, shared.Bus, shared.Waiters, shared.ConnTracker)
 	resolverPlugin := greyproxy_plugins.NewResolver(shared.Cache)
 
 	registry.AutherRegistry().Register(gaCfg.Auther, autherPlugin)
@@ -302,7 +303,7 @@ func (p *program) buildGreyproxyService() error {
 	// Build HTTP router with REST API + HTMX UI + WebSocket
 	router, g := greyproxy_api.NewRouter(shared, gaCfg.PathPrefix)
 	greyproxy_ui.RegisterPageRoutes(g, shared.DB, shared.Bus)
-	greyproxy_ui.RegisterHTMXRoutes(g, shared.DB, shared.Bus, shared.Waiters)
+	greyproxy_ui.RegisterHTMXRoutes(g, shared.DB, shared.Bus, shared.Waiters, shared.ConnTracker)
 
 	// Create the actual service
 	svc := &greyproxy.Service{}

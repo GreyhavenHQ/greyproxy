@@ -20,19 +20,21 @@ import (
 // IMPORTANT: In gost's blacklist mode (IsWhitelist()=false),
 // Contains() returning true means BLOCK the connection.
 type Bypass struct {
-	db      *greyproxy.DB
-	cache   *greyproxy.DNSCache
-	bus     *greyproxy.EventBus
-	waiters *greyproxy.WaiterTracker
-	log     logger.Logger
+	db          *greyproxy.DB
+	cache       *greyproxy.DNSCache
+	bus         *greyproxy.EventBus
+	waiters     *greyproxy.WaiterTracker
+	connTracker *greyproxy.ConnTracker
+	log         logger.Logger
 }
 
-func NewBypass(db *greyproxy.DB, cache *greyproxy.DNSCache, bus *greyproxy.EventBus, waiters *greyproxy.WaiterTracker) *Bypass {
+func NewBypass(db *greyproxy.DB, cache *greyproxy.DNSCache, bus *greyproxy.EventBus, waiters *greyproxy.WaiterTracker, connTracker *greyproxy.ConnTracker) *Bypass {
 	return &Bypass{
-		db:      db,
-		cache:   cache,
-		bus:     bus,
-		waiters: waiters,
+		db:          db,
+		cache:       cache,
+		bus:         bus,
+		waiters:     waiters,
+		connTracker: connTracker,
 		log: logger.Default().WithFields(map[string]any{
 			"kind":   "bypass",
 			"bypass": "greyproxy",
@@ -92,6 +94,15 @@ func (b *Bypass) Contains(ctx context.Context, network, addr string, opts ...byp
 	}
 	// No rule = default deny (allowed stays false)
 
+	// Store the rule ID and conn tracker in the context's BypassResult
+	// so the handler can register the connection for cancellation.
+	if allowed && ruleID != nil {
+		if br := ctxvalue.BypassResultFromContext(ctx); br != nil {
+			br.RuleID = *ruleID
+			br.Tracker = b.connTracker
+		}
+	}
+
 	// If blocked by default (no matching rule), hold the connection and wait
 	// for the user to approve via the dashboard within the grace period.
 	if !allowed && !deniedByRule {
@@ -103,6 +114,10 @@ func (b *Bypass) Contains(ctx context.Context, network, addr string, opts ...byp
 		if rule := b.waitForApproval(ctx, containerName, host, port, resolvedHostname); rule != nil {
 			allowed = true
 			ruleID = &rule.ID
+			if br := ctxvalue.BypassResultFromContext(ctx); br != nil {
+				br.RuleID = rule.ID
+				br.Tracker = b.connTracker
+			}
 		}
 	}
 

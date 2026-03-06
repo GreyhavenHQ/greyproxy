@@ -56,7 +56,9 @@ func (h *socks5Handler) handleConnect(ctx context.Context, conn net.Conn, networ
 	}
 
 	if h.options.Bypass != nil {
-		bypassCtx, bypassCancel := context.WithCancel(ctx)
+		bypassResult := &xctx.BypassResult{}
+		resultCtx := xctx.ContextWithBypassResult(ctx, bypassResult)
+		bypassCtx, bypassCancel := context.WithCancel(resultCtx)
 
 		// Monitor the client TCP connection for close during the bypass check.
 		// During SOCKS5 CONNECT, the client waits for the server reply before
@@ -95,6 +97,17 @@ func (h *socks5Handler) handleConnect(ctx context.Context, conn net.Conn, networ
 			log.Trace(resp)
 			log.Debug("bypass: ", address)
 			return resp.Write(conn)
+		}
+
+		// Register this connection for cancellation if the rule is later deleted.
+		if bypassResult.RuleID != 0 && bypassResult.Tracker != nil {
+			var pipeCancel context.CancelFunc
+			ctx, pipeCancel = context.WithCancel(ctx)
+			connID := bypassResult.Tracker.Register(bypassResult.RuleID, pipeCancel)
+			defer func() {
+				bypassResult.Tracker.Unregister(bypassResult.RuleID, connID)
+				pipeCancel()
+			}()
 		}
 	}
 

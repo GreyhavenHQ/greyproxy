@@ -10,12 +10,13 @@ import (
 
 // Shared holds shared state passed to all handlers.
 type Shared struct {
-	DB      *greyproxy.DB
-	Cache   *greyproxy.DNSCache
-	Bus     *greyproxy.EventBus
-	Waiters *greyproxy.WaiterTracker
-	Version string
-	Ports   map[string]int
+	DB          *greyproxy.DB
+	Cache       *greyproxy.DNSCache
+	Bus         *greyproxy.EventBus
+	Waiters     *greyproxy.WaiterTracker
+	ConnTracker *greyproxy.ConnTracker
+	Version     string
+	Ports       map[string]int
 }
 
 // NewRouter creates the Gin router with all routes.
