@@ -179,9 +179,13 @@ var (
 	logsTableTmpl      = parseTemplate("logs_table.html", "partials/logs_table.html")
 )
 
+// cacheBuster is set once at startup for static asset cache busting.
+var cacheBuster = strconv.FormatInt(time.Now().Unix(), 36)
+
 type PageData struct {
 	CurrentPath string
 	Prefix      string // URL path prefix (e.g., "" for root, "/proxy" for sub-path)
+	CacheBuster string
 	Title       string
 	Containers  []string
 	Data        any
@@ -215,6 +219,7 @@ func RegisterPageRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 		dashboardTmpl.Execute(c.Writer, PageData{
 			CurrentPath: c.Request.URL.Path,
 			Prefix:      prefix,
+			CacheBuster: cacheBuster,
 			Title:       "Dashboard - Greyproxy",
 			Containers:  getContainers(db),
 		})
@@ -228,6 +233,7 @@ func RegisterPageRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 		pendingTmpl.Execute(c.Writer, PageData{
 			CurrentPath: c.Request.URL.Path,
 			Prefix:      prefix,
+			CacheBuster: cacheBuster,
 			Title:       "Pending Requests - Greyproxy",
 			Containers:  getContainers(db),
 		})
@@ -237,6 +243,7 @@ func RegisterPageRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 		rulesTmpl.Execute(c.Writer, PageData{
 			CurrentPath: c.Request.URL.Path,
 			Prefix:      prefix,
+			CacheBuster: cacheBuster,
 			Title:       "Rules - Greyproxy",
 			Containers:  getContainers(db),
 		})
@@ -246,6 +253,7 @@ func RegisterPageRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 		logsTmpl.Execute(c.Writer, PageData{
 			CurrentPath: c.Request.URL.Path,
 			Prefix:      prefix,
+			CacheBuster: cacheBuster,
 			Title:       "Logs - Greyproxy",
 			Containers:  getContainers(db),
 		})
@@ -253,7 +261,7 @@ func RegisterPageRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 }
 
 // RegisterHTMXRoutes registers the HTMX partial routes.
-func RegisterHTMXRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.EventBus) {
+func RegisterHTMXRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.EventBus, waiters *greyproxy.WaiterTracker) {
 	prefix := strings.TrimRight(r.BasePath(), "/")
 	htmx := r.Group("/htmx")
 
@@ -310,6 +318,8 @@ func RegisterHTMXRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 			return
 		}
 
+		enrichWaitingCounts(items, waiters)
+
 		hasFilters := container != "" || destination != ""
 
 		c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -339,7 +349,7 @@ func RegisterHTMXRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 		})
 
 		// Re-render pending list
-		renderPendingList(c, db, prefix)
+		renderPendingList(c, db, prefix, waiters)
 	})
 
 	// Deny pending via HTMX
@@ -359,7 +369,7 @@ func RegisterHTMXRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 			Data: map[string]any{"pending_id": id, "rule": rule.ToJSON()},
 		})
 
-		renderPendingList(c, db, prefix)
+		renderPendingList(c, db, prefix, waiters)
 	})
 
 	// Dismiss pending via HTMX
@@ -372,7 +382,7 @@ func RegisterHTMXRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 				Data: map[string]any{"pending_id": id},
 			})
 		}
-		renderPendingList(c, db, prefix)
+		renderPendingList(c, db, prefix, waiters)
 	})
 
 	// Bulk allow via HTMX
@@ -391,7 +401,7 @@ func RegisterHTMXRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 				})
 			}
 		}
-		renderPendingList(c, db, prefix)
+		renderPendingList(c, db, prefix, waiters)
 	})
 
 	// Bulk dismiss via HTMX
@@ -410,7 +420,7 @@ func RegisterHTMXRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 				})
 			}
 		}
-		renderPendingList(c, db, prefix)
+		renderPendingList(c, db, prefix, waiters)
 	})
 
 	// Rules HTMX
@@ -549,7 +559,16 @@ func RegisterHTMXRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 	})
 }
 
-func renderPendingList(c *gin.Context, db *greyproxy.DB, prefix string) {
+func enrichWaitingCounts(items []greyproxy.PendingRequest, waiters *greyproxy.WaiterTracker) {
+	if waiters == nil {
+		return
+	}
+	for i := range items {
+		items[i].WaitingCount = waiters.Get(items[i].ContainerName, items[i].DestinationHost, items[i].DestinationPort)
+	}
+}
+
+func renderPendingList(c *gin.Context, db *greyproxy.DB, prefix string, waiters *greyproxy.WaiterTracker) {
 	container := c.Query("container")
 	destination := c.Query("destination")
 
@@ -558,6 +577,8 @@ func renderPendingList(c *gin.Context, db *greyproxy.DB, prefix string) {
 		Destination: destination,
 		Limit:       100,
 	})
+
+	enrichWaitingCounts(items, waiters)
 
 	hasFilters := container != "" || destination != ""
 

@@ -1,7 +1,7 @@
 {{$items := .Items}}
 {{$total := .Total}}
 {{if $items}}
-<div class="bg-card rounded-lg shadow-sm border border-border overflow-hidden">
+<div class="bg-card rounded-lg shadow-sm border border-border">
     <div class="px-4 py-3 bg-secondary border-b border-border flex items-center">
         <input type="checkbox" id="select-all" class="h-4 w-4 text-primary focus:ring-ring border-border rounded">
         <label for="select-all" class="ml-2 text-sm font-medium text-secondary-foreground">Select all ({{$total}})</label>
@@ -28,9 +28,10 @@
                         </h3>
                     </div>
                     <p class="mt-1 text-sm text-muted-foreground">
-                        {{.AttemptCount}} attempt{{if ne .AttemptCount 1}}s{{end}} ·
-                        First: {{formatTime .FirstSeen}} ·
-                        Last: {{formatTime .LastSeen}}
+                        {{.AttemptCount}} attempt{{if ne .AttemptCount 1}}s{{end}}
+                        {{if gt .WaitingCount 0}}· <span class="text-primary font-medium">{{.WaitingCount}} waiting</span>{{end}}
+                        · First: {{formatTime .FirstSeen}}
+                        · Last: {{formatTime .LastSeen}}
                     </p>
 
                     <!-- Expanded options -->
@@ -89,22 +90,49 @@
                 </div>
 
                 <div class="flex flex-shrink-0 items-center flex-col space-y-2 sm:flex-row sm:space-y-0 sm:space-x-3">
-                    <button hx-post="{{$.Prefix}}/htmx/pending/{{.ID}}/allow" hx-vals='{"scope": "exact", "duration": "permanent"}'
-                        hx-target="#pending-list" hx-swap="innerHTML"
-                        class="inline-flex items-center gap-1.5 px-3 py-1.5 border border-transparent text-xs font-medium rounded text-primary-foreground bg-primary hover:bg-primary/90">
-                        ✓ Allow
-                    </button>
+                    <!-- Split Allow button -->
+                    <div class="relative inline-flex items-stretch" id="allow-split-{{.ID}}">
+                        <button hx-post="{{$.Prefix}}/htmx/pending/{{.ID}}/allow" hx-vals='{"scope": "exact", "duration": "permanent"}'
+                            hx-target="#pending-list" hx-swap="innerHTML"
+                            class="btn-split-part inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-l text-primary-foreground bg-primary hover:bg-primary/90">
+                            ✓ Allow
+                        </button>
+                        <button type="button" onclick="toggleAllowMenu('{{.ID}}')"
+                            class="btn-split-part inline-flex items-center px-1.5 text-xs font-medium rounded-r text-primary-foreground bg-primary hover:bg-primary/80 border-l border-primary-foreground/30">
+                            <svg class="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                            </svg>
+                        </button>
+                        <!-- Dropdown menu -->
+                        <div id="allow-menu-{{.ID}}" class="hidden absolute right-0 top-full mt-1 w-40 bg-card rounded-md shadow-lg border border-border z-50">
+                            <div class="py-1">
+                                <button hx-post="{{$.Prefix}}/htmx/pending/{{.ID}}/allow" hx-vals='{"scope": "exact", "duration": "once"}'
+                                    hx-target="#pending-list" hx-swap="innerHTML"
+                                    class="btn-menu-item w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-muted transition-colors">
+                                    Allow this time
+                                </button>
+                                <button hx-post="{{$.Prefix}}/htmx/pending/{{.ID}}/allow" hx-vals='{"scope": "exact", "duration": "1h"}'
+                                    hx-target="#pending-list" hx-swap="innerHTML"
+                                    class="btn-menu-item w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-muted transition-colors">
+                                    Allow for 1h
+                                </button>
+                                <button hx-post="{{$.Prefix}}/htmx/pending/{{.ID}}/allow" hx-vals='{"scope": "exact", "duration": "12h"}'
+                                    hx-target="#pending-list" hx-swap="innerHTML"
+                                    class="btn-menu-item w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-muted transition-colors">
+                                    Allow for 12h
+                                </button>
+                                <div class="border-t border-border my-1"></div>
+                                <button type="button" onclick="toggleAllowMenu('{{.ID}}'); toggleExpanded('{{.ID}}')"
+                                    class="btn-menu-item w-full text-left px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition-colors">
+                                    More...
+                                </button>
+                            </div>
+                        </div>
+                    </div>
                     <button hx-post="{{$.Prefix}}/htmx/pending/{{.ID}}/deny" hx-vals='{"scope": "exact", "duration": "permanent"}'
                         hx-target="#pending-list" hx-swap="innerHTML"
                         class="inline-flex items-center gap-1.5 px-3 py-1.5 border border-border text-xs font-medium rounded text-foreground bg-transparent hover:bg-muted">
                         ✗ Deny
-                    </button>
-                    <button onclick="toggleExpanded('{{.ID}}')"
-                        class="btn-plain inline-flex items-center gap-1 px-1 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors">
-                        <span id="more-text-{{.ID}}">More</span>
-                        <svg id="chevron-{{.ID}}" class="h-3.5 w-3.5 transition-transform duration-200" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-                        </svg>
                     </button>
                     <button hx-delete="{{$.Prefix}}/htmx/pending/{{.ID}}" hx-target="#pending-list" hx-swap="innerHTML"
                         class="btn-plain inline-flex items-center px-1 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors">
@@ -120,18 +148,30 @@
 <script>
     function toggleExpanded(itemId) {
         var expanded = document.getElementById('expanded-' + itemId);
-        var moreText = document.getElementById('more-text-' + itemId);
-        var chevron = document.getElementById('chevron-' + itemId);
         if (expanded.classList.contains('hidden')) {
             expanded.classList.remove('hidden');
-            moreText.textContent = 'Less';
-            if (chevron) chevron.style.transform = 'rotate(180deg)';
         } else {
             expanded.classList.add('hidden');
-            moreText.textContent = 'More';
-            if (chevron) chevron.style.transform = 'rotate(0deg)';
         }
     }
+
+    function toggleAllowMenu(itemId) {
+        var menu = document.getElementById('allow-menu-' + itemId);
+        // Close all other open menus first
+        document.querySelectorAll('[id^="allow-menu-"]').forEach(function(el) {
+            if (el.id !== 'allow-menu-' + itemId) el.classList.add('hidden');
+        });
+        menu.classList.toggle('hidden');
+    }
+
+    // Close dropdown when clicking outside
+    document.addEventListener('click', function(e) {
+        if (!e.target.closest('[id^="allow-split-"]')) {
+            document.querySelectorAll('[id^="allow-menu-"]').forEach(function(el) {
+                el.classList.add('hidden');
+            });
+        }
+    });
 </script>
 {{else}}
 <div class="bg-card rounded-lg shadow-sm border border-border p-8 text-center">

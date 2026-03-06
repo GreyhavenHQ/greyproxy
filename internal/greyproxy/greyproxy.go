@@ -16,11 +16,12 @@ var StaticFS embed.FS
 
 // Service implements service.Service for the proxy API.
 type Service struct {
-	server *http.Server
-	addr   net.Addr
-	DB     *DB
-	Cache  *DNSCache
-	Bus    *EventBus
+	server  *http.Server
+	addr    net.Addr
+	DB      *DB
+	Cache   *DNSCache
+	Bus     *EventBus
+	Waiters *WaiterTracker
 }
 
 func (s *Service) Serve() error {
@@ -77,14 +78,16 @@ func NewService(cfg *Config, handler http.Handler) (*Service, error) {
 	log := logger.Default().WithFields(map[string]any{"kind": "service", "service": "@greyproxy"})
 	log.Infof("database opened: %s", cfg.DB)
 
+	bus := NewEventBus()
 	return &Service{
 		server: &http.Server{
 			Addr:    cfg.Addr,
 			Handler: handler,
 		},
-		addr:  addr,
-		DB:    db,
-		Cache: NewDNSCache(),
-		Bus:   NewEventBus(),
+		addr:    addr,
+		DB:      db,
+		Cache:   NewDNSCache(),
+		Bus:     bus,
+		Waiters: NewWaiterTracker(bus),
 	}, nil
 }

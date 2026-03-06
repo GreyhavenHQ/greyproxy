@@ -20,17 +20,19 @@ import (
 // IMPORTANT: In gost's blacklist mode (IsWhitelist()=false),
 // Contains() returning true means BLOCK the connection.
 type Bypass struct {
-	db    *greyproxy.DB
-	cache *greyproxy.DNSCache
-	bus   *greyproxy.EventBus
-	log   logger.Logger
+	db      *greyproxy.DB
+	cache   *greyproxy.DNSCache
+	bus     *greyproxy.EventBus
+	waiters *greyproxy.WaiterTracker
+	log     logger.Logger
 }
 
-func NewBypass(db *greyproxy.DB, cache *greyproxy.DNSCache, bus *greyproxy.EventBus) *Bypass {
+func NewBypass(db *greyproxy.DB, cache *greyproxy.DNSCache, bus *greyproxy.EventBus, waiters *greyproxy.WaiterTracker) *Bypass {
 	return &Bypass{
-		db:    db,
-		cache: cache,
-		bus:   bus,
+		db:      db,
+		cache:   cache,
+		bus:     bus,
+		waiters: waiters,
 		log: logger.Default().WithFields(map[string]any{
 			"kind":   "bypass",
 			"bypass": "greyproxy",
@@ -94,6 +96,9 @@ func (b *Bypass) Contains(ctx context.Context, network, addr string, opts ...byp
 	// for the user to approve via the dashboard within the grace period.
 	if !allowed && !deniedByRule {
 		b.createPending(containerName, containerID, host, port, resolvedHostname)
+
+		done := b.waiters.Add(containerName, host, port)
+		defer done()
 
 		if rule := b.waitForApproval(ctx, containerName, host, port, resolvedHostname); rule != nil {
 			allowed = true

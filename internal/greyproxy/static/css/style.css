@@ -11,9 +11,10 @@
 @keyframes slideInRight { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
 #toast-container > div { animation: slideInRight 300ms ease-out; }
 .transition-colors { transition-property: background-color, border-color, color, fill, stroke; transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1); transition-duration: 150ms; }
-*:focus { outline: 2px solid rgb(217, 94, 42); outline-offset: 2px; }
-button:hover:not(:disabled):not(.btn-plain) { transform: translateY(-1px); transition: transform 100ms ease-out; }
-button:active:not(:disabled):not(.btn-plain) { transform: translateY(0); }
+*:focus-visible { outline: 2px solid rgb(217, 94, 42); outline-offset: 2px; }
+*:focus:not(:focus-visible) { outline: none; }
+button:hover:not(:disabled):not(.btn-plain):not(.btn-split-part):not(.btn-menu-item) { transform: translateY(-1px); transition: transform 100ms ease-out; }
+button:active:not(:disabled):not(.btn-plain):not(.btn-split-part):not(.btn-menu-item) { transform: translateY(0); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 tbody tr { transition: background-color 150ms ease-in-out; }
 .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

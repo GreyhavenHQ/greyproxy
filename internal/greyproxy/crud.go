@@ -725,8 +725,14 @@ func extractBaseDomain(host string) string {
 
 func parseDuration(duration string) (ruleType string, expiresIn *int64) {
 	switch duration {
+	case "once":
+		v := int64(30)
+		return "temporary", &v
 	case "1h":
 		v := int64(3600)
+		return "temporary", &v
+	case "12h":
+		v := int64(43200)
 		return "temporary", &v
 	case "24h":
 		v := int64(86400)

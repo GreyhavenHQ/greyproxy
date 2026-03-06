@@ -633,7 +633,9 @@ func TestParseDuration(t *testing.T) {
 		hasExpir bool
 	}{
 		{"permanent", "permanent", false},
+		{"once", "temporary", true},
 		{"1h", "temporary", true},
+		{"12h", "temporary", true},
 		{"24h", "temporary", true},
 		{"7d", "temporary", true},
 		{"30d", "temporary", true},

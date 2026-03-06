@@ -13,6 +13,7 @@ type Shared struct {
 	DB      *greyproxy.DB
 	Cache   *greyproxy.DNSCache
 	Bus     *greyproxy.EventBus
+	Waiters *greyproxy.WaiterTracker
 	Version string
 	Ports   map[string]int
 }

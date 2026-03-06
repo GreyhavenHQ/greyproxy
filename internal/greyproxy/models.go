@@ -70,6 +70,7 @@ type PendingRequest struct {
 	FirstSeen        time.Time      `json:"first_seen"`
 	LastSeen         time.Time      `json:"last_seen"`
 	AttemptCount     int            `json:"attempt_count"`
+	WaitingCount     int            `json:"-"` // In-memory only: connections currently held open
 }
 
 type PendingRequestJSON struct {

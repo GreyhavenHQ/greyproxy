@@ -17,7 +17,7 @@
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
 
     <!-- Custom CSS -->
-    <link href="{{.Prefix}}/static/css/style.css" rel="stylesheet">
+    <link href="{{.Prefix}}/static/css/style.css?v={{.CacheBuster}}" rel="stylesheet">
 
     <!-- Custom Tailwind Config -->
     <script>
@@ -213,7 +213,7 @@
                 ws.onmessage = function(event) {
                     try {
                         var msg = JSON.parse(event.data);
-                        if (msg.type && msg.type.indexOf('pending_request.') === 0) {
+                        if (msg.type && (msg.type.indexOf('pending_request.') === 0 || msg.type === 'waiters.changed')) {
                             fetchPendingCount();
                             window.dispatchEvent(new CustomEvent('proxy:pending-event', { detail: msg }));
                         }

@@ -55,11 +55,47 @@ func (h *socks5Handler) handleConnect(ctx context.Context, conn net.Conn, networ
 		conn = xnet.NewReadWriteConn(rw, rw, conn)
 	}
 
-	if h.options.Bypass != nil && h.options.Bypass.Contains(ctx, network, address, bypass.WithService(h.options.Service)) {
-		resp := gosocks5.NewReply(gosocks5.NotAllowed, nil)
-		log.Trace(resp)
-		log.Debug("bypass: ", address)
-		return resp.Write(conn)
+	if h.options.Bypass != nil {
+		bypassCtx, bypassCancel := context.WithCancel(ctx)
+
+		// Monitor the client TCP connection for close during the bypass check.
+		// During SOCKS5 CONNECT, the client waits for the server reply before
+		// sending data (RFC 1928), so no legitimate data arrives here.
+		monitorDone := make(chan struct{})
+		go func() {
+			defer close(monitorDone)
+			buf := make([]byte, 1)
+			for {
+				conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+				_, err := conn.Read(buf)
+				if err == nil {
+					continue
+				}
+				if ne, ok := err.(net.Error); ok && ne.Timeout() {
+					select {
+					case <-bypassCtx.Done():
+						return
+					default:
+						continue
+					}
+				}
+				// Real error (connection closed)
+				bypassCancel()
+				return
+			}
+		}()
+
+		blocked := h.options.Bypass.Contains(bypassCtx, network, address, bypass.WithService(h.options.Service))
+		bypassCancel()
+		<-monitorDone
+		conn.SetReadDeadline(time.Time{}) // reset deadline
+
+		if blocked {
+			resp := gosocks5.NewReply(gosocks5.NotAllowed, nil)
+			log.Trace(resp)
+			log.Debug("bypass: ", address)
+			return resp.Write(conn)
+		}
 	}
 
 	switch h.md.hash {
