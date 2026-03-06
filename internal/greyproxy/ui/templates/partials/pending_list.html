@@ -131,7 +131,7 @@
                     </div>
                     <button hx-post="{{$.Prefix}}/htmx/pending/{{.ID}}/deny" hx-vals='{"scope": "exact", "duration": "permanent"}'
                         hx-target="#pending-list" hx-swap="innerHTML"
-                        class="inline-flex items-center gap-1.5 px-3 py-1.5 border border-border text-xs font-medium rounded text-foreground bg-transparent hover:bg-muted">
+                        class="btn-plain inline-flex items-center gap-1.5 px-3 py-1.5 border border-border text-xs font-medium rounded text-foreground bg-transparent hover:bg-muted">
                         ✗ Deny
                     </button>
                     <button hx-delete="{{$.Prefix}}/htmx/pending/{{.ID}}" hx-target="#pending-list" hx-swap="innerHTML"
