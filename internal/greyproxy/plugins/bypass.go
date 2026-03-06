@@ -44,6 +44,9 @@ func (b *Bypass) IsWhitelist() bool {
 	return false
 }
 
+// gracePeriod is how long to hold a connection open waiting for user approval.
+const gracePeriod = 30 * time.Second
+
 // Contains evaluates the ACL for the given destination address.
 // Returns true to BLOCK, false to ALLOW.
 func (b *Bypass) Contains(ctx context.Context, network, addr string, opts ...bypass.Option) bool {
@@ -87,7 +90,18 @@ func (b *Bypass) Contains(ctx context.Context, network, addr string, opts ...byp
 	}
 	// No rule = default deny (allowed stays false)
 
-	// Log the request
+	// If blocked by default (no matching rule), hold the connection and wait
+	// for the user to approve via the dashboard within the grace period.
+	if !allowed && !deniedByRule {
+		b.createPending(containerName, containerID, host, port, resolvedHostname)
+
+		if rule := b.waitForApproval(ctx, containerName, host, port, resolvedHostname); rule != nil {
+			allowed = true
+			ruleID = &rule.ID
+		}
+	}
+
+	// Log the request with the final decision
 	elapsed := time.Since(start).Milliseconds()
 	result := "blocked"
 	if allowed {
@@ -95,11 +109,6 @@ func (b *Bypass) Contains(ctx context.Context, network, addr string, opts ...byp
 	}
 
 	go b.logRequest(containerName, containerID, host, port, resolvedHostname, result, ruleID, &elapsed)
-
-	// Create/update pending request if blocked and not explicitly denied by rule
-	if !allowed && !deniedByRule {
-		go b.createPending(containerName, containerID, host, port, resolvedHostname)
-	}
 
 	if allowed {
 		b.log.Debugf("ALLOW %s -> %s:%d (%s) rule=%v", containerName, matchHost, port, network, ruleID)
@@ -109,6 +118,45 @@ func (b *Bypass) Contains(ctx context.Context, network, addr string, opts ...byp
 
 	// In blacklist mode: return true to BLOCK
 	return !allowed
+}
+
+// waitForApproval subscribes to the event bus and waits up to gracePeriod for
+// the user to allow the pending request. If a matching allow rule appears,
+// it returns that rule. Otherwise it returns nil.
+func (b *Bypass) waitForApproval(ctx context.Context, containerName, host string, port int, resolvedHostname string) *greyproxy.Rule {
+	ch := b.bus.Subscribe(16)
+	defer b.bus.Unsubscribe(ch)
+
+	timer := time.NewTimer(gracePeriod)
+	defer timer.Stop()
+
+	b.log.Debugf("HOLD  %s -> %s:%d waiting up to %s for approval", containerName, host, port, gracePeriod)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-timer.C:
+			return nil
+		case evt := <-ch:
+			switch evt.Type {
+			case greyproxy.EventPendingAllowed:
+				// A pending was just allowed and a rule was created.
+				// Re-check if a rule now matches our connection.
+				if rule := greyproxy.FindMatchingRule(b.db, containerName, host, port, resolvedHostname); rule != nil && rule.Action == "allow" {
+					b.log.Debugf("APPROVED %s -> %s:%d during grace period (rule %d)", containerName, host, port, rule.ID)
+					return rule
+				}
+			case greyproxy.EventPendingDismissed:
+				// The user denied or dismissed the pending request.
+				// If no matching rule exists for us anymore, stop waiting immediately.
+				if greyproxy.FindMatchingRule(b.db, containerName, host, port, resolvedHostname) == nil {
+					b.log.Debugf("DENIED %s -> %s:%d during grace period", containerName, host, port)
+					return nil
+				}
+			}
+		}
+	}
 }
 
 func (b *Bypass) resolveHostname(host string) string {
