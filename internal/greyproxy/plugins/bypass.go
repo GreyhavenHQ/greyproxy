@@ -149,8 +149,9 @@ func (b *Bypass) waitForApproval(ctx context.Context, containerName, host string
 				}
 			case greyproxy.EventPendingDismissed:
 				// The user denied or dismissed the pending request.
-				// If no matching rule exists for us anymore, stop waiting immediately.
-				if greyproxy.FindMatchingRule(b.db, containerName, host, port, resolvedHostname) == nil {
+				// Stop waiting if there's no rule or if the matching rule is a deny.
+				rule := greyproxy.FindMatchingRule(b.db, containerName, host, port, resolvedHostname)
+				if rule == nil || rule.Action == "deny" {
 					b.log.Debugf("DENIED %s -> %s:%d during grace period", containerName, host, port)
 					return nil
 				}
