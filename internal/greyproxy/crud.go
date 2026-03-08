@@ -2,6 +2,7 @@ package greyproxy
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -1053,4 +1054,166 @@ func GetDashboardStats(db *DB, fromDate, toDate time.Time, groupBy string, recen
 	}
 
 	return stats, nil
+}
+
+// --- HTTP Transactions ---
+
+// MaxBodyCapture is the default max bytes to store per request/response body.
+const MaxBodyCapture = 1048576 // 1MB
+
+func CreateHttpTransaction(db *DB, input HttpTransactionCreateInput) (*HttpTransaction, error) {
+	db.Lock()
+	defer db.Unlock()
+
+	if input.Result == "" {
+		input.Result = "auto"
+	}
+
+	var reqHeadersJSON sql.NullString
+	if input.RequestHeaders != nil {
+		b, _ := json.Marshal(input.RequestHeaders)
+		reqHeadersJSON = sql.NullString{String: string(b), Valid: true}
+	}
+
+	var respHeadersJSON sql.NullString
+	if input.ResponseHeaders != nil {
+		b, _ := json.Marshal(input.ResponseHeaders)
+		respHeadersJSON = sql.NullString{String: string(b), Valid: true}
+	}
+
+	reqBody := input.RequestBody
+	reqBodySize := int64(len(reqBody))
+	if len(reqBody) > MaxBodyCapture {
+		reqBody = reqBody[:MaxBodyCapture]
+	}
+
+	respBody := input.ResponseBody
+	respBodySize := int64(len(respBody))
+	if len(respBody) > MaxBodyCapture {
+		respBody = respBody[:MaxBodyCapture]
+	}
+
+	result, err := db.WriteDB().Exec(
+		`INSERT INTO http_transactions (container_name, destination_host, destination_port,
+		 method, url, request_headers, request_body, request_body_size, request_content_type,
+		 status_code, response_headers, response_body, response_body_size, response_content_type,
+		 duration_ms, rule_id, result)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		input.ContainerName, input.DestinationHost, input.DestinationPort,
+		input.Method, input.URL,
+		reqHeadersJSON, reqBody, reqBodySize,
+		sql.NullString{String: input.RequestContentType, Valid: input.RequestContentType != ""},
+		sql.NullInt64{Int64: int64(input.StatusCode), Valid: input.StatusCode != 0},
+		respHeadersJSON, respBody, respBodySize,
+		sql.NullString{String: input.ResponseContentType, Valid: input.ResponseContentType != ""},
+		sql.NullInt64{Int64: input.DurationMs, Valid: input.DurationMs > 0},
+		sql.NullInt64{Int64: ptrInt64OrZero(input.RuleID), Valid: input.RuleID != nil},
+		input.Result,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("insert http_transaction: %w", err)
+	}
+
+	id, _ := result.LastInsertId()
+	return getHttpTransactionByID(db.WriteDB(), id)
+}
+
+func getHttpTransactionByID(conn *sql.DB, id int64) (*HttpTransaction, error) {
+	var t HttpTransaction
+	err := conn.QueryRow(
+		`SELECT id, timestamp, container_name, destination_host, destination_port,
+		        method, url, request_headers, request_body, request_body_size, request_content_type,
+		        status_code, response_headers, response_body, response_body_size, response_content_type,
+		        duration_ms, rule_id, result
+		 FROM http_transactions WHERE id = ?`, id,
+	).Scan(&t.ID, &t.Timestamp, &t.ContainerName, &t.DestinationHost, &t.DestinationPort,
+		&t.Method, &t.URL, &t.RequestHeaders, &t.RequestBody, &t.RequestBodySize, &t.RequestContentType,
+		&t.StatusCode, &t.ResponseHeaders, &t.ResponseBody, &t.ResponseBodySize, &t.ResponseContentType,
+		&t.DurationMs, &t.RuleID, &t.Result)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &t, nil
+}
+
+func GetHttpTransaction(db *DB, id int64) (*HttpTransaction, error) {
+	return getHttpTransactionByID(db.ReadDB(), id)
+}
+
+type TransactionFilter struct {
+	Container   string
+	Destination string
+	Method      string
+	FromDate    *time.Time
+	ToDate      *time.Time
+	Limit       int
+	Offset      int
+}
+
+func QueryHttpTransactions(db *DB, f TransactionFilter) ([]HttpTransaction, int, error) {
+	if f.Limit <= 0 {
+		f.Limit = 50
+	}
+
+	where := []string{"1=1"}
+	args := []any{}
+
+	if f.Container != "" {
+		where = append(where, "container_name LIKE ?")
+		args = append(args, "%"+f.Container+"%")
+	}
+	if f.Destination != "" {
+		where = append(where, "destination_host LIKE ?")
+		args = append(args, "%"+f.Destination+"%")
+	}
+	if f.Method != "" {
+		where = append(where, "method = ?")
+		args = append(args, f.Method)
+	}
+	if f.FromDate != nil {
+		where = append(where, "timestamp >= ?")
+		args = append(args, f.FromDate.UTC().Format("2006-01-02 15:04:05"))
+	}
+	if f.ToDate != nil {
+		where = append(where, "timestamp <= ?")
+		args = append(args, f.ToDate.UTC().Format("2006-01-02 15:04:05"))
+	}
+
+	whereClause := strings.Join(where, " AND ")
+
+	var total int
+	err := db.ReadDB().QueryRow("SELECT COUNT(*) FROM http_transactions WHERE "+whereClause, args...).Scan(&total)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	// List query excludes body blobs for performance
+	rows, err := db.ReadDB().Query(
+		`SELECT id, timestamp, container_name, destination_host, destination_port,
+		        method, url, request_headers, NULL, request_body_size, request_content_type,
+		        status_code, response_headers, NULL, response_body_size, response_content_type,
+		        duration_ms, rule_id, result
+		 FROM http_transactions WHERE `+whereClause+` ORDER BY timestamp DESC LIMIT ? OFFSET ?`,
+		append(args, f.Limit, f.Offset)...,
+	)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var txns []HttpTransaction
+	for rows.Next() {
+		var t HttpTransaction
+		if err := rows.Scan(&t.ID, &t.Timestamp, &t.ContainerName, &t.DestinationHost, &t.DestinationPort,
+			&t.Method, &t.URL, &t.RequestHeaders, &t.RequestBody, &t.RequestBodySize, &t.RequestContentType,
+			&t.StatusCode, &t.ResponseHeaders, &t.ResponseBody, &t.ResponseBodySize, &t.ResponseContentType,
+			&t.DurationMs, &t.RuleID, &t.Result); err != nil {
+			return nil, 0, err
+		}
+		txns = append(txns, t)
+	}
+	return txns, total, nil
 }

@@ -65,7 +65,7 @@ func (b *Bypass) Contains(ctx context.Context, network, addr string, opts ...byp
 
 	// Get client identity from context (set by auther)
 	clientID := string(ctxvalue.ClientIDFromContext(ctx))
-	containerName, containerID := resolveIdentity(clientID)
+	containerName, containerID := ResolveIdentity(clientID)
 
 	// Resolve hostname
 	resolvedHostname := b.resolveHostname(host)
@@ -191,7 +191,8 @@ func (b *Bypass) resolveHostname(host string) string {
 	return b.cache.ResolveIP(host)
 }
 
-func resolveIdentity(clientID string) (containerName, containerID string) {
+// ResolveIdentity maps a composite client ID ("ip|username") to a container name and ID.
+func ResolveIdentity(clientID string) (containerName, containerID string) {
 	ip, username := ParseClientID(clientID)
 
 	if username != "" && username != "proxy" {

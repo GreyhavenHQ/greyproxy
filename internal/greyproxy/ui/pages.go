@@ -66,12 +66,6 @@ var funcMap = template.FuncMap{
 	"sub": func(a, b int) int {
 		return a - b
 	},
-	"gt": func(a, b int) bool {
-		return a > b
-	},
-	"lt": func(a, b int) bool {
-		return a < b
-	},
 	"formatFloat": func(f float64) string {
 		return fmt.Sprintf("%.1f", f)
 	},
@@ -176,10 +170,13 @@ var (
 	logsTmpl      = parseTemplate("base.html", "base.html", "logs.html")
 	settingsTmpl  = parseTemplate("base.html", "base.html", "settings.html")
 
+	trafficTmpl = parseTemplate("base.html", "base.html", "traffic.html")
+
 	dashboardStatsTmpl = parseTemplate("dashboard_stats.html", "partials/dashboard_stats.html")
 	pendingListTmpl    = parseTemplate("pending_list.html", "partials/pending_list.html")
 	rulesListTmpl      = parseTemplate("rules_list.html", "partials/rules_list.html")
 	logsTableTmpl      = parseTemplate("logs_table.html", "partials/logs_table.html")
+	trafficTableTmpl   = parseTemplate("traffic_table.html", "partials/traffic_table.html")
 )
 
 // cacheBuster is set once at startup for static asset cache busting.
@@ -198,6 +195,7 @@ func getContainers(db *greyproxy.DB) []string {
 	rows, err := db.ReadDB().Query(
 		`SELECT DISTINCT container_name FROM pending_requests
 		 UNION SELECT DISTINCT container_name FROM request_logs
+		 UNION SELECT DISTINCT container_name FROM http_transactions
 		 ORDER BY container_name`)
 	if err != nil {
 		return nil
@@ -268,6 +266,17 @@ func RegisterPageRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 			Prefix:      prefix,
 			CacheBuster: cacheBuster,
 			Title:       "Settings - Greyproxy",
+			Containers:  getContainers(db),
+		})
+	})
+
+	r.GET("/traffic", func(c *gin.Context) {
+		trafficTmpl.Execute(c.Writer, PageData{
+			CurrentPath: c.Request.URL.Path,
+			Prefix:      prefix,
+			CacheBuster: cacheBuster,
+			Title:       "HTTP Traffic - Greyproxy",
+			Containers:  getContainers(db),
 		})
 	})
 }
@@ -569,6 +578,54 @@ func RegisterHTMXRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 
 		c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
 		logsTableTmpl.Execute(c.Writer, gin.H{
+			"Prefix":     prefix,
+			"Items":      items,
+			"Total":      total,
+			"Page":       page,
+			"Pages":      pages,
+			"HasFilters": hasFilters,
+		})
+	})
+
+	htmx.GET("/traffic-table", func(c *gin.Context) {
+		limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+		offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+
+		if page, err := strconv.Atoi(c.Query("page")); err == nil && page > 1 {
+			offset = (page - 1) * limit
+		}
+
+		container := c.Query("container")
+		destination := c.Query("destination")
+		method := c.Query("method")
+
+		f := greyproxy.TransactionFilter{
+			Container:   container,
+			Destination: destination,
+			Method:      method,
+			Limit:       limit,
+			Offset:      offset,
+		}
+
+		items, total, err := greyproxy.QueryHttpTransactions(db, f)
+		if err != nil {
+			c.String(http.StatusInternalServerError, "Error: %v", err)
+			return
+		}
+
+		page := 1
+		if limit > 0 && offset > 0 {
+			page = offset/limit + 1
+		}
+		pages := 1
+		if limit > 0 && total > 0 {
+			pages = int(math.Ceil(float64(total) / float64(limit)))
+		}
+
+		hasFilters := container != "" || destination != "" || method != ""
+
+		c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+		trafficTableTmpl.Execute(c.Writer, gin.H{
 			"Prefix":     prefix,
 			"Items":      items,
 			"Total":      total,

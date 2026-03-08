@@ -1,0 +1,152 @@
+{{define "content"}}
+<div class="space-y-6">
+    <div class="flex justify-between items-center">
+        <h1 class="text-2xl font-bold text-foreground">HTTP Traffic</h1>
+        <button hx-get="{{.Prefix}}/htmx/traffic-table" hx-target="#traffic-table" hx-swap="innerHTML"
+            class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-primary-foreground bg-primary hover:bg-primary/90">
+            <svg class="htmx-indicator -ml-1 mr-2 h-4 w-4 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+            </svg>
+            Refresh
+        </button>
+    </div>
+
+    <div class="bg-card rounded-lg shadow-sm border border-border p-3 relative">
+        <form id="traffic-filter-form"
+            hx-get="{{.Prefix}}/htmx/traffic-table" hx-target="#traffic-table" hx-swap="innerHTML"
+            hx-trigger="submit, change delay:100ms, input delay:100ms"
+            hx-sync="this:replace"
+            hx-indicator="#traffic-filter-spinner"
+            class="space-y-3">
+            <div class="grid grid-cols-1 md:grid-cols-5 gap-3">
+                <div>
+                    <label for="t-container" class="block text-xs font-medium text-foreground mb-1">Source</label>
+                    <select id="t-container" name="container"
+                        class="mt-1 block w-full pl-2 pr-8 py-1.5 text-xs border-border focus:outline-none focus:ring-ring focus:border-ring rounded-md bg-background">
+                        <option value="">All</option>
+                        {{range .Containers}}<option value="{{.}}">{{.}}</option>{{end}}
+                    </select>
+                </div>
+                <div>
+                    <label for="t-method" class="block text-xs font-medium text-foreground mb-1">Method</label>
+                    <select id="t-method" name="method"
+                        class="mt-1 block w-full pl-2 pr-8 py-1.5 text-xs border-border focus:outline-none focus:ring-ring focus:border-ring rounded-md bg-background">
+                        <option value="">All</option>
+                        <option value="GET">GET</option>
+                        <option value="POST">POST</option>
+                        <option value="PUT">PUT</option>
+                        <option value="DELETE">DELETE</option>
+                        <option value="PATCH">PATCH</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="t-destination" class="block text-xs font-medium text-foreground mb-1">Destination</label>
+                    <input type="text" id="t-destination" name="destination" placeholder="e.g., api.anthropic.com"
+                        class="mt-1 block w-full px-2 py-1.5 text-xs border border-border rounded-md shadow-sm focus:outline-none focus:ring-ring focus:border-ring bg-background">
+                </div>
+                <div>
+                    <label for="t-limit" class="block text-xs font-medium text-foreground mb-1">Limit</label>
+                    <select id="t-limit" name="limit"
+                        class="mt-1 block w-full pl-2 pr-8 py-1.5 text-xs border-border focus:outline-none focus:ring-ring focus:border-ring rounded-md bg-background">
+                        <option value="50">50</option>
+                        <option value="100">100</option>
+                        <option value="200">200</option>
+                    </select>
+                </div>
+                <div class="flex items-end">
+                    <button type="button" id="t-reset-filters-btn" onclick="resetTrafficFilters()"
+                        class="hidden w-full inline-flex justify-center items-center px-3 py-1.5 border border-border text-xs font-medium rounded-md text-secondary-foreground bg-background hover:bg-muted">
+                        Reset
+                    </button>
+                    <svg id="traffic-filter-spinner" class="htmx-indicator h-5 w-5 animate-spin text-primary" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                    </svg>
+                </div>
+            </div>
+        </form>
+    </div>
+
+    <div id="traffic-table"
+         hx-get="{{.Prefix}}/htmx/traffic-table" hx-include="#traffic-filter-form"
+         hx-trigger="load" hx-swap="innerHTML">
+        <div class="flex justify-center py-8">
+            <div class="inline-block w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+    function resetTrafficFilters() {
+        document.getElementById('t-container').value = '';
+        document.getElementById('t-method').value = '';
+        document.getElementById('t-destination').value = '';
+        document.getElementById('t-limit').value = '50';
+        updateTrafficResetButton();
+        document.getElementById('traffic-filter-form').dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    function updateTrafficResetButton() {
+        var hasFilters = document.getElementById('t-container').value !== '' ||
+                         document.getElementById('t-method').value !== '' ||
+                         document.getElementById('t-destination').value !== '' ||
+                         document.getElementById('t-limit').value !== '50';
+        document.getElementById('t-reset-filters-btn').classList.toggle('hidden', !hasFilters);
+    }
+    document.getElementById('traffic-filter-form').addEventListener('change', updateTrafficResetButton);
+    document.getElementById('traffic-filter-form').addEventListener('input', updateTrafficResetButton);
+    updateTrafficResetButton();
+
+    function toggleTxnDetails(id) {
+        var details = document.getElementById('txn-details-' + id);
+        var icon = document.getElementById('txn-icon-' + id);
+        if (details.classList.contains('hidden')) {
+            details.classList.remove('hidden');
+            icon.style.transform = 'rotate(90deg)';
+            // Lazy-load body details
+            if (!details.dataset.loaded) {
+                details.dataset.loaded = 'true';
+                fetch('{{.Prefix}}/api/transactions/' + id)
+                    .then(function(r) { return r.json(); })
+                    .then(function(txn) {
+                        var bodyEl = document.getElementById('txn-body-' + id);
+                        var html = '';
+                        if (txn.request_headers) {
+                            html += '<div class="mb-2"><span class="font-semibold text-xs text-muted-foreground">Request Headers</span><pre class="mt-1 text-xs bg-background p-2 rounded border border-border overflow-x-auto max-h-40">' + escapeHtml(JSON.stringify(txn.request_headers, null, 2)) + '</pre></div>';
+                        }
+                        if (txn.request_body) {
+                            html += '<div class="mb-2"><span class="font-semibold text-xs text-muted-foreground">Request Body</span> <span class="text-xs text-muted-foreground">(' + (txn.request_body_size || 0) + ' bytes)</span><pre class="mt-1 text-xs bg-background p-2 rounded border border-border overflow-x-auto max-h-60">' + formatBody(txn.request_body, txn.request_content_type) + '</pre></div>';
+                        }
+                        if (txn.response_headers) {
+                            html += '<div class="mb-2"><span class="font-semibold text-xs text-muted-foreground">Response Headers</span><pre class="mt-1 text-xs bg-background p-2 rounded border border-border overflow-x-auto max-h-40">' + escapeHtml(JSON.stringify(txn.response_headers, null, 2)) + '</pre></div>';
+                        }
+                        if (txn.response_body) {
+                            html += '<div class="mb-2"><span class="font-semibold text-xs text-muted-foreground">Response Body</span> <span class="text-xs text-muted-foreground">(' + (txn.response_body_size || 0) + ' bytes)</span><pre class="mt-1 text-xs bg-background p-2 rounded border border-border overflow-x-auto max-h-60">' + formatBody(txn.response_body, txn.response_content_type) + '</pre></div>';
+                        }
+                        if (!html) html = '<span class="text-xs text-muted-foreground">No body captured</span>';
+                        bodyEl.innerHTML = html;
+                    });
+            }
+        } else {
+            details.classList.add('hidden');
+            icon.style.transform = 'rotate(0deg)';
+        }
+    }
+    function escapeHtml(s) {
+        var d = document.createElement('div');
+        d.appendChild(document.createTextNode(s));
+        return d.innerHTML;
+    }
+    function formatBody(body, contentType) {
+        if (contentType && contentType.indexOf('json') !== -1) {
+            try { return escapeHtml(JSON.stringify(JSON.parse(body), null, 2)); } catch(e) {}
+        }
+        return escapeHtml(body.length > 2000 ? body.substring(0, 2000) + '...' : body);
+    }
+
+    // Auto-refresh on new transaction WebSocket events
+    window.addEventListener('proxy:transaction-event', function() {
+        document.getElementById('traffic-filter-form').dispatchEvent(new Event('change', { bubbles: true }));
+    });
+</script>
+{{end}}

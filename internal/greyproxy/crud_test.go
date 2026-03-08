@@ -2,6 +2,7 @@ package greyproxy
 
 import (
 	"database/sql"
+	"net/http"
 	"os"
 	"testing"
 	"time"
@@ -617,7 +618,7 @@ func TestMigrations(t *testing.T) {
 	db := setupTestDB(t)
 
 	// Verify tables exist
-	tables := []string{"rules", "pending_requests", "request_logs", "schema_migrations"}
+	tables := []string{"rules", "pending_requests", "request_logs", "http_transactions", "schema_migrations"}
 	for _, table := range tables {
 		var name string
 		err := db.ReadDB().QueryRow(
@@ -636,8 +637,8 @@ func TestMigrations(t *testing.T) {
 	// Verify migration versions were recorded
 	var count int
 	db.ReadDB().QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&count)
-	if count != 3 {
-		t.Errorf("expected 3 migration versions, got %d", count)
+	if count != 4 {
+		t.Errorf("expected 4 migration versions, got %d", count)
 	}
 }
 
@@ -740,5 +741,233 @@ func TestRuleToJSON(t *testing.T) {
 	fj := future.ToJSON()
 	if !fj.IsActive {
 		t.Error("expected IsActive to be true for rule with future expiration")
+	}
+}
+
+func TestCreateHttpTransaction(t *testing.T) {
+	db := setupTestDB(t)
+
+	txn, err := CreateHttpTransaction(db, HttpTransactionCreateInput{
+		ContainerName:       "claude-code",
+		DestinationHost:     "api.anthropic.com",
+		DestinationPort:     443,
+		Method:              "POST",
+		URL:                 "https://api.anthropic.com/v1/messages",
+		RequestHeaders:      http.Header{"Content-Type": {"application/json"}, "Authorization": {"Bearer sk-ant-xxx"}},
+		RequestBody:         []byte(`{"model":"claude-sonnet-4-20250514","messages":[{"role":"user","content":"hello"}]}`),
+		RequestContentType:  "application/json",
+		StatusCode:          200,
+		ResponseHeaders:     http.Header{"Content-Type": {"application/json"}},
+		ResponseBody:        []byte(`{"content":[{"text":"Hello!"}]}`),
+		ResponseContentType: "application/json",
+		DurationMs:          150,
+		Result:              "auto",
+	})
+	if err != nil {
+		t.Fatalf("CreateHttpTransaction: %v", err)
+	}
+	if txn == nil {
+		t.Fatal("expected non-nil transaction")
+	}
+	if txn.ContainerName != "claude-code" {
+		t.Errorf("container_name = %q, want %q", txn.ContainerName, "claude-code")
+	}
+	if txn.Method != "POST" {
+		t.Errorf("method = %q, want %q", txn.Method, "POST")
+	}
+	if txn.DestinationHost != "api.anthropic.com" {
+		t.Errorf("destination_host = %q, want %q", txn.DestinationHost, "api.anthropic.com")
+	}
+	if !txn.StatusCode.Valid || txn.StatusCode.Int64 != 200 {
+		t.Errorf("status_code = %v, want 200", txn.StatusCode)
+	}
+	if !txn.DurationMs.Valid || txn.DurationMs.Int64 != 150 {
+		t.Errorf("duration_ms = %v, want 150", txn.DurationMs)
+	}
+}
+
+func TestGetHttpTransaction(t *testing.T) {
+	db := setupTestDB(t)
+
+	created, _ := CreateHttpTransaction(db, HttpTransactionCreateInput{
+		ContainerName:   "test-app",
+		DestinationHost: "example.com",
+		DestinationPort: 443,
+		Method:          "GET",
+		URL:             "https://example.com/api/data",
+		RequestBody:     nil,
+		StatusCode:      200,
+		ResponseBody:    []byte("response body content"),
+		DurationMs:      50,
+		Result:          "auto",
+	})
+
+	got, err := GetHttpTransaction(db, created.ID)
+	if err != nil {
+		t.Fatalf("GetHttpTransaction: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected non-nil transaction")
+	}
+	if got.Method != "GET" {
+		t.Errorf("method = %q, want %q", got.Method, "GET")
+	}
+	if string(got.ResponseBody) != "response body content" {
+		t.Errorf("response_body = %q, want %q", string(got.ResponseBody), "response body content")
+	}
+
+	// Not found
+	missing, err := GetHttpTransaction(db, 9999)
+	if err != nil {
+		t.Fatalf("GetHttpTransaction for missing: %v", err)
+	}
+	if missing != nil {
+		t.Error("expected nil for non-existent transaction")
+	}
+}
+
+func TestQueryHttpTransactions(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Create several transactions
+	for _, m := range []string{"GET", "POST", "DELETE"} {
+		CreateHttpTransaction(db, HttpTransactionCreateInput{
+			ContainerName:   "app1",
+			DestinationHost: "api.example.com",
+			DestinationPort: 443,
+			Method:          m,
+			URL:             "https://api.example.com/test",
+			StatusCode:      200,
+			Result:          "auto",
+		})
+	}
+	CreateHttpTransaction(db, HttpTransactionCreateInput{
+		ContainerName:   "app2",
+		DestinationHost: "other.example.com",
+		DestinationPort: 443,
+		Method:          "GET",
+		URL:             "https://other.example.com/",
+		StatusCode:      200,
+		Result:          "auto",
+	})
+
+	// List all
+	txns, total, err := QueryHttpTransactions(db, TransactionFilter{})
+	if err != nil {
+		t.Fatalf("QueryHttpTransactions: %v", err)
+	}
+	if total != 4 {
+		t.Errorf("total = %d, want 4", total)
+	}
+	if len(txns) != 4 {
+		t.Errorf("len(txns) = %d, want 4", len(txns))
+	}
+
+	// Filter by method
+	txns, total, _ = QueryHttpTransactions(db, TransactionFilter{Method: "POST"})
+	if total != 1 {
+		t.Errorf("total with method=POST = %d, want 1", total)
+	}
+
+	// Filter by destination
+	txns, total, _ = QueryHttpTransactions(db, TransactionFilter{Destination: "other"})
+	if total != 1 {
+		t.Errorf("total with destination=other = %d, want 1", total)
+	}
+
+	// Filter by container
+	txns, total, _ = QueryHttpTransactions(db, TransactionFilter{Container: "app2"})
+	if total != 1 {
+		t.Errorf("total with container=app2 = %d, want 1", total)
+	}
+	if txns[0].ContainerName != "app2" {
+		t.Errorf("container_name = %q, want %q", txns[0].ContainerName, "app2")
+	}
+
+	// List query should NOT include body blobs
+	txns, _, _ = QueryHttpTransactions(db, TransactionFilter{})
+	for _, tx := range txns {
+		if tx.RequestBody != nil {
+			t.Error("list query should not include request_body")
+		}
+		if tx.ResponseBody != nil {
+			t.Error("list query should not include response_body")
+		}
+	}
+}
+
+func TestHttpTransactionBodyTruncation(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Create a transaction with body larger than MaxBodyCapture
+	largeBody := make([]byte, MaxBodyCapture+1000)
+	for i := range largeBody {
+		largeBody[i] = 'A'
+	}
+
+	txn, err := CreateHttpTransaction(db, HttpTransactionCreateInput{
+		ContainerName:   "test",
+		DestinationHost: "example.com",
+		DestinationPort: 443,
+		Method:          "POST",
+		URL:             "https://example.com/upload",
+		RequestBody:     largeBody,
+		StatusCode:      200,
+		Result:          "auto",
+	})
+	if err != nil {
+		t.Fatalf("CreateHttpTransaction: %v", err)
+	}
+
+	got, _ := GetHttpTransaction(db, txn.ID)
+
+	// Stored body should be truncated to MaxBodyCapture
+	if len(got.RequestBody) != MaxBodyCapture {
+		t.Errorf("stored body length = %d, want %d", len(got.RequestBody), MaxBodyCapture)
+	}
+
+	// But request_body_size should reflect the original size
+	if !got.RequestBodySize.Valid || got.RequestBodySize.Int64 != int64(MaxBodyCapture+1000) {
+		t.Errorf("request_body_size = %v, want %d", got.RequestBodySize, MaxBodyCapture+1000)
+	}
+}
+
+func TestHttpTransactionToJSON(t *testing.T) {
+	txn := HttpTransaction{
+		ID:              1,
+		Timestamp:       time.Date(2024, 6, 15, 10, 30, 0, 0, time.UTC),
+		ContainerName:   "claude-code",
+		DestinationHost: "api.anthropic.com",
+		DestinationPort: 443,
+		Method:          "POST",
+		URL:             "https://api.anthropic.com/v1/messages",
+		RequestHeaders:  sql.NullString{String: `{"Content-Type":["application/json"]}`, Valid: true},
+		RequestBody:     []byte(`{"model":"claude-sonnet-4-20250514"}`),
+		RequestBodySize: sql.NullInt64{Int64: 30, Valid: true},
+		StatusCode:      sql.NullInt64{Int64: 200, Valid: true},
+		ResponseBody:    []byte(`{"content":"hello"}`),
+		DurationMs:      sql.NullInt64{Int64: 150, Valid: true},
+		Result:          "auto",
+	}
+
+	// Without body
+	j := txn.ToJSON(false)
+	if j.RequestBody != nil {
+		t.Error("ToJSON(false) should not include request_body")
+	}
+	if j.ResponseBody != nil {
+		t.Error("ToJSON(false) should not include response_body")
+	}
+	if j.ContainerName != "claude-code" {
+		t.Errorf("container_name = %q, want %q", j.ContainerName, "claude-code")
+	}
+
+	// With body
+	j = txn.ToJSON(true)
+	if j.RequestBody == nil || *j.RequestBody != `{"model":"claude-sonnet-4-20250514"}` {
+		t.Errorf("ToJSON(true) request_body = %v, want the body content", j.RequestBody)
+	}
+	if j.ResponseBody == nil || *j.ResponseBody != `{"content":"hello"}` {
+		t.Errorf("ToJSON(true) response_body = %v, want the body content", j.ResponseBody)
 	}
 }

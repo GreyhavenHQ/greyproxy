@@ -112,7 +112,13 @@ type HTTPRoundTripInfo struct {
 	RequestBody     []byte
 	ResponseHeaders http.Header
 	ResponseBody    []byte
+	ContainerName   string
+	DurationMs      int64
 }
+
+// GlobalHTTPRoundTripHook is called (if set) after each MITM-intercepted HTTP round-trip.
+// Set this from program initialization to record transactions to the database.
+var GlobalHTTPRoundTripHook func(info HTTPRoundTripInfo)
 
 type Sniffer struct {
 	Websocket           bool
@@ -437,7 +443,11 @@ func (h *Sniffer) httpRoundTrip(ctx context.Context, rw, cc io.ReadWriteCloser, 
 		return
 	}
 
-	if h.OnHTTPRoundTrip != nil {
+	if h.OnHTTPRoundTrip != nil || GlobalHTTPRoundTripHook != nil {
+		containerName := string(xctx.ClientIDFromContext(ctx))
+		if containerName == "" {
+			containerName = ro.ClientID
+		}
 		info := HTTPRoundTripInfo{
 			Host:            req.Host,
 			Method:          req.Method,
@@ -446,6 +456,8 @@ func (h *Sniffer) httpRoundTrip(ctx context.Context, rw, cc io.ReadWriteCloser, 
 			StatusCode:      resp.StatusCode,
 			RequestHeaders:  ro.HTTP.Request.Header,
 			ResponseHeaders: ro.HTTP.Response.Header,
+			ContainerName:   containerName,
+			DurationMs:      time.Since(ro.Time).Milliseconds(),
 		}
 		if reqBody != nil {
 			info.RequestBody = reqBody.Content()
@@ -453,7 +465,12 @@ func (h *Sniffer) httpRoundTrip(ctx context.Context, rw, cc io.ReadWriteCloser, 
 		if respBody != nil {
 			info.ResponseBody = respBody.Content()
 		}
-		h.OnHTTPRoundTrip(info)
+		if h.OnHTTPRoundTrip != nil {
+			h.OnHTTPRoundTrip(info)
+		}
+		if GlobalHTTPRoundTripHook != nil {
+			GlobalHTTPRoundTripHook(info)
+		}
 	}
 
 	if resp.ContentLength >= 0 {
@@ -946,7 +963,11 @@ func (h *h2Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ro.HTTP.Response.ContentLength = respBody.Length()
 	}
 
-	if h.onHTTPRoundTrip != nil {
+	if h.onHTTPRoundTrip != nil || GlobalHTTPRoundTripHook != nil {
+		containerName := string(xctx.ClientIDFromContext(r.Context()))
+		if containerName == "" {
+			containerName = ro.ClientID
+		}
 		info := HTTPRoundTripInfo{
 			Host:            r.Host,
 			Method:          r.Method,
@@ -955,6 +976,8 @@ func (h *h2Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			StatusCode:      resp.StatusCode,
 			RequestHeaders:  ro.HTTP.Request.Header,
 			ResponseHeaders: ro.HTTP.Response.Header,
+			ContainerName:   containerName,
+			DurationMs:      time.Since(ro.Time).Milliseconds(),
 		}
 		if reqBody != nil {
 			info.RequestBody = reqBody.Content()
@@ -962,7 +985,12 @@ func (h *h2Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if respBody != nil {
 			info.ResponseBody = respBody.Content()
 		}
-		h.onHTTPRoundTrip(info)
+		if h.onHTTPRoundTrip != nil {
+			h.onHTTPRoundTrip(info)
+		}
+		if GlobalHTTPRoundTripHook != nil {
+			GlobalHTTPRoundTripHook(info)
+		}
 	}
 }
 

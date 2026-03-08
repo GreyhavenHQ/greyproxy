@@ -59,6 +59,34 @@ var migrations = []string{
 	CREATE INDEX IF NOT EXISTS idx_logs_container ON request_logs(container_name);
 	CREATE INDEX IF NOT EXISTS idx_logs_destination ON request_logs(destination_host);
 	CREATE INDEX IF NOT EXISTS idx_logs_result ON request_logs(result);`,
+
+	// Migration 4: Create http_transactions table for MITM-captured HTTP request/response data
+	`CREATE TABLE IF NOT EXISTS http_transactions (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		timestamp DATETIME NOT NULL DEFAULT (datetime('now')),
+		container_name TEXT NOT NULL,
+		destination_host TEXT NOT NULL,
+		destination_port INTEGER NOT NULL,
+
+		method TEXT NOT NULL,
+		url TEXT NOT NULL,
+		request_headers TEXT,
+		request_body BLOB,
+		request_body_size INTEGER,
+		request_content_type TEXT,
+
+		status_code INTEGER,
+		response_headers TEXT,
+		response_body BLOB,
+		response_body_size INTEGER,
+		response_content_type TEXT,
+
+		duration_ms INTEGER,
+		rule_id INTEGER,
+		result TEXT NOT NULL DEFAULT 'auto'
+	);
+	CREATE INDEX IF NOT EXISTS idx_http_transactions_ts ON http_transactions(timestamp);
+	CREATE INDEX IF NOT EXISTS idx_http_transactions_dest ON http_transactions(destination_host, destination_port);`,
 }
 
 func runMigrations(db *sql.DB) error {

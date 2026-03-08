@@ -1,0 +1,102 @@
+{{$items := .Items}}
+{{$total := .Total}}
+{{$page := .Page}}
+{{$pages := .Pages}}
+{{if $items}}
+<div class="bg-card rounded-lg shadow-sm border border-border overflow-hidden">
+    <table class="w-full table-fixed divide-y divide-border">
+        <colgroup>
+            <col style="width: 1.5rem;">
+            <col style="width: 3.5rem;">
+            <col style="width: 3.5rem;">
+            <col style="width: 9rem;">
+            <col>
+            <col style="width: 8rem;">
+            <col style="width: 4rem;">
+        </colgroup>
+        <thead class="bg-secondary">
+            <tr>
+                <th class="pl-3 pr-1 py-3"></th>
+                <th class="px-2 py-3 text-left text-xs font-medium text-secondary-foreground uppercase tracking-wider">Method</th>
+                <th class="px-2 py-3 text-left text-xs font-medium text-secondary-foreground uppercase tracking-wider">Status</th>
+                <th class="px-3 py-3 text-left text-xs font-medium text-secondary-foreground uppercase tracking-wider">Source</th>
+                <th class="px-3 py-3 text-left text-xs font-medium text-secondary-foreground uppercase tracking-wider">URL</th>
+                <th class="px-3 py-3 text-left text-xs font-medium text-secondary-foreground uppercase tracking-wider">Time</th>
+                <th class="px-3 py-3 text-right text-xs font-medium text-secondary-foreground uppercase tracking-wider">Duration</th>
+            </tr>
+        </thead>
+        <tbody class="bg-card divide-y divide-border">
+            {{range $items}}
+            <tr class="hover:bg-muted transition-colors cursor-pointer" onclick="toggleTxnDetails('{{.ID}}')">
+                <td class="pl-3 pr-1 py-2 align-middle">
+                    <svg id="txn-icon-{{.ID}}" class="h-3.5 w-3.5 transition-transform" style="transition: transform 0.2s;" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+                    </svg>
+                </td>
+                <td class="px-2 py-2 align-middle">
+                    <span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-mono font-semibold bg-primary/10 text-primary">{{.Method}}</span>
+                </td>
+                <td class="px-2 py-2 align-middle">
+                    {{if .StatusCode.Valid}}
+                    <span class="text-xs font-mono {{if lt .StatusCode.Int64 300}}text-green-600{{else if lt .StatusCode.Int64 400}}text-blue-600{{else if lt .StatusCode.Int64 500}}text-yellow-600{{else}}text-red-600{{end}}">{{.StatusCode.Int64}}</span>
+                    {{end}}
+                </td>
+                <td class="px-3 py-2 truncate">
+                    <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-primary/10 text-primary">{{.ContainerName}}</span>
+                </td>
+                <td class="px-3 py-2 truncate text-xs font-mono text-foreground" title="{{.URL}}">{{.URL}}</td>
+                <td class="px-3 py-2 whitespace-nowrap text-xs text-muted-foreground">{{formatTime .Timestamp}}</td>
+                <td class="px-3 py-2 text-right whitespace-nowrap text-xs text-muted-foreground">
+                    {{if .DurationMs.Valid}}{{.DurationMs.Int64}}ms{{end}}
+                </td>
+            </tr>
+            <tr id="txn-details-{{.ID}}" class="hidden bg-muted/50">
+                <td colspan="7" class="px-6 py-3">
+                    <div class="grid grid-cols-2 gap-4 text-xs mb-3">
+                        <div><span class="text-muted-foreground">Destination:</span> {{.DestinationHost}}:{{.DestinationPort}}</div>
+                        {{if .RequestBodySize.Valid}}<div><span class="text-muted-foreground">Request size:</span> {{.RequestBodySize.Int64}} bytes</div>{{end}}
+                        {{if .ResponseBodySize.Valid}}<div><span class="text-muted-foreground">Response size:</span> {{.ResponseBodySize.Int64}} bytes</div>{{end}}
+                        {{if .RequestContentType.Valid}}<div><span class="text-muted-foreground">Content-Type:</span> {{.RequestContentType.String}}</div>{{end}}
+                    </div>
+                    <div id="txn-body-{{.ID}}">
+                        <span class="text-xs text-muted-foreground">Click to load request/response details...</span>
+                    </div>
+                </td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+</div>
+
+{{if gt $pages 1}}
+<div class="mt-4 flex justify-center items-center space-x-2">
+    {{if gt $page 1}}
+    <button hx-get="{{.Prefix}}/htmx/traffic-table?page={{sub $page 1}}" hx-target="#traffic-table" hx-swap="innerHTML"
+        class="px-3 py-1 border border-border rounded text-sm text-foreground hover:bg-muted">&lt;</button>
+    {{end}}
+    <span class="text-sm text-muted-foreground">Page {{$page}} of {{$pages}}</span>
+    {{if lt $page $pages}}
+    <button hx-get="{{.Prefix}}/htmx/traffic-table?page={{add $page 1}}" hx-target="#traffic-table" hx-swap="innerHTML"
+        class="px-3 py-1 border border-border rounded text-sm text-foreground hover:bg-muted">&gt;</button>
+    {{end}}
+</div>
+{{end}}
+
+<div class="mt-4 text-center text-sm text-muted-foreground">
+    Showing {{len $items}} of {{$total}} transactions
+</div>
+{{else}}
+<div class="bg-card rounded-lg shadow-sm border border-border p-8 text-center">
+    <svg class="mx-auto h-12 w-12 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+    </svg>
+    {{if $.HasFilters}}
+    <h3 class="mt-2 text-sm font-medium text-foreground">No transactions match your filters</h3>
+    <p class="mt-1 text-sm text-muted-foreground">Try adjusting your filters or reset them.</p>
+    <button onclick="resetTrafficFilters()" class="mt-3 inline-flex items-center px-4 py-2 border border-border text-sm font-medium rounded-md text-secondary-foreground bg-background hover:bg-muted">Reset filters</button>
+    {{else}}
+    <h3 class="mt-2 text-sm font-medium text-foreground">No HTTP transactions</h3>
+    <p class="mt-1 text-sm text-muted-foreground">MITM-intercepted HTTP requests will appear here. Make sure MITM is enabled (CA cert installed).</p>
+    {{end}}
+</div>
+{{end}}

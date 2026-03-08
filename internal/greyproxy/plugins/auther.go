@@ -8,6 +8,7 @@ import (
 
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/auth"
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/logger"
+	xctx "github.com/greyhavenhq/greyproxy/internal/gostx/ctx"
 )
 
 // Auther implements auth.Authenticator.
@@ -46,9 +47,8 @@ func (a *Auther) Authenticate(ctx context.Context, user, password string, opts .
 }
 
 func extractClientIP(ctx context.Context) string {
-	// Try to get source address from context
-	// The SOCKS5 handler sets this in the context
-	if addr, ok := ctx.Value(srcAddrKey{}).(net.Addr); ok && addr != nil {
+	// Get source address from context using the canonical key from gostx/ctx
+	if addr := xctx.SrcAddrFromContext(ctx); addr != nil {
 		host, _, err := net.SplitHostPort(addr.String())
 		if err == nil {
 			return host
@@ -57,9 +57,6 @@ func extractClientIP(ctx context.Context) string {
 	}
 	return "unknown"
 }
-
-// srcAddrKey matches the key used in github.com/go-gost/x/ctx
-type srcAddrKey = struct{}
 
 // ParseClientID splits a composite client ID "ip|username" into its components.
 func ParseClientID(clientID string) (ip, username string) {

@@ -74,6 +74,9 @@ func NewRouter(s *Shared, pathPrefix string) (*gin.Engine, *gin.RouterGroup) {
 
 		api.GET("/settings", SettingsGetHandler(s))
 		api.PUT("/settings", SettingsUpdateHandler(s))
+
+		api.GET("/transactions", TransactionsListHandler(s))
+		api.GET("/transactions/:id", TransactionsDetailHandler(s))
 	}
 
 	// WebSocket

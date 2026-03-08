@@ -45,7 +45,7 @@ func TestResolveIdentity(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			container, _ := resolveIdentity(tt.clientID)
+			container, _ := ResolveIdentity(tt.clientID)
 			if container != tt.wantContainer {
 				t.Errorf("got %q, want %q", container, tt.wantContainer)
 			}

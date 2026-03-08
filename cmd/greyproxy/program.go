@@ -20,6 +20,7 @@ import (
 	greyproxy_api "github.com/greyhavenhq/greyproxy/internal/greyproxy/api"
 	greyproxy_plugins "github.com/greyhavenhq/greyproxy/internal/greyproxy/plugins"
 	greyproxy_ui "github.com/greyhavenhq/greyproxy/internal/greyproxy/ui"
+	"github.com/greyhavenhq/greyproxy/internal/gostx"
 	"github.com/greyhavenhq/greyproxy/internal/gostx/config"
 	"github.com/greyhavenhq/greyproxy/internal/gostx/config/loader"
 	auth_parser "github.com/greyhavenhq/greyproxy/internal/gostx/config/parsing/auth"
@@ -326,6 +327,45 @@ func (p *program) buildGreyproxyService() error {
 
 	// Set the shared DNS cache so the DNS handler wrapper can populate it
 	greyproxy_plugins.SetSharedDNSCache(shared.Cache)
+
+	// Wire MITM HTTP round-trip hook to store transactions in the database
+	gostx.SetGlobalMitmHook(func(info gostx.MitmRoundTripInfo) {
+		host, portStr, _ := net.SplitHostPort(info.Host)
+		if host == "" {
+			host = info.Host
+		}
+		port, _ := strconv.Atoi(portStr)
+		if port == 0 {
+			port = 443
+		}
+		containerName, _ := greyproxy_plugins.ResolveIdentity(info.ContainerName)
+		go func() {
+			txn, err := greyproxy.CreateHttpTransaction(shared.DB, greyproxy.HttpTransactionCreateInput{
+				ContainerName:       containerName,
+				DestinationHost:     host,
+				DestinationPort:     port,
+				Method:              info.Method,
+				URL:                 "https://" + info.Host + info.URI,
+				RequestHeaders:      info.RequestHeaders,
+				RequestBody:         info.RequestBody,
+				RequestContentType:  info.RequestHeaders.Get("Content-Type"),
+				StatusCode:          info.StatusCode,
+				ResponseHeaders:     info.ResponseHeaders,
+				ResponseBody:        info.ResponseBody,
+				ResponseContentType: info.ResponseHeaders.Get("Content-Type"),
+				DurationMs:          info.DurationMs,
+				Result:              "auto",
+			})
+			if err != nil {
+				log.Warnf("failed to store HTTP transaction: %v", err)
+				return
+			}
+			shared.Bus.Publish(greyproxy.Event{
+				Type: greyproxy.EventTransactionNew,
+				Data: txn.ToJSON(false),
+			})
+		}()
+	})
 
 	// Create and register gost plugins
 	autherPlugin := greyproxy_plugins.NewAuther()
