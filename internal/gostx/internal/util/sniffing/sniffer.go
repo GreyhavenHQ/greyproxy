@@ -101,6 +101,19 @@ func WithLog(log logger.Logger) HandleOption {
 	}
 }
 
+// HTTPRoundTripInfo contains decrypted HTTP request/response data from a MITM round-trip.
+type HTTPRoundTripInfo struct {
+	Host            string
+	Method          string
+	URI             string
+	Proto           string
+	StatusCode      int
+	RequestHeaders  http.Header
+	RequestBody     []byte
+	ResponseHeaders http.Header
+	ResponseBody    []byte
+}
+
 type Sniffer struct {
 	Websocket           bool
 	WebsocketSampleRate float64
@@ -116,6 +129,9 @@ type Sniffer struct {
 	MitmBypass         bypass.Bypass
 
 	ReadTimeout time.Duration
+
+	// OnHTTPRoundTrip is called after each decrypted HTTP round-trip with request/response details.
+	OnHTTPRoundTrip func(info HTTPRoundTripInfo)
 }
 
 func (h *Sniffer) HandleHTTP(ctx context.Context, network string, conn net.Conn, opts ...HandleOption) error {
@@ -272,6 +288,7 @@ func (h *Sniffer) serveH2(ctx context.Context, network string, conn net.Conn, ho
 			recorderOptions: h.RecorderOptions,
 			recorderObject:  ro,
 			log:             log,
+			onHTTPRoundTrip: h.OnHTTPRoundTrip,
 		},
 	})
 	return nil
@@ -326,11 +343,12 @@ func (h *Sniffer) httpRoundTrip(ctx context.Context, rw, cc io.ReadWriteCloser, 
 	}
 
 	var reqBody *xhttp.Body
-	if opts := h.RecorderOptions; opts != nil && opts.HTTPBody {
+	captureBody := (h.RecorderOptions != nil && h.RecorderOptions.HTTPBody) || h.OnHTTPRoundTrip != nil
+	if captureBody {
 		if req.Body != nil {
-			bodySize := opts.MaxBodySize
-			if bodySize <= 0 {
-				bodySize = DefaultBodySize
+			bodySize := DefaultBodySize
+			if opts := h.RecorderOptions; opts != nil && opts.MaxBodySize > 0 {
+				bodySize = opts.MaxBodySize
 			}
 			if bodySize > MaxBodySize {
 				bodySize = MaxBodySize
@@ -395,10 +413,10 @@ func (h *Sniffer) httpRoundTrip(ctx context.Context, rw, cc io.ReadWriteCloser, 
 	}
 
 	var respBody *xhttp.Body
-	if opts := h.RecorderOptions; opts != nil && opts.HTTPBody {
-		bodySize := opts.MaxBodySize
-		if bodySize <= 0 {
-			bodySize = DefaultBodySize
+	if captureBody {
+		bodySize := DefaultBodySize
+		if opts := h.RecorderOptions; opts != nil && opts.MaxBodySize > 0 {
+			bodySize = opts.MaxBodySize
 		}
 		if bodySize > MaxBodySize {
 			bodySize = MaxBodySize
@@ -417,6 +435,25 @@ func (h *Sniffer) httpRoundTrip(ctx context.Context, rw, cc io.ReadWriteCloser, 
 	if err != nil {
 		err = fmt.Errorf("write response: %w", err)
 		return
+	}
+
+	if h.OnHTTPRoundTrip != nil {
+		info := HTTPRoundTripInfo{
+			Host:            req.Host,
+			Method:          req.Method,
+			URI:             req.RequestURI,
+			Proto:           req.Proto,
+			StatusCode:      resp.StatusCode,
+			RequestHeaders:  ro.HTTP.Request.Header,
+			ResponseHeaders: ro.HTTP.Response.Header,
+		}
+		if reqBody != nil {
+			info.RequestBody = reqBody.Content()
+		}
+		if respBody != nil {
+			info.ResponseBody = respBody.Content()
+		}
+		h.OnHTTPRoundTrip(info)
 	}
 
 	if resp.ContentLength >= 0 {
@@ -789,6 +826,7 @@ type h2Handler struct {
 	recorderOptions *recorder.Options
 	recorderObject  *xrecorder.HandlerRecorderObject
 	log             logger.Logger
+	onHTTPRoundTrip func(info HTTPRoundTripInfo)
 }
 
 func (h *h2Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -848,11 +886,12 @@ func (h *h2Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var reqBody *xhttp.Body
-	if opts := h.recorderOptions; opts != nil && opts.HTTPBody {
+	h2CaptureBody := (h.recorderOptions != nil && h.recorderOptions.HTTPBody) || h.onHTTPRoundTrip != nil
+	if h2CaptureBody {
 		if req.Body != nil {
-			bodySize := opts.MaxBodySize
-			if bodySize <= 0 {
-				bodySize = DefaultBodySize
+			bodySize := DefaultBodySize
+			if opts := h.recorderOptions; opts != nil && opts.MaxBodySize > 0 {
+				bodySize = opts.MaxBodySize
 			}
 			if bodySize > MaxBodySize {
 				bodySize = MaxBodySize
@@ -888,10 +927,10 @@ func (h *h2Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(resp.StatusCode)
 
 	var respBody *xhttp.Body
-	if opts := h.recorderOptions; opts != nil && opts.HTTPBody {
-		bodySize := opts.MaxBodySize
-		if bodySize <= 0 {
-			bodySize = DefaultBodySize
+	if h2CaptureBody {
+		bodySize := DefaultBodySize
+		if opts := h.recorderOptions; opts != nil && opts.MaxBodySize > 0 {
+			bodySize = opts.MaxBodySize
 		}
 		if bodySize > MaxBodySize {
 			bodySize = MaxBodySize
@@ -905,6 +944,25 @@ func (h *h2Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if respBody != nil {
 		ro.HTTP.Response.Body = respBody.Content()
 		ro.HTTP.Response.ContentLength = respBody.Length()
+	}
+
+	if h.onHTTPRoundTrip != nil {
+		info := HTTPRoundTripInfo{
+			Host:            r.Host,
+			Method:          r.Method,
+			URI:             r.RequestURI,
+			Proto:           r.Proto,
+			StatusCode:      resp.StatusCode,
+			RequestHeaders:  ro.HTTP.Request.Header,
+			ResponseHeaders: ro.HTTP.Response.Header,
+		}
+		if reqBody != nil {
+			info.RequestBody = reqBody.Content()
+		}
+		if respBody != nil {
+			info.ResponseBody = respBody.Content()
+		}
+		h.onHTTPRoundTrip(info)
 	}
 }
 

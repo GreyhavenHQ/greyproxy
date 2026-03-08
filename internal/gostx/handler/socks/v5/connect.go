@@ -168,6 +168,7 @@ func (h *socks5Handler) handleConnect(ctx context.Context, conn net.Conn, networ
 			CertPool:            h.certPool,
 			MitmBypass:          h.md.mitmBypass,
 			ReadTimeout:         h.md.readTimeout,
+			OnHTTPRoundTrip:     mitmLogHook(log),
 		}
 
 		conn = xnet.NewReadWriteConn(br, conn, conn)
@@ -200,4 +201,22 @@ func (h *socks5Handler) handleConnect(ctx context.Context, conn net.Conn, networ
 	}).Infof("%s >-< %s", conn.RemoteAddr(), address)
 
 	return nil
+}
+
+func mitmLogHook(log logger.Logger) func(info sniffing.HTTPRoundTripInfo) {
+	return func(info sniffing.HTTPRoundTripInfo) {
+		log.Infof("[MITM] %s %s%s → %d", info.Method, info.Host, info.URI, info.StatusCode)
+		log.Debugf("[MITM] Request Headers: %v", info.RequestHeaders)
+		if len(info.RequestBody) > 0 {
+			log.Debugf("[MITM] Request Body: %s", info.RequestBody)
+		}
+		log.Debugf("[MITM] Response Headers: %v", info.ResponseHeaders)
+		if len(info.ResponseBody) > 0 {
+			bodyPreview := info.ResponseBody
+			if len(bodyPreview) > 512 {
+				bodyPreview = bodyPreview[:512]
+			}
+			log.Debugf("[MITM] Response Body (%d bytes): %s", len(info.ResponseBody), bodyPreview)
+		}
+	}
 }

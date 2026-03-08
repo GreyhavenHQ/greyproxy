@@ -1,0 +1,176 @@
+package main
+
+import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"fmt"
+	"math/big"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"time"
+)
+
+func handleCert(args []string) {
+	if len(args) == 0 {
+		fmt.Fprintf(os.Stderr, `Usage: greyproxy cert <command>
+
+Commands:
+  generate    Generate CA certificate and key pair
+  install     Trust the CA certificate on the OS
+
+Options:
+  -f          Force overwrite existing files (generate only)
+`)
+		os.Exit(1)
+	}
+
+	switch args[0] {
+	case "generate":
+		force := len(args) > 1 && args[1] == "-f"
+		handleCertGenerate(force)
+	case "install":
+		handleCertInstall()
+	default:
+		fmt.Fprintf(os.Stderr, "unknown cert command: %s\n", args[0])
+		os.Exit(1)
+	}
+}
+
+func handleCertGenerate(force bool) {
+	dataDir := greyproxyDataHome()
+	certFile := filepath.Join(dataDir, "ca-cert.pem")
+	keyFile := filepath.Join(dataDir, "ca-key.pem")
+
+	if !force {
+		if _, err := os.Stat(certFile); err == nil {
+			fmt.Fprintf(os.Stderr, "CA certificate already exists: %s\nUse -f to overwrite.\n", certFile)
+			os.Exit(1)
+		}
+		if _, err := os.Stat(keyFile); err == nil {
+			fmt.Fprintf(os.Stderr, "CA key already exists: %s\nUse -f to overwrite.\n", keyFile)
+			os.Exit(1)
+		}
+	}
+
+	// Generate ECDSA P-256 key
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to generate private key: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Create self-signed CA certificate
+	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to generate serial number: %v\n", err)
+		os.Exit(1)
+	}
+
+	template := &x509.Certificate{
+		SerialNumber: serialNumber,
+		Subject: pkix.Name{
+			CommonName: "Greyproxy CA",
+		},
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().Add(10 * 365 * 24 * time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		MaxPathLen:            0,
+		MaxPathLenZero:        true,
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &privateKey.PublicKey, privateKey)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to create certificate: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Ensure data directory exists
+	if err := os.MkdirAll(dataDir, 0700); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to create data directory: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Write certificate
+	certOut, err := os.OpenFile(certFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to write certificate: %v\n", err)
+		os.Exit(1)
+	}
+	if err := pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: certDER}); err != nil {
+		certOut.Close()
+		fmt.Fprintf(os.Stderr, "failed to encode certificate: %v\n", err)
+		os.Exit(1)
+	}
+	certOut.Close()
+
+	// Write private key
+	keyBytes, err := x509.MarshalECPrivateKey(privateKey)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to marshal private key: %v\n", err)
+		os.Exit(1)
+	}
+
+	keyOut, err := os.OpenFile(keyFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to write key: %v\n", err)
+		os.Exit(1)
+	}
+	if err := pem.Encode(keyOut, &pem.Block{Type: "EC PRIVATE KEY", Bytes: keyBytes}); err != nil {
+		keyOut.Close()
+		fmt.Fprintf(os.Stderr, "failed to encode key: %v\n", err)
+		os.Exit(1)
+	}
+	keyOut.Close()
+
+	fmt.Printf("CA certificate: %s\n", certFile)
+	fmt.Printf("CA private key: %s\n", keyFile)
+	fmt.Println("\nRun 'greyproxy cert install' to trust this CA on your system.")
+}
+
+func handleCertInstall() {
+	certFile := filepath.Join(greyproxyDataHome(), "ca-cert.pem")
+
+	if _, err := os.Stat(certFile); os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "CA certificate not found: %s\nRun 'greyproxy cert generate' first.\n", certFile)
+		os.Exit(1)
+	}
+
+	switch runtime.GOOS {
+	case "darwin":
+		// Remove any existing Greyproxy CA cert to avoid errSecDuplicateItem (-25294)
+		exec.Command("security", "delete-certificate", "-c", "Greyproxy CA").Run()
+
+		fmt.Println("Installing CA certificate into system trust store (requires sudo)...")
+		cmd := exec.Command("sudo", "security", "add-trusted-cert",
+			"-d", "-r", "trustRoot",
+			"-k", "/Library/Keychains/System.keychain",
+			certFile,
+		)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		cmd.Stdin = os.Stdin
+		if err := cmd.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "\nAutomatic install failed. Please run manually:\n\n")
+			fmt.Fprintf(os.Stderr, "  sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain \"%s\"\n\n", certFile)
+			os.Exit(1)
+		}
+		fmt.Println("CA certificate installed and trusted.")
+
+	case "linux":
+		fmt.Printf("To trust the CA certificate on Linux, run:\n\n")
+		fmt.Printf("  sudo cp %s /usr/local/share/ca-certificates/greyproxy-ca.crt\n", certFile)
+		fmt.Printf("  sudo update-ca-certificates\n")
+
+	default:
+		fmt.Printf("CA certificate is at: %s\n", certFile)
+		fmt.Printf("Please install it manually in your OS trust store.\n")
+	}
+}

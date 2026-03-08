@@ -64,6 +64,29 @@ func (p *program) Start(s service.Service) error {
 		os.Exit(0)
 	}
 
+	// Auto-inject MITM cert paths if CA files exist
+	certFile := filepath.Join(greyproxyDataHome(), "ca-cert.pem")
+	keyFile := filepath.Join(greyproxyDataHome(), "ca-key.pem")
+	if _, err := os.Stat(certFile); err == nil {
+		if _, err := os.Stat(keyFile); err == nil {
+			for _, svc := range cfg.Services {
+				if svc.Handler == nil {
+					continue
+				}
+				if svc.Handler.Type != "http" && svc.Handler.Type != "socks5" {
+					continue
+				}
+				if svc.Handler.Metadata == nil {
+					svc.Handler.Metadata = make(map[string]any)
+				}
+				if _, ok := svc.Handler.Metadata["mitm.certFile"]; !ok {
+					svc.Handler.Metadata["mitm.certFile"] = certFile
+					svc.Handler.Metadata["mitm.keyFile"] = keyFile
+				}
+			}
+		}
+	}
+
 	config.Set(cfg)
 
 	// Override DNS handler to capture responses for DNS cache population.

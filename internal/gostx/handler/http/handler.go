@@ -417,6 +417,7 @@ func (h *httpHandler) handleRequest(ctx context.Context, conn net.Conn, req *htt
 			CertPool:            h.certPool,
 			MitmBypass:          h.md.mitmBypass,
 			ReadTimeout:         h.md.readTimeout,
+			OnHTTPRoundTrip:     mitmLogHook(log),
 		}
 
 		conn = xnet.NewReadWriteConn(br, conn, conn)
@@ -999,6 +1000,24 @@ func (h *httpHandler) observeStats(ctx context.Context) {
 
 		case <-ctx.Done():
 			return
+		}
+	}
+}
+
+func mitmLogHook(log logger.Logger) func(info sniffing.HTTPRoundTripInfo) {
+	return func(info sniffing.HTTPRoundTripInfo) {
+		log.Infof("[MITM] %s %s%s → %d", info.Method, info.Host, info.URI, info.StatusCode)
+		log.Debugf("[MITM] Request Headers: %v", info.RequestHeaders)
+		if len(info.RequestBody) > 0 {
+			log.Debugf("[MITM] Request Body: %s", info.RequestBody)
+		}
+		log.Debugf("[MITM] Response Headers: %v", info.ResponseHeaders)
+		if len(info.ResponseBody) > 0 {
+			bodyPreview := info.ResponseBody
+			if len(bodyPreview) > 512 {
+				bodyPreview = bodyPreview[:512]
+			}
+			log.Debugf("[MITM] Response Body (%d bytes): %s", len(info.ResponseBody), bodyPreview)
 		}
 	}
 }

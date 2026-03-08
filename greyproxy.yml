@@ -31,6 +31,8 @@ services:
     handler:
       type: http
       auther: auther-0
+      metadata:
+        sniffing: true
     listener:
       type: tcp
     admission: admission-0
@@ -44,6 +46,8 @@ services:
     handler:
       type: socks5
       auther: auther-0
+      metadata:
+        sniffing: true
     listener:
       type: tcp
     admission: admission-0
