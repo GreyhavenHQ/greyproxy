@@ -7,11 +7,11 @@
     </div>
     <div class="bg-card rounded-lg border border-border shadow-sm p-6">
         <div class="text-sm font-medium text-muted-foreground">Allowed</div>
-        <div class="text-3xl font-bold text-green-600 mt-2">{{formatNumber $stats.Allowed}}</div>
+        <div class="text-3xl font-bold status-green mt-2">{{formatNumber $stats.Allowed}}</div>
     </div>
     <div class="bg-card rounded-lg border border-border shadow-sm p-6">
         <div class="text-sm font-medium text-muted-foreground">Blocked</div>
-        <div class="text-3xl font-bold text-red-600 mt-2">{{formatNumber $stats.Blocked}}</div>
+        <div class="text-3xl font-bold status-red mt-2">{{formatNumber $stats.Blocked}}</div>
     </div>
     <div class="bg-card rounded-lg border border-border shadow-sm p-6">
         <div class="text-sm font-medium text-muted-foreground">Allow Rate</div>
@@ -28,12 +28,12 @@
                 <div class="flex items-center space-x-2">
                     <div class="w-32 text-sm text-muted-foreground">{{.Timestamp}}</div>
                     <div class="flex-1 flex items-center">
-                        <div class="bg-green-600 h-8 rounded-l {{if eq .Blocked 0}}rounded-r{{end}} transition-all duration-300"
+                        <div class="bg-status-green h-8 rounded-l {{if eq .Blocked 0}}rounded-r{{end}} transition-all duration-300"
                              style="width: {{percent .Allowed $stats.TotalRequests}}%"
                              title="Allowed: {{.Allowed}}">
                             {{if gt .Allowed 0}}<span class="text-xs text-white px-2 leading-8">{{.Allowed}}</span>{{end}}
                         </div>
-                        <div class="bg-red-600 h-8 rounded-r {{if eq .Allowed 0}}rounded-l{{end}} transition-all duration-300"
+                        <div class="bg-status-red h-8 rounded-r {{if eq .Allowed 0}}rounded-l{{end}} transition-all duration-300"
                              style="width: {{percent .Blocked $stats.TotalRequests}}%"
                              title="Blocked: {{.Blocked}}">
                             {{if gt .Blocked 0}}<span class="text-xs text-white px-2 leading-8">{{.Blocked}}</span>{{end}}
@@ -44,8 +44,8 @@
             {{end}}
         </div>
         <div class="flex items-center justify-center space-x-6 mt-4 text-sm">
-            <div class="flex items-center space-x-2"><div class="w-4 h-4 bg-green-600 rounded"></div><span class="text-muted-foreground">Allowed</span></div>
-            <div class="flex items-center space-x-2"><div class="w-4 h-4 bg-red-600 rounded"></div><span class="text-muted-foreground">Blocked</span></div>
+            <div class="flex items-center space-x-2"><div class="w-4 h-4 bg-status-green rounded"></div><span class="text-muted-foreground">Allowed</span></div>
+            <div class="flex items-center space-x-2"><div class="w-4 h-4 bg-status-red rounded"></div><span class="text-muted-foreground">Blocked</span></div>
         </div>
     {{else}}
         <div class="text-center py-8 text-muted-foreground">No data available for the selected period</div>
@@ -65,8 +65,8 @@
                             <span class="text-muted-foreground">{{formatFloat .Percentage}}%</span>
                         </div>
                         <div class="flex items-center h-6 bg-muted rounded overflow-hidden">
-                            <div class="bg-green-600 h-full transition-all duration-300" style="width: {{percent .Allowed $stats.TotalRequests}}%" title="Allowed: {{.Allowed}}"></div>
-                            <div class="bg-red-600 h-full transition-all duration-300" style="width: {{percent .Blocked $stats.TotalRequests}}%" title="Blocked: {{.Blocked}}"></div>
+                            <div class="bg-status-green h-full transition-all duration-300" style="width: {{percent .Allowed $stats.TotalRequests}}%" title="Allowed: {{.Allowed}}"></div>
+                            <div class="bg-status-red h-full transition-all duration-300" style="width: {{percent .Blocked $stats.TotalRequests}}%" title="Blocked: {{.Blocked}}"></div>
                         </div>
                         <div class="flex justify-between text-xs text-muted-foreground mt-1">
                             <span>{{.Total}} total</span>
@@ -118,8 +118,8 @@
                 <div class="flex items-center justify-between p-1 border-b border-border last:border-b-0">
                     <div class="flex items-center space-x-3 flex-1">
                         <div class="flex-shrink-0">
-                            {{if eq .Result "allowed"}}<span class="text-green-600 text-lg">✓</span>
-                            {{else}}<span class="text-red-600 text-lg">✗</span>{{end}}
+                            {{if eq .Result "allowed"}}<span class="status-green text-lg">✓</span>
+                            {{else}}<span class="status-red text-lg">✗</span>{{end}}
                         </div>
                         <div class="text-sm text-muted-foreground w-24">{{formatTimeOnly .Timestamp}}</div>
                         <div class="text-sm font-medium text-foreground min-w-0 flex-1">{{.ContainerName}}</div>

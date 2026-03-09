@@ -22,6 +22,7 @@
     <!-- Custom Tailwind Config -->
     <script>
         tailwind.config = {
+            darkMode: 'class',
             theme: {
                 extend: {
                     fontFamily: {
@@ -29,21 +30,21 @@
                         serif: ['Source Serif Pro', 'Georgia', 'serif'],
                     },
                     colors: {
-                        background: 'rgb(255, 255, 255)',
-                        foreground: 'rgb(22, 22, 20)',
-                        card: 'rgb(249, 249, 247)',
-                        'card-foreground': 'rgb(22, 22, 20)',
-                        primary: 'rgb(217, 94, 42)',
-                        'primary-foreground': 'rgb(255, 255, 255)',
-                        secondary: 'rgb(249, 249, 247)',
-                        'secondary-foreground': 'rgb(22, 22, 20)',
-                        muted: 'rgb(240, 240, 236)',
-                        'muted-foreground': 'rgb(127, 127, 121)',
-                        accent: 'rgb(217, 94, 42)',
-                        destructive: 'rgb(180, 51, 50)',
-                        border: 'rgb(221, 221, 215)',
-                        input: 'rgb(221, 221, 215)',
-                        ring: 'rgb(217, 94, 42)',
+                        background: 'var(--color-background)',
+                        foreground: 'var(--color-foreground)',
+                        card: 'var(--color-card)',
+                        'card-foreground': 'var(--color-card-foreground)',
+                        primary: 'var(--color-primary)',
+                        'primary-foreground': 'var(--color-primary-foreground)',
+                        secondary: 'var(--color-secondary)',
+                        'secondary-foreground': 'var(--color-secondary-foreground)',
+                        muted: 'var(--color-muted)',
+                        'muted-foreground': 'var(--color-muted-foreground)',
+                        accent: 'var(--color-accent)',
+                        destructive: 'var(--color-destructive)',
+                        border: 'var(--color-border)',
+                        input: 'var(--color-input)',
+                        ring: 'var(--color-ring)',
                     },
                     borderRadius: {
                         lg: '0.625rem',
@@ -58,6 +59,44 @@
     {{block "head" .}}{{end}}
 
     <style>
+        :root {
+            --color-background: #ffffff;
+            --color-foreground: #161614;
+            --color-card: #f9f9f7;
+            --color-card-foreground: #161614;
+            --color-primary: rgb(217, 94, 42);
+            --color-primary-foreground: #ffffff;
+            --color-secondary: #f9f9f7;
+            --color-secondary-foreground: #161614;
+            --color-muted: #f0f0ec;
+            --color-muted-foreground: #7f7f79;
+            --color-accent: rgb(217, 94, 42);
+            --color-destructive: rgb(180, 51, 50);
+            --color-border: #ddddd7;
+            --color-input: #ddddd7;
+            --color-ring: rgb(217, 94, 42);
+            --color-green: #16a34a;
+            --color-red: #dc2626;
+        }
+        .dark {
+            --color-background: #141413;
+            --color-foreground: #ededeb;
+            --color-card: #1c1c1a;
+            --color-card-foreground: #ededeb;
+            --color-primary: rgb(217, 94, 42);
+            --color-primary-foreground: #ffffff;
+            --color-secondary: #232320;
+            --color-secondary-foreground: #ededeb;
+            --color-muted: #2a2a27;
+            --color-muted-foreground: #9a9a94;
+            --color-accent: rgb(217, 94, 42);
+            --color-destructive: rgb(220, 80, 78);
+            --color-border: #3a3a36;
+            --color-input: #3a3a36;
+            --color-ring: rgb(217, 94, 42);
+            --color-green: #22c55e;
+            --color-red: #ef4444;
+        }
         @font-face { font-family: 'Aspekta'; src: url('{{.Prefix}}/static/fonts/Aspekta-500.woff2') format('woff2'); font-weight: 500; font-style: normal; font-display: swap; }
         @font-face { font-family: 'Aspekta'; src: url('{{.Prefix}}/static/fonts/Aspekta-600.woff2') format('woff2'); font-weight: 600; font-style: normal; font-display: swap; }
         @font-face { font-family: 'Aspekta'; src: url('{{.Prefix}}/static/fonts/Aspekta-700.woff2') format('woff2'); font-weight: 700; font-style: normal; font-display: swap; }
@@ -69,6 +108,16 @@
         .htmx-request .htmx-indicator { display: inline-block; }
         .htmx-request.htmx-indicator { display: inline-block; }
     </style>
+
+    <!-- Theme initialization (runs before paint to prevent flash) -->
+    <script>
+        (function() {
+            var stored = localStorage.getItem('theme');
+            if (stored === 'dark' || (!stored && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+                document.documentElement.classList.add('dark');
+            }
+        })();
+    </script>
 </head>
 
 <body class="bg-background text-foreground min-h-screen">
@@ -77,11 +126,19 @@
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div class="flex justify-between h-12">
                 <a href="{{.Prefix}}/dashboard" class="flex-shrink-0 flex items-center cursor-pointer no-underline">
-                    <img src="{{.Prefix}}/static/icons/greyhaven-icon.svg" alt="Greyproxy" class="h-8 w-auto">
+                    <img src="{{.Prefix}}/static/icons/greyhaven-icon.svg" alt="Greyproxy" class="h-8 w-auto nav-logo">
                     <span class="ml-3 text-xl font-semibold font-sans text-foreground">Greyproxy</span>
                 </a>
                 <!-- Mobile menu button -->
-                <div class="flex items-center sm:hidden">
+                <div class="flex items-center sm:hidden space-x-1">
+                    <button type="button" onclick="toggleTheme()" class="btn-plain p-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted" title="Toggle theme">
+                        <svg class="h-5 w-5 hidden dark:block" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+                        </svg>
+                        <svg class="h-5 w-5 block dark:hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+                        </svg>
+                    </button>
                     <button type="button" onclick="document.getElementById('mobile-menu').classList.toggle('hidden')"
                         class="inline-flex items-center justify-center p-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted focus:outline-none focus:ring-2 focus:ring-inset focus:ring-primary">
                         <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
@@ -90,24 +147,32 @@
                     </button>
                 </div>
                 <!-- Desktop nav (right-aligned) -->
-                <div class="hidden sm:flex sm:space-x-8">
+                <div class="hidden sm:flex sm:space-x-8 sm:items-stretch">
                     <a href="{{.Prefix}}/dashboard"
-                        class="{{if contains .CurrentPath "/dashboard"}}border-primary text-foreground{{else}}border-transparent text-muted-foreground hover:border-border hover:text-foreground{{end}} inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium">
+                        class="{{if contains .CurrentPath "/dashboard"}}border-primary text-foreground{{else}}border-transparent text-muted-foreground hover:border-border hover:text-foreground{{end}} inline-flex items-center px-1 pt-[2px] border-b-2 text-sm font-medium">
                         Dashboard
                     </a>
                     <a href="{{.Prefix}}/pending"
-                        class="{{if contains .CurrentPath "/pending"}}border-primary text-foreground{{else}}border-transparent text-muted-foreground hover:border-border hover:text-foreground{{end}} inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium">
+                        class="{{if contains .CurrentPath "/pending"}}border-primary text-foreground{{else}}border-transparent text-muted-foreground hover:border-border hover:text-foreground{{end}} inline-flex items-center px-1 pt-[2px] border-b-2 text-sm font-medium">
                         Pending Requests
                         <span id="pending-badge" class="hidden ml-1.5 inline-flex items-center justify-center px-1.5 py-0.5 text-xs font-bold leading-none text-primary-foreground bg-primary rounded-full min-w-[1.25rem]"></span>
                     </a>
                     <a href="{{.Prefix}}/rules"
-                        class="{{if contains .CurrentPath "/rules"}}border-primary text-foreground{{else}}border-transparent text-muted-foreground hover:border-border hover:text-foreground{{end}} inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium">
+                        class="{{if contains .CurrentPath "/rules"}}border-primary text-foreground{{else}}border-transparent text-muted-foreground hover:border-border hover:text-foreground{{end}} inline-flex items-center px-1 pt-[2px] border-b-2 text-sm font-medium">
                         Rules
                     </a>
                     <a href="{{.Prefix}}/logs"
-                        class="{{if contains .CurrentPath "/logs"}}border-primary text-foreground{{else}}border-transparent text-muted-foreground hover:border-border hover:text-foreground{{end}} inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium">
+                        class="{{if contains .CurrentPath "/logs"}}border-primary text-foreground{{else}}border-transparent text-muted-foreground hover:border-border hover:text-foreground{{end}} inline-flex items-center px-1 pt-[2px] border-b-2 text-sm font-medium">
                         Logs
                     </a>
+                    <button type="button" onclick="toggleTheme()" class="btn-plain ml-2 p-1.5 self-center rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors" title="Toggle theme">
+                        <svg class="h-5 w-5 hidden dark:block" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+                        </svg>
+                        <svg class="h-5 w-5 block dark:hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+                        </svg>
+                    </button>
                 </div>
             </div>
             <!-- Mobile menu dropdown -->
@@ -144,6 +209,11 @@
     <div id="toast-container" class="fixed bottom-4 right-4 z-50 space-y-2"></div>
 
     <script>
+        function toggleTheme() {
+            var isDark = document.documentElement.classList.toggle('dark');
+            localStorage.setItem('theme', isDark ? 'dark' : 'light');
+        }
+
         function formatNumber(n) {
             return Number(n).toLocaleString();
         }

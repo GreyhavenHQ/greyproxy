@@ -4,14 +4,14 @@
 .htmx-request .htmx-indicator { display: inline-block; opacity: 1; transition: opacity 200ms ease-in; }
 .htmx-indicator { opacity: 0; transition: opacity 200ms ease-out; }
 ::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-track { background: rgb(240, 240, 236); }
-::-webkit-scrollbar-thumb { background: rgb(196, 196, 189); border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: rgb(87, 87, 83); }
+::-webkit-scrollbar-track { background: var(--color-muted); }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-muted-foreground); }
 #rule-modal { z-index: 9999; }
 @keyframes slideInRight { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
 #toast-container > div { animation: slideInRight 300ms ease-out; }
 .transition-colors { transition-property: background-color, border-color, color, fill, stroke; transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1); transition-duration: 150ms; }
-*:focus-visible { outline: 2px solid rgb(217, 94, 42); outline-offset: 2px; }
+*:focus-visible { outline: 2px solid var(--color-ring); outline-offset: 2px; }
 *:focus:not(:focus-visible) { outline: none; }
 button:hover:not(:disabled):not(.btn-plain):not(.btn-split-part):not(.btn-menu-item) { transform: translateY(-1px); transition: transform 100ms ease-out; }
 button:active:not(:disabled):not(.btn-plain):not(.btn-split-part):not(.btn-menu-item) { transform: translateY(0); }
@@ -19,10 +19,19 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 tbody tr { transition: background-color 150ms ease-in-out; }
 .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .inline-flex.items-center { vertical-align: middle; }
-input:focus, select:focus, textarea:focus { border-color: rgb(217, 94, 42); box-shadow: 0 0 0 3px rgba(217, 94, 42, 0.1); }
-input[type="checkbox"]:checked, input[type="radio"]:checked { background-color: rgb(217, 94, 42); border-color: rgb(217, 94, 42); }
+input:focus, select:focus, textarea:focus { border-color: var(--color-ring); box-shadow: 0 0 0 3px rgba(217, 94, 42, 0.1); }
+input[type="checkbox"]:checked, input[type="radio"]:checked { background-color: var(--color-primary); border-color: var(--color-primary); }
 #rule-modal .sm\:p-6 { padding: 1.5rem; }
 .font-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
 @media (max-width: 640px) { .max-w-7xl { padding-left: 1rem; padding-right: 1rem; } table { font-size: 0.875rem; } th, td { padding: 0.5rem; } }
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 .animate-spin { animation: spin 1s linear infinite; }
+/* Semantic status colors */
+.status-green { color: var(--color-green); }
+.status-red { color: var(--color-red); }
+.bg-status-green { background-color: var(--color-green); }
+.bg-status-red { background-color: var(--color-red); }
+/* Color scheme for form controls in dark mode */
+.dark select, .dark input[type="datetime-local"] { color-scheme: dark; }
+/* Invert dark logo to white in dark mode */
+.dark .nav-logo { filter: invert(1); }

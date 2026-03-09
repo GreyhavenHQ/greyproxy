@@ -30,8 +30,8 @@
                     </svg>
                 </td>
                 <td class="px-2 py-2 align-middle text-center">
-                    {{if eq .Result "allowed"}}<span class="text-green-600 text-sm leading-none">✓</span>
-                    {{else}}<span class="text-red-600 text-sm leading-none">✗</span>{{end}}
+                    {{if eq .Result "allowed"}}<span class="status-green text-sm leading-none">✓</span>
+                    {{else}}<span class="status-red text-sm leading-none">✗</span>{{end}}
                 </td>
                 <td class="px-4 py-2 whitespace-nowrap text-xs text-foreground">{{formatTime .Timestamp}}</td>
                 <td class="px-4 py-2 truncate">
