@@ -106,11 +106,13 @@
                         <!-- Dropdown menu -->
                         <div id="allow-menu-{{.ID}}" class="hidden absolute right-0 top-full mt-1 w-40 bg-card rounded-md shadow-lg border border-border z-50">
                             <div class="py-1">
+                                {{if gt .WaitingCount 0}}
                                 <button hx-post="{{$.Prefix}}/htmx/pending/{{.ID}}/allow" hx-vals='{"scope": "exact", "duration": "once"}'
                                     hx-target="#pending-list" hx-swap="innerHTML"
                                     class="btn-menu-item w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-muted transition-colors">
                                     Allow this time
                                 </button>
+                                {{end}}
                                 <button hx-post="{{$.Prefix}}/htmx/pending/{{.ID}}/allow" hx-vals='{"scope": "exact", "duration": "1h"}'
                                     hx-target="#pending-list" hx-swap="innerHTML"
                                     class="btn-menu-item w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-muted transition-colors">

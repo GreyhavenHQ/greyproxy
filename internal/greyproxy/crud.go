@@ -47,9 +47,10 @@ func CreateRule(db *DB, input RuleCreateInput) (*Rule, error) {
 		input.CreatedBy = "admin"
 	}
 
-	var expiresAt sql.NullTime
+	var expiresAt sql.NullString
 	if input.ExpiresInSeconds != nil && *input.ExpiresInSeconds > 0 {
-		expiresAt = sql.NullTime{Time: time.Now().Add(time.Duration(*input.ExpiresInSeconds) * time.Second), Valid: true}
+		t := time.Now().UTC().Add(time.Duration(*input.ExpiresInSeconds) * time.Second)
+		expiresAt = sql.NullString{String: t.Format("2006-01-02 15:04:05"), Valid: true}
 	}
 
 	var notes sql.NullString

@@ -112,6 +112,42 @@ func TestCreateRuleWithExpiration(t *testing.T) {
 	}
 }
 
+func TestTemporaryRuleVisibleInGetRules(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Create a temporary rule with 1h expiry
+	expires := int64(3600)
+	_, err := CreateRule(db, RuleCreateInput{
+		ContainerPattern:   "myapp",
+		DestinationPattern: "example.com",
+		ExpiresInSeconds:   &expires,
+		Action:             "allow",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The rule should be visible in GetRules (not filtered as expired)
+	rules, total, err := GetRules(db, RuleFilter{Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 {
+		t.Errorf("expected 1 rule, got %d (temporary rule incorrectly filtered as expired)", total)
+	}
+	if len(rules) != 1 {
+		t.Errorf("expected 1 rule in list, got %d", len(rules))
+	}
+
+	// The rule should also be found by FindMatchingRule
+	found := FindMatchingRule(db, "myapp", "example.com", 443, "")
+	if found == nil {
+		t.Error("expected FindMatchingRule to find the temporary rule")
+	} else if found.Action != "allow" {
+		t.Errorf("expected allow action, got %s", found.Action)
+	}
+}
+
 func TestGetRules(t *testing.T) {
 	db := setupTestDB(t)
 
