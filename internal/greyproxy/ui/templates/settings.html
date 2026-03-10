@@ -1,0 +1,199 @@
+{{template "base.html" .}}
+
+{{define "content"}}
+<div class="max-w-2xl mx-auto">
+    <h1 class="text-2xl font-bold mb-6">Settings</h1>
+
+    <!-- Appearance -->
+    <div class="bg-card border border-border rounded-lg p-6 mb-6">
+        <h2 class="text-lg font-semibold mb-4">Appearance</h2>
+        <div class="flex items-center justify-between">
+            <div>
+                <p class="font-medium">Theme</p>
+                <p class="text-sm text-muted-foreground">Select your preferred color scheme</p>
+            </div>
+            <div id="theme-selector" class="flex rounded-lg border border-border overflow-hidden">
+                <button type="button" onclick="setTheme('system')" data-theme="system"
+                    class="theme-btn px-3 py-1.5 text-sm font-medium border-r border-border transition-colors">
+                    System
+                </button>
+                <button type="button" onclick="setTheme('light')" data-theme="light"
+                    class="theme-btn px-3 py-1.5 text-sm font-medium border-r border-border transition-colors">
+                    Light
+                </button>
+                <button type="button" onclick="setTheme('dark')" data-theme="dark"
+                    class="theme-btn px-3 py-1.5 text-sm font-medium transition-colors">
+                    Dark
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Notifications -->
+    <div class="bg-card border border-border rounded-lg p-6 mb-6">
+        <h2 class="text-lg font-semibold mb-4">Notifications</h2>
+        <div id="notif-section">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="font-medium">Desktop Notifications</p>
+                    <p class="text-sm text-muted-foreground">Get notified when new requests are pending</p>
+                </div>
+                <button id="notif-toggle-btn" type="button" onclick="toggleNotifSetting()"
+                    class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-background"
+                    role="switch" aria-checked="false">
+                    <span id="notif-toggle-dot"
+                        class="inline-block h-4 w-4 transform rounded-full bg-white transition-transform translate-x-1"></span>
+                </button>
+            </div>
+
+            <!-- Backend status -->
+            <div id="notif-status" class="mt-4 text-sm"></div>
+
+            <!-- Install hint (shown when backend is unavailable) -->
+            <div id="notif-install-hint" class="hidden mt-4 p-4 bg-muted rounded-lg border border-border">
+                <div class="flex items-start gap-3">
+                    <svg class="h-5 w-5 text-primary flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                    </svg>
+                    <div>
+                        <p class="font-medium text-foreground">Notification tool not found</p>
+                        <p id="notif-install-text" class="mt-1 text-muted-foreground"></p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{{end}}
+
+{{define "scripts"}}
+<script>
+(function() {
+    var prefix = '{{.Prefix}}';
+    var currentTheme = 'system';
+    var notifEnabled = false;
+    var notifAvailable = false;
+
+    function updateThemeButtons(theme) {
+        currentTheme = theme;
+        document.querySelectorAll('.theme-btn').forEach(function(btn) {
+            var isActive = btn.getAttribute('data-theme') === theme;
+            if (isActive) {
+                btn.classList.add('bg-primary', 'text-primary-foreground');
+                btn.classList.remove('text-muted-foreground', 'hover:bg-muted');
+            } else {
+                btn.classList.remove('bg-primary', 'text-primary-foreground');
+                btn.classList.add('text-muted-foreground', 'hover:bg-muted');
+            }
+        });
+    }
+
+    function applyTheme(theme) {
+        if (theme === 'system') {
+            var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+            document.documentElement.classList.toggle('dark', prefersDark);
+            localStorage.removeItem('theme');
+        } else {
+            document.documentElement.classList.toggle('dark', theme === 'dark');
+            localStorage.setItem('theme', theme);
+        }
+    }
+
+    window.setTheme = function(theme) {
+        applyTheme(theme);
+        updateThemeButtons(theme);
+        fetch(prefix + '/api/settings', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ theme: theme })
+        }).catch(function() {});
+    };
+
+    function updateNotifToggle(enabled, available) {
+        notifEnabled = enabled;
+        notifAvailable = available;
+        var btn = document.getElementById('notif-toggle-btn');
+        var dot = document.getElementById('notif-toggle-dot');
+
+        if (!available) {
+            btn.disabled = true;
+            btn.classList.add('opacity-50', 'cursor-not-allowed');
+            btn.classList.remove('cursor-pointer');
+            btn.setAttribute('aria-checked', 'false');
+            btn.classList.remove('bg-primary');
+            btn.classList.add('bg-muted');
+            dot.classList.remove('translate-x-6');
+            dot.classList.add('translate-x-1');
+        } else {
+            btn.disabled = false;
+            btn.classList.remove('opacity-50', 'cursor-not-allowed');
+            btn.classList.add('cursor-pointer');
+            btn.setAttribute('aria-checked', String(enabled));
+            if (enabled) {
+                btn.classList.add('bg-primary');
+                btn.classList.remove('bg-muted');
+                dot.classList.add('translate-x-5');
+                dot.classList.remove('translate-x-1');
+            } else {
+                btn.classList.remove('bg-primary');
+                btn.classList.add('bg-muted');
+                dot.classList.remove('translate-x-5');
+                dot.classList.add('translate-x-1');
+            }
+        }
+    }
+
+    function updateNotifStatus(data) {
+        var statusEl = document.getElementById('notif-status');
+        var hintEl = document.getElementById('notif-install-hint');
+        var hintTextEl = document.getElementById('notif-install-text');
+
+        if (!data.available) {
+            statusEl.innerHTML = '<span class="text-muted-foreground">No notification backend available</span>';
+            hintEl.classList.remove('hidden');
+            hintTextEl.textContent = data.installHint || 'Desktop notifications are not supported on this platform.';
+        } else {
+            var status = data.enabled ? 'Enabled' : 'Disabled';
+            var statusColor = data.enabled ? 'text-[var(--color-green)]' : 'text-muted-foreground';
+            statusEl.innerHTML = '<span class="' + statusColor + '">' + status + '</span>' +
+                ' <span class="text-muted-foreground">&middot; Using ' + data.backend + '</span>';
+            hintEl.classList.add('hidden');
+        }
+    }
+
+    window.toggleNotifSetting = function() {
+        if (!notifAvailable) return;
+        var newState = !notifEnabled;
+        fetch(prefix + '/api/settings', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ notifications: { enabled: newState } })
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            updateNotifToggle(data.notifications.enabled, data.notifications.available);
+            updateNotifStatus(data.notifications);
+            showToast(data.notifications.enabled ? 'Desktop notifications enabled' : 'Desktop notifications disabled', 'success');
+        })
+        .catch(function() { showToast('Failed to update notification settings', 'error'); });
+    };
+
+    // Load settings from server
+    fetch(prefix + '/api/settings')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            updateThemeButtons(data.theme);
+            updateNotifToggle(data.notifications.enabled, data.notifications.available);
+            updateNotifStatus(data.notifications);
+        })
+        .catch(function() {});
+
+    // Listen for system theme changes when in 'system' mode
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function() {
+        if (currentTheme === 'system') {
+            applyTheme('system');
+        }
+    });
+})();
+</script>
+{{end}}

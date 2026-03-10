@@ -174,6 +174,7 @@ var (
 	pendingTmpl   = parseTemplate("base.html", "base.html", "pending.html")
 	rulesTmpl     = parseTemplate("base.html", "base.html", "rules.html")
 	logsTmpl      = parseTemplate("base.html", "base.html", "logs.html")
+	settingsTmpl  = parseTemplate("base.html", "base.html", "settings.html")
 
 	dashboardStatsTmpl = parseTemplate("dashboard_stats.html", "partials/dashboard_stats.html")
 	pendingListTmpl    = parseTemplate("pending_list.html", "partials/pending_list.html")
@@ -258,6 +259,15 @@ func RegisterPageRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 			CacheBuster: cacheBuster,
 			Title:       "Logs - Greyproxy",
 			Containers:  getContainers(db),
+		})
+	})
+
+	r.GET("/settings", func(c *gin.Context) {
+		settingsTmpl.Execute(c.Writer, PageData{
+			CurrentPath: c.Request.URL.Path,
+			Prefix:      prefix,
+			CacheBuster: cacheBuster,
+			Title:       "Settings - Greyproxy",
 		})
 	})
 }

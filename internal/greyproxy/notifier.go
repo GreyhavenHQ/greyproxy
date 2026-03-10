@@ -15,8 +15,8 @@ import (
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/logger"
 )
 
-// Notifier sends OS desktop notifications for pending requests when no
-// dashboard tab is focused. It notifies in two cases:
+// Notifier sends OS desktop notifications for pending requests.
+// It notifies in two cases:
 //   - A brand new pending request is created (EventPendingCreated).
 //   - A pending request that had zero waiting connections just got one
 //     (EventWaitersChanged with PreviousCount==0), provided it was not
@@ -35,10 +35,6 @@ type Notifier struct {
 
 	// Which notification backend to use (detected at startup).
 	backend notifyBackend
-
-	// Presence tracking: focused WS clients.
-	focusedMu sync.RWMutex
-	focused   map[string]bool // clientID -> focused
 
 	// Track when we last notified per pending key (container|host|port),
 	// so we can suppress rapid re-notifications.
@@ -60,8 +56,15 @@ type notifyBackend int
 const (
 	backendNone notifyBackend = iota
 	backendNotifySend
-	backendOsascript
+	backendTerminalNotifier
 )
+
+// NotificationBackendInfo describes the notification backend status.
+type NotificationBackendInfo struct {
+	Available   bool   `json:"available"`
+	Backend     string `json:"backend"`
+	InstallHint string `json:"installHint,omitempty"`
+}
 
 func NewNotifier(bus *EventBus, db *DB, enabled bool, dashboardURL string) *Notifier {
 	n := &Notifier{
@@ -69,7 +72,6 @@ func NewNotifier(bus *EventBus, db *DB, enabled bool, dashboardURL string) *Noti
 		db:           db,
 		log:          logger.Default().WithFields(map[string]any{"kind": "notifier"}),
 		dashboardURL: dashboardURL,
-		focused:      make(map[string]bool),
 		lastNotified: make(map[string]time.Time),
 		activeNotif:  make(map[int64]*os.Process),
 		stop:         make(chan struct{}),
@@ -86,17 +88,40 @@ func detectBackend() notifyBackend {
 			return backendNotifySend
 		}
 	case "darwin":
-		if _, err := exec.LookPath("osascript"); err == nil {
-			return backendOsascript
+		if _, err := exec.LookPath("terminal-notifier"); err == nil {
+			return backendTerminalNotifier
 		}
 	}
 	return backendNone
 }
 
+// BackendInfo returns information about the notification backend,
+// including availability and install instructions.
+func (n *Notifier) BackendInfo() NotificationBackendInfo {
+	info := NotificationBackendInfo{
+		Available: n.backend != backendNone,
+		Backend:   n.backendName(),
+	}
+	if !info.Available {
+		info.InstallHint = installHint()
+	}
+	return info
+}
+
+func installHint() string {
+	switch runtime.GOOS {
+	case "darwin":
+		return "Install terminal-notifier with: brew install terminal-notifier"
+	case "linux":
+		return "Install libnotify with: sudo apt install libnotify-bin (Debian/Ubuntu) or sudo dnf install libnotify-utils (Fedora)"
+	}
+	return "Desktop notifications are not supported on this platform."
+}
+
 // Start begins listening for events.
 func (n *Notifier) Start() {
 	if n.backend == backendNone {
-		n.log.Warn("no notification backend found (install libnotify on Linux); desktop notifications disabled")
+		n.log.Warn("no notification backend found; desktop notifications disabled")
 		n.enabled.Store(false)
 	}
 
@@ -145,8 +170,8 @@ func (n *Notifier) backendName() string {
 	switch n.backend {
 	case backendNotifySend:
 		return "notify-send"
-	case backendOsascript:
-		return "osascript"
+	case backendTerminalNotifier:
+		return "terminal-notifier"
 	default:
 		return "none"
 	}
@@ -173,34 +198,9 @@ func (n *Notifier) Enabled() bool {
 	return n.enabled.Load()
 }
 
-// SetClientFocused updates the focus state for a WS client.
-func (n *Notifier) SetClientFocused(clientID string, focused bool) {
-	n.focusedMu.Lock()
-	defer n.focusedMu.Unlock()
-	n.focused[clientID] = focused
-}
-
-// RemoveClient removes a WS client from presence tracking.
-func (n *Notifier) RemoveClient(clientID string) {
-	n.focusedMu.Lock()
-	defer n.focusedMu.Unlock()
-	delete(n.focused, clientID)
-}
-
-func (n *Notifier) hasAnyFocusedClient() bool {
-	n.focusedMu.RLock()
-	defer n.focusedMu.RUnlock()
-	for _, f := range n.focused {
-		if f {
-			return true
-		}
-	}
-	return false
-}
-
 // onPendingCreated handles a brand new pending request; always notify.
 func (n *Notifier) onPendingCreated(evt Event) {
-	if !n.shouldNotify() {
+	if !n.enabled.Load() {
 		return
 	}
 
@@ -218,7 +218,7 @@ func (n *Notifier) onPendingCreated(evt Event) {
 
 // onWaitersChanged handles when a pending goes from 0 waiters to 1+.
 func (n *Notifier) onWaitersChanged(evt Event) {
-	if !n.shouldNotify() {
+	if !n.enabled.Load() {
 		return
 	}
 
@@ -274,16 +274,6 @@ func (n *Notifier) onPendingResolved(evt Event) {
 
 	n.log.Debugf("pending %d resolved (%s)", pendingID, evt.Type)
 	n.closeNotification(pendingID)
-}
-
-func (n *Notifier) shouldNotify() bool {
-	if !n.enabled.Load() {
-		return false
-	}
-	if n.hasAnyFocusedClient() {
-		return false
-	}
-	return true
 }
 
 func (n *Notifier) recordNotified(key string) {
@@ -365,8 +355,8 @@ func (n *Notifier) sendNotification(title, body, url string, pendingID int64) {
 	switch n.backend {
 	case backendNotifySend:
 		n.sendLinux(title, body, url, pendingID)
-	case backendOsascript:
-		n.sendDarwin(title, body, url)
+	case backendTerminalNotifier:
+		n.sendDarwinTerminalNotifier(title, body, url, pendingID)
 	}
 }
 
@@ -410,12 +400,24 @@ func (n *Notifier) sendLinux(title, body, url string, pendingID int64) {
 	}()
 }
 
-func (n *Notifier) sendDarwin(title, body, url string) {
-	script := fmt.Sprintf(`display notification %q with title %q`, body, title)
+func (n *Notifier) sendDarwinTerminalNotifier(title, body, url string, pendingID int64) {
 	go func() {
-		cmd := exec.Command("osascript", "-e", script)
-		if err := cmd.Run(); err != nil {
-			n.log.Debugf("osascript: %v", err)
+		cmd := exec.Command("terminal-notifier",
+			"-title", title,
+			"-message", body,
+			"-open", url,
+			"-group", fmt.Sprintf("greyproxy-%d", pendingID),
+			"-sender", "com.apple.Safari",
+			"-timeout", "30",
+		)
+
+		if err := cmd.Start(); err != nil {
+			n.log.Debugf("terminal-notifier start: %v", err)
+			return
 		}
+
+		n.trackNotification(pendingID, cmd.Process)
+		cmd.Wait()
+		n.untrackNotification(pendingID)
 	}()
 }

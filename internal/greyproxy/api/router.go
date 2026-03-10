@@ -16,6 +16,7 @@ type Shared struct {
 	Waiters     *greyproxy.WaiterTracker
 	ConnTracker *greyproxy.ConnTracker
 	Notifier    *greyproxy.Notifier
+	Settings    *greyproxy.SettingsManager
 	Version     string
 	Ports       map[string]int
 }
@@ -70,6 +71,9 @@ func NewRouter(s *Shared, pathPrefix string) (*gin.Engine, *gin.RouterGroup) {
 
 		api.GET("/notifications", NotificationsStatusHandler(s))
 		api.PUT("/notifications", NotificationsToggleHandler(s))
+
+		api.GET("/settings", SettingsGetHandler(s))
+		api.PUT("/settings", SettingsUpdateHandler(s))
 	}
 
 	// WebSocket

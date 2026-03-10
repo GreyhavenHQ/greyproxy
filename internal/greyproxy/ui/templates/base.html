@@ -131,14 +131,12 @@
                 </a>
                 <!-- Mobile menu button -->
                 <div class="flex items-center sm:hidden space-x-1">
-                    <button type="button" onclick="toggleTheme()" class="btn-plain p-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted" title="Toggle theme">
-                        <svg class="h-5 w-5 hidden dark:block" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+                    <a href="{{.Prefix}}/settings" class="btn-plain p-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted" title="Settings">
+                        <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z" />
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                         </svg>
-                        <svg class="h-5 w-5 block dark:hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
-                        </svg>
-                    </button>
+                    </a>
                     <button type="button" onclick="document.getElementById('mobile-menu').classList.toggle('hidden')"
                         class="inline-flex items-center justify-center p-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted focus:outline-none focus:ring-2 focus:ring-inset focus:ring-primary">
                         <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
@@ -165,24 +163,14 @@
                         class="{{if contains .CurrentPath "/logs"}}border-primary text-foreground{{else}}border-transparent text-muted-foreground hover:border-border hover:text-foreground{{end}} inline-flex items-center px-1 pt-[2px] border-b-2 text-sm font-medium">
                         Logs
                     </a>
-                    <button id="notif-toggle" type="button" onclick="toggleNotifications()" class="btn-plain ml-2 p-1.5 self-center rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors" title="Toggle desktop notifications">
-                        <!-- Bell icon (notifications enabled) -->
-                        <svg id="notif-on-icon" class="h-5 w-5 hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75v-.7V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0" />
+                    <a href="{{.Prefix}}/settings"
+                        class="{{if contains .CurrentPath "/settings"}}text-foreground{{else}}text-muted-foreground hover:text-foreground{{end}} btn-plain ml-2 p-1.5 self-center rounded-md hover:bg-muted transition-colors"
+                        title="Settings">
+                        <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z" />
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                         </svg>
-                        <!-- Bell-slash icon (notifications disabled) -->
-                        <svg id="notif-off-icon" class="h-5 w-5 hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M9.143 17.082a24.248 24.248 0 003.357.916m0 0a3 3 0 005.714 0m-5.714 0a24.255 24.255 0 01-5.714 0M3.124 7.5A8.969 8.969 0 006 9.75v.7V9a6 6 0 0112 0v.75a8.967 8.967 0 002.312 6.022c.458-.169.91-.353 1.355-.55M3.124 7.5L2.25 2.25l19.5 19.5" />
-                        </svg>
-                    </button>
-                    <button type="button" onclick="toggleTheme()" class="btn-plain ml-2 p-1.5 self-center rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors" title="Toggle theme">
-                        <svg class="h-5 w-5 hidden dark:block" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
-                        </svg>
-                        <svg class="h-5 w-5 block dark:hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
-                        </svg>
-                    </button>
+                    </a>
                 </div>
             </div>
             <!-- Mobile menu dropdown -->
@@ -205,6 +193,10 @@
                         class="{{if contains .CurrentPath "/logs"}}bg-muted border-primary text-foreground{{else}}border-transparent text-muted-foreground hover:bg-muted hover:text-foreground{{end}} block pl-3 pr-4 py-2 border-l-4 text-base font-medium">
                         Logs
                     </a>
+                    <a href="{{.Prefix}}/settings"
+                        class="{{if contains .CurrentPath "/settings"}}bg-muted border-primary text-foreground{{else}}border-transparent text-muted-foreground hover:bg-muted hover:text-foreground{{end}} block pl-3 pr-4 py-2 border-l-4 text-base font-medium">
+                        Settings
+                    </a>
                 </div>
             </div>
         </div>
@@ -223,38 +215,6 @@
             var isDark = document.documentElement.classList.toggle('dark');
             localStorage.setItem('theme', isDark ? 'dark' : 'light');
         }
-
-        // Notification toggle
-        function updateNotifIcon(enabled) {
-            document.getElementById('notif-on-icon').classList.toggle('hidden', !enabled);
-            document.getElementById('notif-off-icon').classList.toggle('hidden', enabled);
-            document.getElementById('notif-toggle').title = enabled ? 'Desktop notifications ON (click to disable)' : 'Desktop notifications OFF (click to enable)';
-        }
-
-        function toggleNotifications() {
-            fetch('{{.Prefix}}/api/notifications')
-                .then(function(r) { return r.json(); })
-                .then(function(data) {
-                    var newState = !data.enabled;
-                    return fetch('{{.Prefix}}/api/notifications', {
-                        method: 'PUT',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ enabled: newState })
-                    });
-                })
-                .then(function(r) { return r.json(); })
-                .then(function(data) {
-                    updateNotifIcon(data.enabled);
-                    showToast(data.enabled ? 'Desktop notifications enabled' : 'Desktop notifications disabled', 'success');
-                })
-                .catch(function() { showToast('Failed to toggle notifications', 'error'); });
-        }
-
-        // Load initial notification state
-        fetch('{{.Prefix}}/api/notifications')
-            .then(function(r) { return r.json(); })
-            .then(function(data) { updateNotifIcon(data.enabled); })
-            .catch(function() {});
 
         function formatNumber(n) {
             return Number(n).toLocaleString();
@@ -320,8 +280,6 @@
                 ws.onopen = function() {
                     reconnectDelay = 1000;
                     fetchPendingCount();
-                    // Report initial focus state
-                    sendPresence();
                 };
 
                 ws.onmessage = function(event) {
@@ -341,21 +299,6 @@
 
                 ws.onerror = function() { ws.close(); };
             }
-
-            function sendPresence() {
-                if (ws && ws.readyState === WebSocket.OPEN) {
-                    var focused = document.visibilityState === 'visible' && document.hasFocus();
-                    ws.send(JSON.stringify({ command: 'presence', focused: focused }));
-                }
-            }
-
-            document.addEventListener('visibilitychange', sendPresence);
-            window.addEventListener('focus', sendPresence);
-            window.addEventListener('blur', sendPresence);
-
-            // Periodic heartbeat so the server always has fresh presence state,
-            // even if a focus/blur event was missed.
-            setInterval(sendPresence, 10000);
 
             fetchPendingCount();
             connect();

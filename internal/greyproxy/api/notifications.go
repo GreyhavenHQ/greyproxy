@@ -4,22 +4,24 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	greyproxy "github.com/greyhavenhq/greyproxy/internal/greyproxy"
 )
 
 func NotificationsStatusHandler(s *Shared) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if s.Notifier == nil {
+		if s.Settings == nil {
 			c.JSON(http.StatusOK, gin.H{"enabled": false})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"enabled": s.Notifier.Enabled()})
+		resolved := s.Settings.Get()
+		c.JSON(http.StatusOK, gin.H{"enabled": resolved.NotificationsEnabled})
 	}
 }
 
 func NotificationsToggleHandler(s *Shared) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if s.Notifier == nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "notifier not initialized"})
+		if s.Settings == nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "settings not initialized"})
 			return
 		}
 		var body struct {
@@ -29,7 +31,12 @@ func NotificationsToggleHandler(s *Shared) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		s.Notifier.SetEnabled(body.Enabled)
-		c.JSON(http.StatusOK, gin.H{"enabled": s.Notifier.Enabled()})
+		patch := greyproxy.UserSettings{NotificationsEnabled: &body.Enabled}
+		resolved, err := s.Settings.Update(patch)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"enabled": resolved.NotificationsEnabled})
 	}
 }
