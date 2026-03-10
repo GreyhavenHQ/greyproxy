@@ -9,7 +9,7 @@
 
     <div class="divide-y divide-border">
         {{range $items}}
-        <div class="p-4 hover:bg-muted transition-colors">
+        <div class="p-4 hover:bg-muted transition-colors" data-pending-id="{{.ID}}">
             <div class="flex items-start space-x-4">
                 <div class="pt-1">
                     <input type="checkbox" name="selected" value="{{.ID}}" class="h-4 w-4 text-primary focus:ring-ring border-border rounded">

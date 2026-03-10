@@ -105,5 +105,26 @@
             document.body.dispatchEvent(new CustomEvent('pending-refresh'));
         }, 500);
     });
+
+    // Highlight a specific pending request when linked from a notification.
+    function highlightPending() {
+        var params = new URLSearchParams(window.location.search);
+        var id = params.get('highlight');
+        if (!id) return;
+        var row = document.querySelector('[data-pending-id="' + id + '"]');
+        if (!row) return;
+        row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        row.classList.add('pending-highlight');
+        // Clean up the URL param so refreshes don't re-highlight.
+        params.delete('highlight');
+        var newURL = window.location.pathname + (params.toString() ? '?' + params.toString() : '');
+        history.replaceState(null, '', newURL);
+    }
+    // Run after the HTMX partial loads the list.
+    document.body.addEventListener('htmx:afterSwap', function(e) {
+        if (e.detail.target && e.detail.target.id === 'pending-list') {
+            highlightPending();
+        }
+    });
 </script>
 {{end}}

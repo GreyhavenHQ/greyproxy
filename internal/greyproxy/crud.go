@@ -584,6 +584,23 @@ func GetPendingCount(db *DB) (int, error) {
 	return count, err
 }
 
+// FindPendingByDestination looks up a pending request by container, host and port.
+func FindPendingByDestination(db *DB, containerName, host string, port int) *PendingRequest {
+	var p PendingRequest
+	err := db.ReadDB().QueryRow(
+		`SELECT id, container_name, container_id, destination_host, destination_port,
+		        resolved_hostname, first_seen, last_seen, attempt_count
+		 FROM pending_requests
+		 WHERE container_name = ? AND destination_host = ? AND destination_port = ?`,
+		containerName, host, port,
+	).Scan(&p.ID, &p.ContainerName, &p.ContainerID, &p.DestinationHost,
+		&p.DestinationPort, &p.ResolvedHostname, &p.FirstSeen, &p.LastSeen, &p.AttemptCount)
+	if err != nil {
+		return nil
+	}
+	return &p
+}
+
 func DeletePending(db *DB, id int64) (bool, error) {
 	db.Lock()
 	defer db.Unlock()

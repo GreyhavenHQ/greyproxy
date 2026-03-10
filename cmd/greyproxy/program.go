@@ -263,6 +263,10 @@ func (p *program) buildGreyproxyService() error {
 	shared.Bus = tmpSvc.Bus
 	shared.Waiters = tmpSvc.Waiters
 	shared.ConnTracker = greyproxy.NewConnTracker()
+
+	// Build dashboard URL for notification click-to-open.
+	dashboardURL := "http://localhost" + gaCfg.Addr + strings.TrimRight(gaCfg.PathPrefix, "/") + "/pending"
+	shared.Notifier = greyproxy.NewNotifier(shared.Bus, shared.DB, gaCfg.Notifications.Enabled, dashboardURL)
 	shared.Version = version
 
 	// Collect listening ports for the health endpoint
@@ -311,6 +315,7 @@ func (p *program) buildGreyproxyService() error {
 	svc.SetHandler(router)
 
 	p.srvGreyproxy = svc
+	shared.Notifier.Start()
 
 	go func() {
 		log.Info("listening on ", svc.Addr())

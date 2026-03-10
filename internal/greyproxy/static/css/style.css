@@ -35,3 +35,6 @@ input[type="checkbox"]:checked, input[type="radio"]:checked { background-color: 
 .dark select, .dark input[type="datetime-local"] { color-scheme: dark; }
 /* Invert dark logo to white in dark mode */
 .dark .nav-logo { filter: invert(1); }
+/* Highlight animation for pending rows linked from notifications */
+@keyframes highlight-fade { 0% { background-color: rgba(217, 94, 42, 0.25); } 100% { background-color: transparent; } }
+.pending-highlight { animation: highlight-fade 3s ease-out; }

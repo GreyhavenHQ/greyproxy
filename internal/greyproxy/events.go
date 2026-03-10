@@ -20,6 +20,16 @@ type Event struct {
 	Data any    `json:"data"`
 }
 
+// WaiterChangedData is published with EventWaitersChanged when a
+// pending request's waiter count changes.
+type WaiterChangedData struct {
+	ContainerName string `json:"container_name"`
+	Host          string `json:"host"`
+	Port          int    `json:"port"`
+	PreviousCount int    `json:"previous_count"`
+	CurrentCount  int    `json:"current_count"`
+}
+
 func (e Event) JSON() []byte {
 	b, _ := json.Marshal(e)
 	return b

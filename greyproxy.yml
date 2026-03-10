@@ -21,6 +21,8 @@ greyproxy:
   admission: admission-0
   bypass: bypass-0
   resolver: resolver-0
+  notifications:
+    enabled: true
 
 services:
   # HTTP/HTTPS proxy on port 3128 (backward compatible with Squid)

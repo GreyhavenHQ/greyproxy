@@ -33,22 +33,27 @@ func (w *WaiterTracker) Add(containerName, host string, port int) func() {
 	key := waiterKey(containerName, host, port)
 
 	w.mu.Lock()
+	prev := w.counts[key]
 	w.counts[key]++
+	cur := w.counts[key]
 	w.mu.Unlock()
 
-	w.publishChanged()
+	w.publishChanged(containerName, host, port, prev, cur)
 
 	var once sync.Once
 	return func() {
 		once.Do(func() {
 			w.mu.Lock()
+			prev := w.counts[key]
 			w.counts[key]--
-			if w.counts[key] <= 0 {
+			cur := w.counts[key]
+			if cur <= 0 {
 				delete(w.counts, key)
+				cur = 0
 			}
 			w.mu.Unlock()
 
-			w.publishChanged()
+			w.publishChanged(containerName, host, port, prev, cur)
 		})
 	}
 }
@@ -63,8 +68,17 @@ func (w *WaiterTracker) Get(containerName, host string, port int) int {
 	return w.counts[key]
 }
 
-func (w *WaiterTracker) publishChanged() {
+func (w *WaiterTracker) publishChanged(containerName, host string, port, prev, cur int) {
 	if w.bus != nil {
-		w.bus.Publish(Event{Type: EventWaitersChanged})
+		w.bus.Publish(Event{
+			Type: EventWaitersChanged,
+			Data: WaiterChangedData{
+				ContainerName: containerName,
+				Host:          host,
+				Port:          port,
+				PreviousCount: prev,
+				CurrentCount:  cur,
+			},
+		})
 	}
 }
