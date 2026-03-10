@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	defaults "github.com/greyhavenhq/greyproxy"
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/logger"
@@ -367,6 +368,94 @@ func (p *program) buildGreyproxyService() error {
 		}()
 	})
 
+	// Wire MITM request-level hold hook for request approval before forwarding
+	gostx.SetGlobalMitmHoldHook(func(ctx context.Context, info gostx.MitmRequestHoldInfo) error {
+		host, portStr, _ := net.SplitHostPort(info.Host)
+		if host == "" {
+			host = info.Host
+		}
+		port, _ := strconv.Atoi(portStr)
+		if port == 0 {
+			port = 443
+		}
+		containerName, _ := greyproxy_plugins.ResolveIdentity(info.ContainerName)
+
+		// Resolve hostname from cache
+		resolvedHostname := shared.Cache.ResolveIP(host)
+		if resolvedHostname == "" {
+			resolvedHostname = host
+		}
+
+		// Two-pass rule evaluation:
+		// 1. Check for request-specific rules (method/path non-wildcard) first
+		// 2. Fall back to destination-level rules
+
+		// Pass 1: Find a rule with specific method or path patterns
+		requestRule := greyproxy.FindRequestSpecificRule(shared.DB, containerName, host, port, resolvedHostname, info.Method, info.URI)
+		if requestRule != nil {
+			if requestRule.Action == "deny" {
+				return gostx.ErrRequestDenied
+			}
+			switch requestRule.ContentAction {
+			case "allow":
+				return nil
+			case "deny":
+				return gostx.ErrRequestDenied
+			case "hold":
+				// Fall through to hold logic below
+				goto hold
+			}
+		}
+
+		// Pass 2: Destination-level rule (backward compatible)
+		{
+			destRule := greyproxy.FindMatchingRule(shared.DB, containerName, host, port, resolvedHostname)
+			if destRule != nil {
+				if destRule.Action == "deny" {
+					return gostx.ErrRequestDenied
+				}
+				// Existing allow rules with default content_action auto-forward everything
+				if destRule.ContentAction == "allow" || destRule.ContentAction == "" {
+					return nil
+				}
+				if destRule.ContentAction == "deny" {
+					return gostx.ErrRequestDenied
+				}
+				// content_action == "hold" — fall through
+			} else {
+				// No rule at all — this shouldn't happen since connection was already allowed,
+				// but allow to avoid blocking
+				return nil
+			}
+		}
+
+	hold:
+		// Hold: create pending HTTP request and wait for approval
+		pending, isNew, err := greyproxy.CreatePendingHttpRequest(shared.DB, greyproxy.PendingHttpRequestCreateInput{
+			ContainerName:   containerName,
+			DestinationHost: host,
+			DestinationPort: port,
+			Method:          info.Method,
+			URL:             "https://" + info.Host + info.URI,
+			RequestHeaders:  info.RequestHeaders,
+			RequestBody:     info.RequestBody,
+		})
+		if err != nil {
+			log.Warnf("failed to create pending http request: %v", err)
+			return nil // Allow on error to avoid blocking the agent
+		}
+
+		if isNew {
+			shared.Bus.Publish(greyproxy.Event{
+				Type: greyproxy.EventHttpPendingCreated,
+				Data: pending.ToJSON(false),
+			})
+		}
+
+		// Wait for approval
+		return waitForHttpApproval(ctx, shared, pending.ID, log)
+	})
+
 	// Create and register gost plugins
 	autherPlugin := greyproxy_plugins.NewAuther()
 	admissionPlugin := greyproxy_plugins.NewAdmission()
@@ -402,6 +491,47 @@ func (p *program) buildGreyproxyService() error {
 	}()
 
 	return nil
+}
+
+// requestHoldTimeout is how long to wait for user approval on a held HTTP request.
+const requestHoldTimeout = 60 * time.Second
+
+func waitForHttpApproval(ctx context.Context, shared *greyproxy_api.Shared, pendingID int64, log logger.Logger) error {
+	ch := shared.Bus.Subscribe(16)
+	defer shared.Bus.Unsubscribe(ch)
+
+	timer := time.NewTimer(requestHoldTimeout)
+	defer timer.Stop()
+
+	log.Debugf("HOLD HTTP request %d, waiting up to %s for approval", pendingID, requestHoldTimeout)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return gostx.ErrRequestDenied
+		case <-timer.C:
+			// Timeout — deny
+			greyproxy.ResolvePendingHttpRequest(shared.DB, pendingID, "denied")
+			return gostx.ErrRequestDenied
+		case evt := <-ch:
+			switch evt.Type {
+			case greyproxy.EventHttpPendingAllowed:
+				if data, ok := evt.Data.(map[string]any); ok {
+					if id, ok := data["pending_id"].(int64); ok && id == pendingID {
+						log.Debugf("APPROVED HTTP request %d", pendingID)
+						return nil
+					}
+				}
+			case greyproxy.EventHttpPendingDenied:
+				if data, ok := evt.Data.(map[string]any); ok {
+					if id, ok := data["pending_id"].(int64); ok && id == pendingID {
+						log.Debugf("DENIED HTTP request %d", pendingID)
+						return gostx.ErrRequestDenied
+					}
+				}
+			}
+		}
+	}
 }
 
 func buildMetricsService(cfg *config.MetricsConfig) (svccore.Service, error) {

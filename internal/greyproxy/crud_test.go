@@ -618,7 +618,7 @@ func TestMigrations(t *testing.T) {
 	db := setupTestDB(t)
 
 	// Verify tables exist
-	tables := []string{"rules", "pending_requests", "request_logs", "http_transactions", "schema_migrations"}
+	tables := []string{"rules", "pending_requests", "request_logs", "http_transactions", "pending_http_requests", "schema_migrations"}
 	for _, table := range tables {
 		var name string
 		err := db.ReadDB().QueryRow(
@@ -637,8 +637,8 @@ func TestMigrations(t *testing.T) {
 	// Verify migration versions were recorded
 	var count int
 	db.ReadDB().QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&count)
-	if count != 4 {
-		t.Errorf("expected 4 migration versions, got %d", count)
+	if count != 6 {
+		t.Errorf("expected 6 migration versions, got %d", count)
 	}
 }
 

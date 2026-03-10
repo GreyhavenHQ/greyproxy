@@ -77,6 +77,13 @@ func NewRouter(s *Shared, pathPrefix string) (*gin.Engine, *gin.RouterGroup) {
 
 		api.GET("/transactions", TransactionsListHandler(s))
 		api.GET("/transactions/:id", TransactionsDetailHandler(s))
+
+		// Request-level pending (MITM HTTP requests held for approval)
+		api.GET("/pending/requests/count", PendingHttpCountHandler(s))
+		api.GET("/pending/requests", PendingHttpListHandler(s))
+		api.GET("/pending/requests/:id", PendingHttpDetailHandler(s))
+		api.POST("/pending/requests/:id/allow", PendingHttpAllowHandler(s))
+		api.POST("/pending/requests/:id/deny", PendingHttpDenyHandler(s))
 	}
 
 	// WebSocket

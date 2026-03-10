@@ -172,11 +172,12 @@ var (
 
 	trafficTmpl = parseTemplate("base.html", "base.html", "traffic.html")
 
-	dashboardStatsTmpl = parseTemplate("dashboard_stats.html", "partials/dashboard_stats.html")
-	pendingListTmpl    = parseTemplate("pending_list.html", "partials/pending_list.html")
-	rulesListTmpl      = parseTemplate("rules_list.html", "partials/rules_list.html")
-	logsTableTmpl      = parseTemplate("logs_table.html", "partials/logs_table.html")
-	trafficTableTmpl   = parseTemplate("traffic_table.html", "partials/traffic_table.html")
+	dashboardStatsTmpl    = parseTemplate("dashboard_stats.html", "partials/dashboard_stats.html")
+	pendingListTmpl       = parseTemplate("pending_list.html", "partials/pending_list.html")
+	pendingHttpListTmpl   = parseTemplate("pending_http_list.html", "partials/pending_http_list.html")
+	rulesListTmpl         = parseTemplate("rules_list.html", "partials/rules_list.html")
+	logsTableTmpl         = parseTemplate("logs_table.html", "partials/logs_table.html")
+	trafficTableTmpl      = parseTemplate("traffic_table.html", "partials/traffic_table.html")
 )
 
 // cacheBuster is set once at startup for static asset cache busting.
@@ -444,6 +445,54 @@ func RegisterHTMXRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 		renderPendingList(c, db, prefix, waiters)
 	})
 
+	// Request-level pending HTMX
+	htmx.GET("/pending-http-list", func(c *gin.Context) {
+		container := c.Query("container")
+		destination := c.Query("destination")
+
+		items, total, err := greyproxy.GetPendingHttpRequests(db, greyproxy.PendingHttpFilter{
+			Container:   container,
+			Destination: destination,
+			Status:      "pending",
+			Limit:       100,
+		})
+		if err != nil {
+			c.String(http.StatusInternalServerError, "Error: %v", err)
+			return
+		}
+
+		c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+		pendingHttpListTmpl.Execute(c.Writer, gin.H{
+			"Prefix": prefix,
+			"Items":  items,
+			"Total":  total,
+		})
+	})
+
+	htmx.POST("/pending-http/:id/allow", func(c *gin.Context) {
+		id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+		p, err := greyproxy.ResolvePendingHttpRequest(db, id, "allowed")
+		if err == nil && p != nil {
+			bus.Publish(greyproxy.Event{
+				Type: greyproxy.EventHttpPendingAllowed,
+				Data: map[string]any{"pending_id": id},
+			})
+		}
+		renderPendingHttpList(c, db, prefix)
+	})
+
+	htmx.POST("/pending-http/:id/deny", func(c *gin.Context) {
+		id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+		p, err := greyproxy.ResolvePendingHttpRequest(db, id, "denied")
+		if err == nil && p != nil {
+			bus.Publish(greyproxy.Event{
+				Type: greyproxy.EventHttpPendingDenied,
+				Data: map[string]any{"pending_id": id},
+			})
+		}
+		renderPendingHttpList(c, db, prefix)
+	})
+
 	// Rules HTMX
 	htmx.GET("/rules-list", func(c *gin.Context) {
 		renderRulesList(c, db, prefix)
@@ -465,10 +514,26 @@ func RegisterHTMXRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 			notesPtr = &notes
 		}
 
+		methodPattern := c.PostForm("method_pattern")
+		if methodPattern == "" {
+			methodPattern = "*"
+		}
+		pathPattern := c.PostForm("path_pattern")
+		if pathPattern == "" {
+			pathPattern = "*"
+		}
+		contentAction := c.PostForm("content_action")
+		if contentAction == "" {
+			contentAction = "allow"
+		}
+
 		_, err := greyproxy.CreateRule(db, greyproxy.RuleCreateInput{
 			ContainerPattern:   c.PostForm("container_pattern"),
 			DestinationPattern: c.PostForm("destination_pattern"),
 			PortPattern:        portPattern,
+			MethodPattern:      methodPattern,
+			PathPattern:        pathPattern,
+			ContentAction:      contentAction,
 			RuleType:           ruleType,
 			Action:             action,
 			ExpiresInSeconds:   expiresIn,
@@ -487,6 +552,9 @@ func RegisterHTMXRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 		cp := c.PostForm("container_pattern")
 		dp := c.PostForm("destination_pattern")
 		pp := c.PostForm("port_pattern")
+		mp := c.PostForm("method_pattern")
+		pathP := c.PostForm("path_pattern")
+		ca := c.PostForm("content_action")
 		action := c.PostForm("action")
 		notes := c.PostForm("notes")
 
@@ -499,6 +567,15 @@ func RegisterHTMXRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 		}
 		if pp != "" {
 			input.PortPattern = &pp
+		}
+		if mp != "" {
+			input.MethodPattern = &mp
+		}
+		if pathP != "" {
+			input.PathPattern = &pathP
+		}
+		if ca != "" {
+			input.ContentAction = &ca
 		}
 		if action != "" {
 			input.Action = &action
@@ -665,6 +742,25 @@ func renderPendingList(c *gin.Context, db *greyproxy.DB, prefix string, waiters 
 		"Items":      items,
 		"Total":      total,
 		"HasFilters": hasFilters,
+	})
+}
+
+func renderPendingHttpList(c *gin.Context, db *greyproxy.DB, prefix string) {
+	container := c.Query("container")
+	destination := c.Query("destination")
+
+	items, total, _ := greyproxy.GetPendingHttpRequests(db, greyproxy.PendingHttpFilter{
+		Container:   container,
+		Destination: destination,
+		Status:      "pending",
+		Limit:       100,
+	})
+
+	c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+	pendingHttpListTmpl.Execute(c.Writer, gin.H{
+		"Prefix": prefix,
+		"Items":  items,
+		"Total":  total,
 	})
 }
 

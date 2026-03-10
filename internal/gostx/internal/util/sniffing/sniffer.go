@@ -13,6 +13,7 @@ import (
 	"io"
 	"math"
 	"net"
+	"sync"
 	"net/http"
 	"net/http/httputil"
 	"strings"
@@ -119,6 +120,23 @@ type HTTPRoundTripInfo struct {
 // GlobalHTTPRoundTripHook is called (if set) after each MITM-intercepted HTTP round-trip.
 // Set this from program initialization to record transactions to the database.
 var GlobalHTTPRoundTripHook func(info HTTPRoundTripInfo)
+
+// ErrRequestDenied is returned by the hold hook to indicate the request should be denied.
+var ErrRequestDenied = errors.New("request denied")
+
+// HTTPRequestHoldInfo contains request details for the hold hook to evaluate.
+type HTTPRequestHoldInfo struct {
+	Host          string
+	Method        string
+	URI           string
+	RequestHeaders http.Header
+	RequestBody   []byte
+	ContainerName string
+}
+
+// GlobalHTTPRequestHoldHook is called (if set) before forwarding a MITM-intercepted HTTP request upstream.
+// Return nil to allow, ErrRequestDenied to send 403, or block until approval.
+var GlobalHTTPRequestHoldHook func(ctx context.Context, info HTTPRequestHoldInfo) error
 
 type Sniffer struct {
 	Websocket           bool
@@ -349,7 +367,7 @@ func (h *Sniffer) httpRoundTrip(ctx context.Context, rw, cc io.ReadWriteCloser, 
 	}
 
 	var reqBody *xhttp.Body
-	captureBody := (h.RecorderOptions != nil && h.RecorderOptions.HTTPBody) || h.OnHTTPRoundTrip != nil
+	captureBody := (h.RecorderOptions != nil && h.RecorderOptions.HTTPBody) || h.OnHTTPRoundTrip != nil || GlobalHTTPRequestHoldHook != nil
 	if captureBody {
 		if req.Body != nil {
 			bodySize := DefaultBodySize
@@ -361,6 +379,51 @@ func (h *Sniffer) httpRoundTrip(ctx context.Context, rw, cc io.ReadWriteCloser, 
 			}
 			reqBody = xhttp.NewBody(req.Body, bodySize)
 			req.Body = reqBody
+		}
+	}
+
+	// Request-level hold: evaluate before forwarding upstream
+	if GlobalHTTPRequestHoldHook != nil {
+		containerName := string(xctx.ClientIDFromContext(ctx))
+		if containerName == "" {
+			containerName = ro.ClientID
+		}
+		// Read the body first so it's captured for the hook
+		var holdBody []byte
+		if reqBody != nil {
+			// Force body to be read by reading through the tee
+			bodyBuf := new(bytes.Buffer)
+			if req.Body != nil {
+				bodyBuf.ReadFrom(req.Body)
+				// Reconstruct body for forwarding
+				req.Body = io.NopCloser(bodyBuf)
+				req.ContentLength = int64(bodyBuf.Len())
+			}
+			holdBody = reqBody.Content()
+		}
+
+		holdInfo := HTTPRequestHoldInfo{
+			Host:           req.Host,
+			Method:         req.Method,
+			URI:            req.RequestURI,
+			RequestHeaders: req.Header.Clone(),
+			RequestBody:    holdBody,
+			ContainerName:  containerName,
+		}
+		if holdErr := GlobalHTTPRequestHoldHook(ctx, holdInfo); holdErr != nil {
+			// Request denied — send 403 to client
+			denyResp := &http.Response{
+				StatusCode: http.StatusForbidden,
+				Proto:      req.Proto,
+				ProtoMajor: req.ProtoMajor,
+				ProtoMinor: req.ProtoMinor,
+				Header:     http.Header{"Content-Type": {"text/plain"}},
+				Body:       io.NopCloser(strings.NewReader("Request denied by proxy")),
+			}
+			denyResp.ContentLength = 22
+			denyResp.Write(rw)
+			close = true
+			return
 		}
 	}
 
@@ -731,6 +794,13 @@ func (h *Sniffer) terminateTLS(ctx context.Context, network string, conn, cc net
 	ro := ho.recorderObject
 	log := ho.log
 
+	// Deferred connect mode: if a hold hook is set, we do client-side TLS first
+	// (without upstream) so we can read and evaluate HTTP requests before connecting.
+	if GlobalHTTPRequestHoldHook != nil {
+		return h.terminateTLSDeferred(ctx, network, conn, cc, clientHello, ho)
+	}
+
+	// Original flow: connect upstream first, then client
 	nextProtos := clientHello.SupportedProtos
 	if h.NegotiatedProtocol != "" {
 		nextProtos = []string{h.NegotiatedProtocol}
@@ -830,6 +900,119 @@ func (h *Sniffer) terminateTLS(ctx context.Context, network string, conn, cc net
 		}),
 		WithDialTLS(func(ctx context.Context, network, address string, cfg *tls.Config) (net.Conn, error) {
 			return clientConn, nil
+		}),
+		WithRecorderObject(ro),
+		WithLog(log),
+	}
+	return h.HandleHTTP(ctx, network, serverConn, opts...)
+}
+
+// terminateTLSDeferred performs the client-side TLS handshake FIRST (without upstream),
+// allowing us to read HTTP requests before deciding whether to connect upstream.
+// This enables request-level hold/approval: the user sees the full HTTP request
+// before any data reaches the destination.
+func (h *Sniffer) terminateTLSDeferred(ctx context.Context, network string, conn, cc net.Conn, clientHello *dissector.ClientHelloInfo, ho *HandleOptions) error {
+	ro := ho.recorderObject
+	log := ho.log
+
+	host := clientHello.ServerName
+	if host == "" {
+		host = ro.Host
+	}
+	if hostPart, _, _ := net.SplitHostPort(host); hostPart != "" {
+		host = hostPart
+	}
+
+	// For deferred mode, negotiate http/1.1 with the client
+	// (HTTP/2 deferred connect is a future enhancement)
+	nextProtos := []string{"http/1.1"}
+
+	ro.TLS.Proto = "http/1.1"
+
+	// Step 1: TLS handshake with client (MITM) — no upstream connection yet
+	wb := &bytes.Buffer{}
+	conn = xnet.NewReadWriteConn(conn, io.MultiWriter(wb, conn), conn)
+
+	serverConn := tls.Server(conn, &tls.Config{
+		NextProtos: nextProtos,
+		GetCertificate: func(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
+			certPool := h.CertPool
+			if certPool == nil {
+				certPool = DefaultCertPool
+			}
+			serverName := chi.ServerName
+			if serverName == "" {
+				serverName = host
+			}
+			cert, err := certPool.Get(serverName)
+			if cert != nil {
+				pool := x509.NewCertPool()
+				pool.AddCert(h.Certificate)
+				if _, err = cert.Verify(x509.VerifyOptions{
+					DNSName: serverName,
+					Roots:   pool,
+				}); err != nil {
+					log.Warnf("verify cached certificate for %s: %v", serverName, err)
+					cert = nil
+				}
+			}
+			if cert == nil {
+				cert, err = tls_util.GenerateCertificate(serverName, 7*24*time.Hour, h.Certificate, h.PrivateKey)
+				certPool.Put(serverName, cert)
+			}
+			if err != nil {
+				return nil, err
+			}
+			return &tls.Certificate{
+				Certificate: [][]byte{cert.Raw},
+				PrivateKey:  h.PrivateKey,
+			}, nil
+		},
+	})
+	if err := serverConn.HandshakeContext(ctx); err != nil {
+		return err
+	}
+	if record, _ := dissector.ReadRecord(wb); record != nil {
+		wb.Reset()
+		record.WriteTo(wb)
+		ro.TLS.ServerHello = hex.EncodeToString(wb.Bytes())
+	}
+
+	// Step 2: Lazy upstream connection — established on first dial
+	var upstreamOnce sync.Once
+	var upstreamConn net.Conn
+	var upstreamErr error
+
+	lazyDial := func(ctx context.Context, network, address string) (net.Conn, error) {
+		upstreamOnce.Do(func() {
+			// TLS handshake with upstream — force HTTP/1.1 to match our client-side negotiation
+			upstreamCfg := &tls.Config{
+				ServerName:   clientHello.ServerName,
+				NextProtos:   []string{"http/1.1"},
+				CipherSuites: clientHello.CipherSuites,
+			}
+			if upstreamCfg.ServerName == "" {
+				upstreamCfg.InsecureSkipVerify = true
+			}
+			tlsConn := tls.Client(cc, upstreamCfg)
+			if err := tlsConn.HandshakeContext(ctx); err != nil {
+				upstreamErr = err
+				return
+			}
+			cs := tlsConn.ConnectionState()
+			ro.TLS.CipherSuite = tls_util.CipherSuite(cs.CipherSuite).String()
+			ro.TLS.Version = tls_util.Version(cs.Version).String()
+			upstreamConn = tlsConn
+		})
+		return upstreamConn, upstreamErr
+	}
+
+	// Step 3: HandleHTTP reads requests from the decrypted client connection
+	// and forwards them via the lazy dialer
+	opts := []HandleOption{
+		WithDial(lazyDial),
+		WithDialTLS(func(ctx context.Context, network, address string, cfg *tls.Config) (net.Conn, error) {
+			return lazyDial(ctx, network, address)
 		}),
 		WithRecorderObject(ro),
 		WithLog(log),

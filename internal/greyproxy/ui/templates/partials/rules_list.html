@@ -42,11 +42,19 @@
                 </td>
                 <td class="px-6 py-4 whitespace-nowrap text-sm text-foreground">
                     <span class="cursor-pointer hover:underline hover:text-primary" onclick="filterByDestination('{{.DestinationPattern}}')">{{.DestinationPattern}}</span><span class="text-muted-foreground">:{{.PortPattern}}</span>
+                    {{if or (ne .MethodPattern "*") (ne .PathPattern "*")}}
+                    <br><span class="text-xs text-muted-foreground">{{.MethodPattern}} {{.PathPattern}}</span>
+                    {{end}}
+                    {{if ne .ContentAction "allow"}}
+                    <span class="ml-1 inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium
+                        {{if eq .ContentAction "hold"}}bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400
+                        {{else}}bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400{{end}}">{{.ContentAction}}</span>
+                    {{end}}
                 </td>
                 <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
                     <button hx-delete="{{$.Prefix}}/htmx/rules/{{.ID}}" hx-swap="none" hx-on::after-request="triggerRulesReload()"
                         class="inline-flex items-center px-3 py-1.5 border border-border rounded shadow-sm text-xs font-medium text-foreground bg-background hover:bg-muted">Delete</button>
-                    <button onclick="editRule({{.ID}}, '{{.ContainerPattern}}', '{{.DestinationPattern}}', '{{.PortPattern}}', '{{.RuleType}}', '{{.Action}}', '{{if .Notes.Valid}}{{.Notes.String}}{{end}}')"
+                    <button onclick="editRule({{.ID}}, '{{.ContainerPattern}}', '{{.DestinationPattern}}', '{{.PortPattern}}', '{{.MethodPattern}}', '{{.PathPattern}}', '{{.ContentAction}}', '{{.RuleType}}', '{{.Action}}', '{{if .Notes.Valid}}{{.Notes.String}}{{end}}')"
                         class="inline-flex items-center px-3 py-1.5 border border-transparent rounded shadow-sm text-xs font-medium text-primary-foreground bg-primary hover:bg-primary/90">Edit</button>
                 </td>
             </tr>
@@ -86,6 +94,14 @@
                     <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary/10 text-primary">{{.ContainerPattern}}</span>
                     <span class="text-muted-foreground mx-1">→</span>
                     {{.DestinationPattern}}<span class="text-muted-foreground">:{{.PortPattern}}</span>
+                    {{if or (ne .MethodPattern "*") (ne .PathPattern "*")}}
+                    <br><span class="text-xs text-muted-foreground">{{.MethodPattern}} {{.PathPattern}}</span>
+                    {{end}}
+                    {{if ne .ContentAction "allow"}}
+                    <span class="ml-1 inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium
+                        {{if eq .ContentAction "hold"}}bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400
+                        {{else}}bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400{{end}}">{{.ContentAction}}</span>
+                    {{end}}
                 </div>
             </div>
             <div class="flex flex-col items-end flex-shrink-0 ml-3">
@@ -93,7 +109,7 @@
                 <div class="flex space-x-2 mt-1">
                     <button hx-delete="{{$.Prefix}}/htmx/rules/{{.ID}}" hx-swap="none" hx-on::after-request="triggerRulesReload()"
                         class="inline-flex items-center px-3 py-1.5 border border-border rounded shadow-sm text-xs font-medium text-foreground bg-background hover:bg-muted">Delete</button>
-                    <button onclick="editRule({{.ID}}, '{{.ContainerPattern}}', '{{.DestinationPattern}}', '{{.PortPattern}}', '{{.RuleType}}', '{{.Action}}', '{{if .Notes.Valid}}{{.Notes.String}}{{end}}')"
+                    <button onclick="editRule({{.ID}}, '{{.ContainerPattern}}', '{{.DestinationPattern}}', '{{.PortPattern}}', '{{.MethodPattern}}', '{{.PathPattern}}', '{{.ContentAction}}', '{{.RuleType}}', '{{.Action}}', '{{if .Notes.Valid}}{{.Notes.String}}{{end}}')"
                         class="inline-flex items-center px-3 py-1.5 border border-transparent rounded shadow-sm text-xs font-medium text-primary-foreground bg-primary hover:bg-primary/90">Edit</button>
                 </div>
             </div>
@@ -120,11 +136,14 @@
         var form = document.getElementById('rules-filter-form');
         if (form) form.dispatchEvent(new Event('change', { bubbles: true }));
     }
-    function editRule(id, container, destination, port, type, action, notes) {
+    function editRule(id, container, destination, port, method, path, contentAction, type, action, notes) {
         document.getElementById('modal-title').textContent = 'Edit Rule';
         document.getElementById('container_pattern').value = container;
         document.getElementById('destination_pattern').value = destination;
         document.getElementById('port_pattern').value = port;
+        document.getElementById('method_pattern').value = method;
+        document.getElementById('path_pattern').value = path;
+        document.getElementById('content_action').value = contentAction;
         document.getElementById('rule_type').value = type;
         document.getElementById('action').value = action;
         document.getElementById('notes').value = notes;

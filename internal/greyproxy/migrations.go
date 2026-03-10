@@ -87,6 +87,29 @@ var migrations = []string{
 	);
 	CREATE INDEX IF NOT EXISTS idx_http_transactions_ts ON http_transactions(timestamp);
 	CREATE INDEX IF NOT EXISTS idx_http_transactions_dest ON http_transactions(destination_host, destination_port);`,
+
+	// Migration 5: Add method_pattern, path_pattern, content_action to rules for request-level control
+	`ALTER TABLE rules ADD COLUMN method_pattern TEXT NOT NULL DEFAULT '*';
+	ALTER TABLE rules ADD COLUMN path_pattern TEXT NOT NULL DEFAULT '*';
+	ALTER TABLE rules ADD COLUMN content_action TEXT NOT NULL DEFAULT 'allow';`,
+
+	// Migration 6: Create pending_http_requests table for request-level holds
+	`CREATE TABLE IF NOT EXISTS pending_http_requests (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		container_name TEXT NOT NULL,
+		destination_host TEXT NOT NULL,
+		destination_port INTEGER NOT NULL,
+		method TEXT NOT NULL,
+		url TEXT NOT NULL,
+		request_headers TEXT,
+		request_body BLOB,
+		request_body_size INTEGER,
+		created_at DATETIME NOT NULL DEFAULT (datetime('now')),
+		status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'allowed', 'denied')),
+		UNIQUE(container_name, destination_host, destination_port, method, url)
+	);
+	CREATE INDEX IF NOT EXISTS idx_pending_http_container ON pending_http_requests(container_name);
+	CREATE INDEX IF NOT EXISTS idx_pending_http_status ON pending_http_requests(status);`,
 }
 
 func runMigrations(db *sql.DB) error {

@@ -138,3 +138,59 @@ func CalculateSpecificity(containerPattern, destinationPattern, portPattern stri
 
 	return score
 }
+
+// CalculateHTTPSpecificity returns additional specificity points for method/path matching.
+func CalculateHTTPSpecificity(methodPattern, pathPattern string) int {
+	score := 0
+	if methodPattern != "*" {
+		score += 4 // Method exact match
+	}
+	if pathPattern != "*" {
+		if !strings.ContainsAny(pathPattern, "*?[") {
+			score += 3 // Path exact match
+		} else {
+			score += 2 // Path with glob
+		}
+	}
+	return score
+}
+
+// MatchesMethod checks if an HTTP method matches the given pattern.
+// Supports: exact match (case-insensitive), wildcard "*", comma-separated list.
+func MatchesMethod(method, pattern string) bool {
+	if pattern == "*" {
+		return true
+	}
+	method = strings.ToUpper(method)
+	if strings.Contains(pattern, ",") {
+		for _, p := range strings.Split(pattern, ",") {
+			if strings.ToUpper(strings.TrimSpace(p)) == method {
+				return true
+			}
+		}
+		return false
+	}
+	return strings.ToUpper(pattern) == method
+}
+
+// MatchesPath checks if a URL path matches the given pattern.
+// Supports: exact match, glob patterns via filepath.Match, prefix with trailing *.
+func MatchesPath(path, pattern string) bool {
+	if pattern == "*" {
+		return true
+	}
+	// Prefix match: /api/* matches /api/anything
+	if strings.HasSuffix(pattern, "/*") {
+		prefix := pattern[:len(pattern)-1] // "/api/"
+		return strings.HasPrefix(path, prefix) || path == pattern[:len(pattern)-2]
+	}
+	// Exact match
+	if path == pattern {
+		return true
+	}
+	// Glob match
+	if matched, err := filepath.Match(pattern, path); err == nil && matched {
+		return true
+	}
+	return false
+}

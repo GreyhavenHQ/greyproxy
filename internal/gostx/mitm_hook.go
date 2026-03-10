@@ -1,6 +1,7 @@
 package gostx
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/greyhavenhq/greyproxy/internal/gostx/internal/util/sniffing"
@@ -22,6 +23,19 @@ type MitmRoundTripInfo struct {
 	DurationMs      int64
 }
 
+// MitmRequestHoldInfo contains request details for the hold hook to evaluate.
+type MitmRequestHoldInfo struct {
+	Host           string
+	Method         string
+	URI            string
+	RequestHeaders http.Header
+	RequestBody    []byte
+	ContainerName  string
+}
+
+// ErrRequestDenied is returned by the hold hook to deny a request.
+var ErrRequestDenied = sniffing.ErrRequestDenied
+
 // SetGlobalMitmHook sets a global callback that fires after every MITM-intercepted HTTP round-trip.
 func SetGlobalMitmHook(hook func(info MitmRoundTripInfo)) {
 	if hook == nil {
@@ -41,6 +55,26 @@ func SetGlobalMitmHook(hook func(info MitmRoundTripInfo)) {
 			ResponseBody:    info.ResponseBody,
 			ContainerName:   info.ContainerName,
 			DurationMs:      info.DurationMs,
+		})
+	}
+}
+
+// SetGlobalMitmHoldHook sets a global callback that fires BEFORE forwarding a MITM-intercepted
+// HTTP request upstream. Return nil to allow, ErrRequestDenied to deny with 403.
+// The hook may block (e.g., waiting for user approval).
+func SetGlobalMitmHoldHook(hook func(ctx context.Context, info MitmRequestHoldInfo) error) {
+	if hook == nil {
+		sniffing.GlobalHTTPRequestHoldHook = nil
+		return
+	}
+	sniffing.GlobalHTTPRequestHoldHook = func(ctx context.Context, info sniffing.HTTPRequestHoldInfo) error {
+		return hook(ctx, MitmRequestHoldInfo{
+			Host:           info.Host,
+			Method:         info.Method,
+			URI:            info.URI,
+			RequestHeaders: info.RequestHeaders,
+			RequestBody:    info.RequestBody,
+			ContainerName:  info.ContainerName,
 		})
 	}
 }

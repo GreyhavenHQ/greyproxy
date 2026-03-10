@@ -13,6 +13,11 @@ const (
 	EventPendingDismissed = "pending_request.dismissed"
 	EventWaitersChanged   = "waiters.changed"
 	EventTransactionNew   = "transaction.new"
+
+	// Request-level pending events (MITM HTTP requests held for approval)
+	EventHttpPendingCreated  = "http_pending.created"
+	EventHttpPendingAllowed  = "http_pending.allowed"
+	EventHttpPendingDenied   = "http_pending.denied"
 )
 
 // Event represents a broadcast event.

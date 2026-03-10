@@ -15,6 +15,9 @@ type RuleCreateInput struct {
 	ContainerPattern   string  `json:"container_pattern"`
 	DestinationPattern string  `json:"destination_pattern"`
 	PortPattern        string  `json:"port_pattern"`
+	MethodPattern      string  `json:"method_pattern"`
+	PathPattern        string  `json:"path_pattern"`
+	ContentAction      string  `json:"content_action"`
 	RuleType           string  `json:"rule_type"`
 	Action             string  `json:"action"`
 	ExpiresInSeconds   *int64  `json:"expires_in_seconds"`
@@ -26,6 +29,9 @@ type RuleUpdateInput struct {
 	ContainerPattern   *string `json:"container_pattern"`
 	DestinationPattern *string `json:"destination_pattern"`
 	PortPattern        *string `json:"port_pattern"`
+	MethodPattern      *string `json:"method_pattern"`
+	PathPattern        *string `json:"path_pattern"`
+	ContentAction      *string `json:"content_action"`
 	Action             *string `json:"action"`
 	Notes              *string `json:"notes"`
 	ExpiresAt          *string `json:"expires_at"`
@@ -46,6 +52,15 @@ func CreateRule(db *DB, input RuleCreateInput) (*Rule, error) {
 	}
 	if input.CreatedBy == "" {
 		input.CreatedBy = "admin"
+	}
+	if input.MethodPattern == "" {
+		input.MethodPattern = "*"
+	}
+	if input.PathPattern == "" {
+		input.PathPattern = "*"
+	}
+	if input.ContentAction == "" {
+		input.ContentAction = "allow"
 	}
 
 	var expiresAt sql.NullString
@@ -68,9 +83,10 @@ func CreateRule(db *DB, input RuleCreateInput) (*Rule, error) {
 	)
 
 	result, err := db.WriteDB().Exec(
-		`INSERT INTO rules (container_pattern, destination_pattern, port_pattern, rule_type, action, expires_at, created_by, notes)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO rules (container_pattern, destination_pattern, port_pattern, method_pattern, path_pattern, content_action, rule_type, action, expires_at, created_by, notes)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		input.ContainerPattern, input.DestinationPattern, input.PortPattern,
+		input.MethodPattern, input.PathPattern, input.ContentAction,
 		input.RuleType, input.Action, expiresAt, input.CreatedBy, notes,
 	)
 	if err != nil {
@@ -88,11 +104,14 @@ func CreateRule(db *DB, input RuleCreateInput) (*Rule, error) {
 	return GetRule(db, id)
 }
 
+// ruleColumns is the SELECT list for all rule queries.
+const ruleColumns = `id, container_pattern, destination_pattern, port_pattern,
+	method_pattern, path_pattern, content_action,
+	rule_type, action, created_at, expires_at, last_used_at, created_by, notes`
+
 func GetRule(db *DB, id int64) (*Rule, error) {
 	row := db.ReadDB().QueryRow(
-		`SELECT id, container_pattern, destination_pattern, port_pattern, rule_type, action,
-		        created_at, expires_at, last_used_at, created_by, notes
-		 FROM rules WHERE id = ?`, id,
+		`SELECT `+ruleColumns+` FROM rules WHERE id = ?`, id,
 	)
 	return scanRule(row)
 }
@@ -100,6 +119,7 @@ func GetRule(db *DB, id int64) (*Rule, error) {
 func scanRule(row interface{ Scan(...any) error }) (*Rule, error) {
 	var r Rule
 	err := row.Scan(&r.ID, &r.ContainerPattern, &r.DestinationPattern, &r.PortPattern,
+		&r.MethodPattern, &r.PathPattern, &r.ContentAction,
 		&r.RuleType, &r.Action, &r.CreatedAt, &r.ExpiresAt, &r.LastUsedAt, &r.CreatedBy, &r.Notes)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -152,7 +172,7 @@ func GetRules(db *DB, f RuleFilter) ([]Rule, int, error) {
 	}
 
 	rows, err := db.ReadDB().Query(
-		"SELECT id, container_pattern, destination_pattern, port_pattern, rule_type, action, created_at, expires_at, last_used_at, created_by, notes FROM rules WHERE "+whereClause+" ORDER BY created_at DESC LIMIT ? OFFSET ?",
+		"SELECT "+ruleColumns+" FROM rules WHERE "+whereClause+" ORDER BY created_at DESC LIMIT ? OFFSET ?",
 		append(args, f.Limit, f.Offset)...,
 	)
 	if err != nil {
@@ -164,6 +184,7 @@ func GetRules(db *DB, f RuleFilter) ([]Rule, int, error) {
 	for rows.Next() {
 		var r Rule
 		if err := rows.Scan(&r.ID, &r.ContainerPattern, &r.DestinationPattern, &r.PortPattern,
+			&r.MethodPattern, &r.PathPattern, &r.ContentAction,
 			&r.RuleType, &r.Action, &r.CreatedAt, &r.ExpiresAt, &r.LastUsedAt, &r.CreatedBy, &r.Notes); err != nil {
 			return nil, 0, err
 		}
@@ -190,6 +211,18 @@ func UpdateRule(db *DB, id int64, input RuleUpdateInput) (*Rule, error) {
 	if input.PortPattern != nil {
 		sets = append(sets, "port_pattern = ?")
 		args = append(args, *input.PortPattern)
+	}
+	if input.MethodPattern != nil {
+		sets = append(sets, "method_pattern = ?")
+		args = append(args, *input.MethodPattern)
+	}
+	if input.PathPattern != nil {
+		sets = append(sets, "path_pattern = ?")
+		args = append(args, *input.PathPattern)
+	}
+	if input.ContentAction != nil {
+		sets = append(sets, "content_action = ?")
+		args = append(args, *input.ContentAction)
 	}
 	if input.Action != nil {
 		sets = append(sets, "action = ?")
@@ -306,12 +339,98 @@ func IngestRules(db *DB, rules []IngestRuleInput) (*IngestResult, error) {
 
 // FindMatchingRule finds the most specific matching rule for the given request.
 // Returns nil if no rule matches (default-deny).
+// Only considers destination-level matching (container, host, port).
 func FindMatchingRule(db *DB, containerName, destHost string, destPort int, resolvedHostname string) *Rule {
+	return findMatchingRuleInternal(db, containerName, destHost, destPort, resolvedHostname, "", "")
+}
+
+// FindMatchingRequestRule finds the most specific matching rule including method/path dimensions.
+// Used for request-level evaluation in MITM mode.
+func FindMatchingRequestRule(db *DB, containerName, destHost string, destPort int, resolvedHostname, method, path string) *Rule {
+	return findMatchingRuleInternal(db, containerName, destHost, destPort, resolvedHostname, method, path)
+}
+
+// FindRequestSpecificRule finds the most specific rule that has non-wildcard method or path patterns.
+// Used as Pass 1 in two-pass evaluation: request-specific rules take precedence over destination-level rules.
+// Returns nil if no request-specific rule matches.
+func FindRequestSpecificRule(db *DB, containerName, destHost string, destPort int, resolvedHostname, method, path string) *Rule {
+	// Get all non-expired rules that have specific method or path patterns
+	rows, err := db.ReadDB().Query(
+		`SELECT `+ruleColumns+` FROM rules
+		 WHERE (expires_at IS NULL OR expires_at > datetime('now'))
+		   AND (method_pattern != '*' OR path_pattern != '*')`,
+	)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	type scored struct {
+		rule        Rule
+		specificity int
+	}
+
+	var matches []scored
+	for rows.Next() {
+		var r Rule
+		if err := rows.Scan(&r.ID, &r.ContainerPattern, &r.DestinationPattern, &r.PortPattern,
+			&r.MethodPattern, &r.PathPattern, &r.ContentAction,
+			&r.RuleType, &r.Action, &r.CreatedAt, &r.ExpiresAt, &r.LastUsedAt, &r.CreatedBy, &r.Notes); err != nil {
+			continue
+		}
+
+		// Check destination-level match
+		matched := MatchesRule(containerName, destHost, destPort, r.ContainerPattern, r.DestinationPattern, r.PortPattern)
+		if !matched && resolvedHostname != "" {
+			matched = MatchesRule(containerName, resolvedHostname, destPort, r.ContainerPattern, r.DestinationPattern, r.PortPattern)
+		}
+		if !matched {
+			continue
+		}
+
+		// Check method/path match
+		if method != "" && r.MethodPattern != "*" && !MatchesMethod(method, r.MethodPattern) {
+			continue
+		}
+		if path != "" && r.PathPattern != "*" && !MatchesPath(path, r.PathPattern) {
+			continue
+		}
+
+		matches = append(matches, scored{
+			rule:        r,
+			specificity: CalculateSpecificity(r.ContainerPattern, r.DestinationPattern, r.PortPattern) + CalculateHTTPSpecificity(r.MethodPattern, r.PathPattern),
+		})
+	}
+
+	if len(matches) == 0 {
+		return nil
+	}
+
+	sort.Slice(matches, func(i, j int) bool {
+		if matches[i].specificity != matches[j].specificity {
+			return matches[i].specificity > matches[j].specificity
+		}
+		if matches[i].rule.Action != matches[j].rule.Action {
+			return matches[i].rule.Action == "deny"
+		}
+		return false
+	})
+
+	winner := &matches[0].rule
+
+	go func() {
+		db.Lock()
+		defer db.Unlock()
+		db.WriteDB().Exec("UPDATE rules SET last_used_at = datetime('now') WHERE id = ?", winner.ID)
+	}()
+
+	return winner
+}
+
+func findMatchingRuleInternal(db *DB, containerName, destHost string, destPort int, resolvedHostname, method, path string) *Rule {
 	// Get all non-expired rules
 	rows, err := db.ReadDB().Query(
-		`SELECT id, container_pattern, destination_pattern, port_pattern, rule_type, action,
-		        created_at, expires_at, last_used_at, created_by, notes
-		 FROM rules
+		`SELECT `+ruleColumns+` FROM rules
 		 WHERE expires_at IS NULL OR expires_at > datetime('now')`,
 	)
 	if err != nil {
@@ -328,6 +447,7 @@ func FindMatchingRule(db *DB, containerName, destHost string, destPort int, reso
 	for rows.Next() {
 		var r Rule
 		if err := rows.Scan(&r.ID, &r.ContainerPattern, &r.DestinationPattern, &r.PortPattern,
+			&r.MethodPattern, &r.PathPattern, &r.ContentAction,
 			&r.RuleType, &r.Action, &r.CreatedAt, &r.ExpiresAt, &r.LastUsedAt, &r.CreatedBy, &r.Notes); err != nil {
 			continue
 		}
@@ -340,12 +460,26 @@ func FindMatchingRule(db *DB, containerName, destHost string, destPort int, reso
 			matched = MatchesRule(containerName, resolvedHostname, destPort, r.ContainerPattern, r.DestinationPattern, r.PortPattern)
 		}
 
-		if matched {
-			matches = append(matches, scored{
-				rule:        r,
-				specificity: CalculateSpecificity(r.ContainerPattern, r.DestinationPattern, r.PortPattern),
-			})
+		if !matched {
+			continue
 		}
+
+		// If method/path are provided, check those dimensions too
+		if method != "" && r.MethodPattern != "*" {
+			if !MatchesMethod(method, r.MethodPattern) {
+				continue
+			}
+		}
+		if path != "" && r.PathPattern != "*" {
+			if !MatchesPath(path, r.PathPattern) {
+				continue
+			}
+		}
+
+		matches = append(matches, scored{
+			rule:        r,
+			specificity: CalculateSpecificity(r.ContainerPattern, r.DestinationPattern, r.PortPattern) + CalculateHTTPSpecificity(r.MethodPattern, r.PathPattern),
+		})
 	}
 
 	if len(matches) == 0 {
@@ -778,13 +912,13 @@ func parseDuration(duration string) (ruleType string, expiresIn *int64) {
 func findExistingRule(db *DB, containerPattern, destPattern, portPattern, action string) *Rule {
 	var r Rule
 	err := db.ReadDB().QueryRow(
-		`SELECT id, container_pattern, destination_pattern, port_pattern, rule_type, action,
-		        created_at, expires_at, last_used_at, created_by, notes
+		`SELECT `+ruleColumns+`
 		 FROM rules
 		 WHERE container_pattern = ? AND destination_pattern = ? AND port_pattern = ? AND action = ?
 		   AND (expires_at IS NULL OR expires_at > datetime('now'))`,
 		containerPattern, destPattern, portPattern, action,
 	).Scan(&r.ID, &r.ContainerPattern, &r.DestinationPattern, &r.PortPattern,
+		&r.MethodPattern, &r.PathPattern, &r.ContentAction,
 		&r.RuleType, &r.Action, &r.CreatedAt, &r.ExpiresAt, &r.LastUsedAt, &r.CreatedBy, &r.Notes)
 	if err != nil {
 		return nil
@@ -1054,6 +1188,197 @@ func GetDashboardStats(db *DB, fromDate, toDate time.Time, groupBy string, recen
 	}
 
 	return stats, nil
+}
+
+// --- Pending HTTP Requests ---
+
+type PendingHttpRequestCreateInput struct {
+	ContainerName   string
+	DestinationHost string
+	DestinationPort int
+	Method          string
+	URL             string
+	RequestHeaders  map[string][]string
+	RequestBody     []byte
+}
+
+func CreatePendingHttpRequest(db *DB, input PendingHttpRequestCreateInput) (*PendingHttpRequest, bool, error) {
+	db.Lock()
+	defer db.Unlock()
+
+	var headersJSON sql.NullString
+	if input.RequestHeaders != nil {
+		b, _ := json.Marshal(input.RequestHeaders)
+		headersJSON = sql.NullString{String: string(b), Valid: true}
+	}
+
+	body := input.RequestBody
+	bodySize := int64(len(body))
+	if len(body) > MaxBodyCapture {
+		body = body[:MaxBodyCapture]
+	}
+
+	// Check for existing pending with same key
+	var existingID int64
+	err := db.WriteDB().QueryRow(
+		`SELECT id FROM pending_http_requests
+		 WHERE container_name = ? AND destination_host = ? AND destination_port = ? AND method = ? AND url = ? AND status = 'pending'`,
+		input.ContainerName, input.DestinationHost, input.DestinationPort, input.Method, input.URL,
+	).Scan(&existingID)
+	if err == nil {
+		p, err := getPendingHttpRequestByID(db.WriteDB(), existingID)
+		return p, false, err
+	}
+
+	// Delete any resolved entries with the same key to avoid UNIQUE constraint violation
+	db.WriteDB().Exec(
+		`DELETE FROM pending_http_requests
+		 WHERE container_name = ? AND destination_host = ? AND destination_port = ? AND method = ? AND url = ? AND status != 'pending'`,
+		input.ContainerName, input.DestinationHost, input.DestinationPort, input.Method, input.URL,
+	)
+
+	result, err := db.WriteDB().Exec(
+		`INSERT INTO pending_http_requests (container_name, destination_host, destination_port, method, url, request_headers, request_body, request_body_size)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		input.ContainerName, input.DestinationHost, input.DestinationPort,
+		input.Method, input.URL, headersJSON, body, bodySize,
+	)
+	if err != nil {
+		// UNIQUE constraint — return existing
+		if strings.Contains(err.Error(), "UNIQUE") {
+			var id int64
+			db.WriteDB().QueryRow(
+				`SELECT id FROM pending_http_requests WHERE container_name = ? AND destination_host = ? AND destination_port = ? AND method = ? AND url = ?`,
+				input.ContainerName, input.DestinationHost, input.DestinationPort, input.Method, input.URL,
+			).Scan(&id)
+			p, err := getPendingHttpRequestByID(db.WriteDB(), id)
+			return p, false, err
+		}
+		return nil, false, fmt.Errorf("insert pending_http_request: %w", err)
+	}
+
+	id, _ := result.LastInsertId()
+	p, err := getPendingHttpRequestByID(db.WriteDB(), id)
+	return p, true, err
+}
+
+func getPendingHttpRequestByID(conn *sql.DB, id int64) (*PendingHttpRequest, error) {
+	var p PendingHttpRequest
+	err := conn.QueryRow(
+		`SELECT id, container_name, destination_host, destination_port,
+		        method, url, request_headers, request_body, request_body_size,
+		        created_at, status
+		 FROM pending_http_requests WHERE id = ?`, id,
+	).Scan(&p.ID, &p.ContainerName, &p.DestinationHost, &p.DestinationPort,
+		&p.Method, &p.URL, &p.RequestHeaders, &p.RequestBody, &p.RequestBodySize,
+		&p.CreatedAt, &p.Status)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &p, nil
+}
+
+func GetPendingHttpRequest(db *DB, id int64) (*PendingHttpRequest, error) {
+	return getPendingHttpRequestByID(db.ReadDB(), id)
+}
+
+type PendingHttpFilter struct {
+	Container   string
+	Destination string
+	Method      string
+	Status      string
+	Limit       int
+	Offset      int
+}
+
+func GetPendingHttpRequests(db *DB, f PendingHttpFilter) ([]PendingHttpRequest, int, error) {
+	if f.Limit <= 0 {
+		f.Limit = 100
+	}
+	if f.Status == "" {
+		f.Status = "pending"
+	}
+
+	where := []string{"status = ?"}
+	args := []any{f.Status}
+
+	if f.Container != "" {
+		where = append(where, "container_name LIKE ?")
+		args = append(args, "%"+f.Container+"%")
+	}
+	if f.Destination != "" {
+		where = append(where, "destination_host LIKE ?")
+		args = append(args, "%"+f.Destination+"%")
+	}
+	if f.Method != "" {
+		where = append(where, "method = ?")
+		args = append(args, f.Method)
+	}
+
+	whereClause := strings.Join(where, " AND ")
+
+	var total int
+	err := db.ReadDB().QueryRow("SELECT COUNT(*) FROM pending_http_requests WHERE "+whereClause, args...).Scan(&total)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	rows, err := db.ReadDB().Query(
+		`SELECT id, container_name, destination_host, destination_port,
+		        method, url, request_headers, NULL, request_body_size,
+		        created_at, status
+		 FROM pending_http_requests WHERE `+whereClause+` ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+		append(args, f.Limit, f.Offset)...,
+	)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var items []PendingHttpRequest
+	for rows.Next() {
+		var p PendingHttpRequest
+		if err := rows.Scan(&p.ID, &p.ContainerName, &p.DestinationHost, &p.DestinationPort,
+			&p.Method, &p.URL, &p.RequestHeaders, &p.RequestBody, &p.RequestBodySize,
+			&p.CreatedAt, &p.Status); err != nil {
+			return nil, 0, err
+		}
+		items = append(items, p)
+	}
+	return items, total, nil
+}
+
+func GetPendingHttpCount(db *DB) (int, error) {
+	var count int
+	err := db.ReadDB().QueryRow(
+		`SELECT COUNT(*) FROM pending_http_requests WHERE status = 'pending'`,
+	).Scan(&count)
+	return count, err
+}
+
+// ResolvePendingHttpRequest sets the status of a pending HTTP request to "allowed" or "denied".
+func ResolvePendingHttpRequest(db *DB, id int64, status string) (*PendingHttpRequest, error) {
+	db.Lock()
+	defer db.Unlock()
+
+	_, err := db.WriteDB().Exec(
+		`UPDATE pending_http_requests SET status = ? WHERE id = ? AND status = 'pending'`,
+		status, id,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("resolve pending http request: %w", err)
+	}
+	return getPendingHttpRequestByID(db.WriteDB(), id)
+}
+
+// CleanupResolvedHttpPending deletes non-pending (resolved) records older than 5 minutes.
+func CleanupResolvedHttpPending(db *DB) {
+	db.Lock()
+	defer db.Unlock()
+	db.WriteDB().Exec(`DELETE FROM pending_http_requests WHERE status != 'pending' AND created_at < datetime('now', '-5 minutes')`)
 }
 
 // --- HTTP Transactions ---

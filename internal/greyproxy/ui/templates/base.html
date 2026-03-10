@@ -278,10 +278,13 @@
             }
 
             function fetchPendingCount() {
-                fetch('{{.Prefix}}/api/pending/count')
-                    .then(function(r) { return r.json(); })
-                    .then(function(data) { updateBadge(data.count); })
-                    .catch(function(err) { console.warn('Failed to fetch pending count:', err); });
+                Promise.all([
+                    fetch('{{.Prefix}}/api/pending/count').then(function(r) { return r.json(); }),
+                    fetch('{{.Prefix}}/api/pending/requests/count').then(function(r) { return r.json(); })
+                ]).then(function(results) {
+                    var total = (results[0].count || 0) + (results[1].count || 0);
+                    updateBadge(total);
+                }).catch(function(err) { console.warn('Failed to fetch pending count:', err); });
             }
 
             function connect() {
@@ -299,6 +302,10 @@
                         if (msg.type && (msg.type.indexOf('pending_request.') === 0 || msg.type === 'waiters.changed')) {
                             fetchPendingCount();
                             window.dispatchEvent(new CustomEvent('proxy:pending-event', { detail: msg }));
+                        }
+                        if (msg.type && msg.type.indexOf('http_pending.') === 0) {
+                            fetchPendingCount();
+                            window.dispatchEvent(new CustomEvent('proxy:http-pending-event', { detail: msg }));
                         }
                         if (msg.type === 'transaction.new') {
                             window.dispatchEvent(new CustomEvent('proxy:transaction-event', { detail: msg }));
