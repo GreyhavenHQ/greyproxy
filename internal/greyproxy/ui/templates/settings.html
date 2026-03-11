@@ -173,9 +173,8 @@
         .then(function(data) {
             updateNotifToggle(data.notifications.enabled, data.notifications.available);
             updateNotifStatus(data.notifications);
-            showToast(data.notifications.enabled ? 'Desktop notifications enabled' : 'Desktop notifications disabled', 'success');
         })
-        .catch(function() { showToast('Failed to update notification settings', 'error'); });
+        .catch(function() {});
     };
 
     // Load settings from server
