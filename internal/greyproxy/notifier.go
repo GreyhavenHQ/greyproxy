@@ -35,6 +35,8 @@ type Notifier struct {
 
 	// Which notification backend to use (detected at startup).
 	backend notifyBackend
+	// Capabilities of the notify-send binary (Linux only).
+	linuxCaps notifySendCaps
 
 	// Track when we last notified per pending key (container|host|port),
 	// so we can suppress rapid re-notifications.
@@ -59,11 +61,19 @@ const (
 	backendTerminalNotifier
 )
 
+// notifySendCaps tracks which features the installed notify-send supports.
+// Versions < 0.8 (e.g. Ubuntu 22.04's 0.7.9) lack -w, -A, -r, -p.
+type notifySendCaps struct {
+	wait    bool // -w (block until closed/clicked)
+	actions bool // -A (clickable actions)
+}
+
 // NotificationBackendInfo describes the notification backend status.
 type NotificationBackendInfo struct {
-	Available   bool   `json:"available"`
-	Backend     string `json:"backend"`
-	InstallHint string `json:"installHint,omitempty"`
+	Available      bool   `json:"available"`
+	Backend        string `json:"backend"`
+	InstallHint    string `json:"installHint,omitempty"`
+	SupportsActions bool   `json:"supportsActions"`
 }
 
 func NewNotifier(bus *EventBus, db *DB, enabled bool, dashboardURL string) *Notifier {
@@ -78,6 +88,9 @@ func NewNotifier(bus *EventBus, db *DB, enabled bool, dashboardURL string) *Noti
 	}
 	n.enabled.Store(enabled)
 	n.backend = detectBackend()
+	if n.backend == backendNotifySend {
+		n.linuxCaps = detectNotifySendCaps()
+	}
 	return n
 }
 
@@ -105,7 +118,46 @@ func (n *Notifier) BackendInfo() NotificationBackendInfo {
 	if !info.Available {
 		info.InstallHint = installHint()
 	}
+	// terminal-notifier on macOS always supports actions.
+	info.SupportsActions = n.backend == backendTerminalNotifier || n.linuxCaps.actions
 	return info
+}
+
+// detectNotifySendCaps parses the version from `notify-send --version` and
+// determines which features are available. Versions >= 0.8 support -w and -A.
+func detectNotifySendCaps() notifySendCaps {
+	out, err := exec.Command("notify-send", "--version").Output()
+	if err != nil {
+		return notifySendCaps{}
+	}
+
+	// Output looks like "notify-send 0.8.3" or "notify-send 0.7.9".
+	parts := strings.Fields(strings.TrimSpace(string(out)))
+	if len(parts) < 2 {
+		return notifySendCaps{}
+	}
+
+	version := parts[len(parts)-1]
+	major, minor := parseVersion(version)
+
+	// -w and -A were introduced in libnotify 0.8.0.
+	advanced := major > 0 || (major == 0 && minor >= 8)
+	return notifySendCaps{
+		wait:    advanced,
+		actions: advanced,
+	}
+}
+
+// parseVersion extracts major.minor from a version string like "0.8.3".
+func parseVersion(v string) (major, minor int) {
+	parts := strings.SplitN(v, ".", 3)
+	if len(parts) >= 1 {
+		fmt.Sscanf(parts[0], "%d", &major)
+	}
+	if len(parts) >= 2 {
+		fmt.Sscanf(parts[1], "%d", &minor)
+	}
+	return
 }
 
 func installHint() string {
@@ -163,7 +215,10 @@ func (n *Notifier) Start() {
 		}
 	}()
 
-	n.log.Infof("notifier started (enabled=%v, backend=%v)", n.enabled.Load(), n.backendName())
+	if n.backend == backendNotifySend && !n.linuxCaps.actions {
+		n.log.Warn("notify-send < 0.8 detected; running in basic mode (no click actions or auto-dismiss)")
+	}
+	n.log.Infof("notifier started (enabled=%v, backend=%v, actions=%v)", n.enabled.Load(), n.backendName(), n.linuxCaps.actions || n.backend == backendTerminalNotifier)
 }
 
 func (n *Notifier) backendName() string {
@@ -361,6 +416,17 @@ func (n *Notifier) sendNotification(title, body, url string, pendingID int64) {
 }
 
 func (n *Notifier) sendLinux(title, body, url string, pendingID int64) {
+	if n.linuxCaps.wait && n.linuxCaps.actions {
+		n.sendLinuxAdvanced(title, body, url, pendingID)
+	} else {
+		n.sendLinuxBasic(title, body, pendingID)
+	}
+}
+
+// sendLinuxAdvanced uses -w and -A (notify-send >= 0.8).
+// The process blocks until the notification is closed or clicked,
+// so we can track the PID and close it with SIGINT on resolution.
+func (n *Notifier) sendLinuxAdvanced(title, body, url string, pendingID int64) {
 	go func() {
 		cmd := exec.Command("notify-send",
 			"-a", "greyproxy",
@@ -397,6 +463,25 @@ func (n *Notifier) sendLinux(title, body, url string, pendingID int64) {
 
 		cmd.Wait()
 		n.untrackNotification(pendingID)
+	}()
+}
+
+// sendLinuxBasic is the fallback for notify-send < 0.8 (e.g. Ubuntu 22.04).
+// It fires a simple notification without waiting or actions. The process
+// exits immediately, so we cannot track it or close it programmatically.
+func (n *Notifier) sendLinuxBasic(title, body string, pendingID int64) {
+	go func() {
+		cmd := exec.Command("notify-send",
+			"-a", "greyproxy",
+			"-u", "normal",
+			"-c", "network",
+			"-t", "30000",
+			title,
+			body,
+		)
+		if err := cmd.Run(); err != nil {
+			n.log.Debugf("notify-send (basic): %v", err)
+		}
 	}()
 }
 

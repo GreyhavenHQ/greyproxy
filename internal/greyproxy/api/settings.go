@@ -13,10 +13,11 @@ type settingsResponse struct {
 }
 
 type notificationSettingsResp struct {
-	Enabled     bool   `json:"enabled"`
-	Available   bool   `json:"available"`
-	Backend     string `json:"backend"`
-	InstallHint string `json:"installHint,omitempty"`
+	Enabled         bool   `json:"enabled"`
+	Available       bool   `json:"available"`
+	Backend         string `json:"backend"`
+	InstallHint     string `json:"installHint,omitempty"`
+	SupportsActions bool   `json:"supportsActions"`
 }
 
 func buildSettingsResponse(s *Shared) settingsResponse {
@@ -30,10 +31,11 @@ func buildSettingsResponse(s *Shared) settingsResponse {
 	return settingsResponse{
 		Theme: resolved.Theme,
 		Notifications: notificationSettingsResp{
-			Enabled:     resolved.NotificationsEnabled,
-			Available:   info.Available,
-			Backend:     info.Backend,
-			InstallHint: info.InstallHint,
+			Enabled:         resolved.NotificationsEnabled,
+			Available:       info.Available,
+			Backend:         info.Backend,
+			InstallHint:     info.InstallHint,
+			SupportsActions: info.SupportsActions,
 		},
 	}
 }

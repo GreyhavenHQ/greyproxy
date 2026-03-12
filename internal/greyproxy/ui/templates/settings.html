@@ -61,6 +61,19 @@
                     </div>
                 </div>
             </div>
+
+            <!-- Basic mode hint (shown when notify-send is old and lacks actions) -->
+            <div id="notif-basic-hint" class="hidden mt-4 p-4 bg-muted rounded-lg border border-border">
+                <div class="flex items-start gap-3">
+                    <svg class="h-5 w-5 text-muted-foreground flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" />
+                    </svg>
+                    <div>
+                        <p class="font-medium text-foreground">Running in basic mode</p>
+                        <p class="mt-1 text-muted-foreground">Your version of notify-send does not support click actions or auto-dismiss. Notifications will still appear, but you will need to use the dashboard to act on them. Upgrade libnotify to 0.8+ for full functionality.</p>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 </div>
@@ -147,17 +160,25 @@
         var statusEl = document.getElementById('notif-status');
         var hintEl = document.getElementById('notif-install-hint');
         var hintTextEl = document.getElementById('notif-install-text');
+        var basicHintEl = document.getElementById('notif-basic-hint');
 
         if (!data.available) {
             statusEl.innerHTML = '<span class="text-muted-foreground">No notification backend available</span>';
             hintEl.classList.remove('hidden');
+            basicHintEl.classList.add('hidden');
             hintTextEl.textContent = data.installHint || 'Desktop notifications are not supported on this platform.';
         } else {
             var status = data.enabled ? 'Enabled' : 'Disabled';
             var statusColor = data.enabled ? 'text-[var(--color-green)]' : 'text-muted-foreground';
-            statusEl.innerHTML = '<span class="' + statusColor + '">' + status + '</span>' +
+            var mode = data.supportsActions ? '' : ' (basic)';
+            statusEl.innerHTML = '<span class="' + statusColor + '">' + status + mode + '</span>' +
                 ' <span class="text-muted-foreground">&middot; Using ' + data.backend + '</span>';
             hintEl.classList.add('hidden');
+            if (!data.supportsActions && data.enabled) {
+                basicHintEl.classList.remove('hidden');
+            } else {
+                basicHintEl.classList.add('hidden');
+            }
         }
     }
 
