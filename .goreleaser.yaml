@@ -71,6 +71,25 @@ changelog:
       - '^docs:'
       - '^test:'
 
+brews:
+  - repository:
+      owner: GreyhavenHQ
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    homepage: "https://github.com/GreyhavenHQ/greyproxy"
+    description: "SOCKS5 proxy with DNS resolution and web dashboard for network sandboxing"
+    license: "Apache-2.0"
+    dependencies:
+      - name: terminal-notifier
+        type: optional
+    install: |
+      bin.install "greyproxy"
+    caveats: |
+      For desktop notifications on macOS, install terminal-notifier:
+        brew install terminal-notifier
+    test: |
+      system bin/"greyproxy", "-V"
+
 release:
   prerelease: auto
   mode: keep-existing
