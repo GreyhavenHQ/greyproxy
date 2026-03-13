@@ -43,9 +43,9 @@ const (
 	DefaultReadTimeout = 30 * time.Second
 
 	// DefaultBodySize is the default HTTP body or websocket frame size to record.
-	DefaultBodySize = 64 * 1024 // 64KB
+	DefaultBodySize = 2 * 1024 * 1024 // 2MB
 	// MaxBodySize is the maximum HTTP body or websocket frame size to record.
-	MaxBodySize = 1024 * 1024 // 1MB
+	MaxBodySize = 2 * 1024 * 1024 // 2MB
 	// DeafultSampleRate is the default websocket sample rate (samples per second).
 	DefaultSampleRate = 10.0
 )

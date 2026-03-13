@@ -1383,8 +1383,8 @@ func CleanupResolvedHttpPending(db *DB) {
 
 // --- HTTP Transactions ---
 
-// MaxBodyCapture is the default max bytes to store per request/response body.
-const MaxBodyCapture = 1048576 // 1MB
+// MaxBodyCapture is the max bytes to store per request/response body.
+const MaxBodyCapture = 2 * 1024 * 1024 // 2MB
 
 func CreateHttpTransaction(db *DB, input HttpTransactionCreateInput) (*HttpTransaction, error) {
 	db.Lock()
