@@ -677,15 +677,18 @@ def assemble_conversation(session_id, entries):
 
         turn_details.append(detail)
 
-    # Extract system prompt summary
+    # Extract system prompt (full + summary)
     system_blocks = body.get("system", [])
-    system_summary = None
+    system_prompt_parts = []
     for block in system_blocks:
         if isinstance(block, dict) and block.get("type") == "text":
             text = block.get("text", "")
-            if len(text) > 100 and "billing" not in text:
-                system_summary = text[:500] + "..." if len(text) > 500 else text
-                break
+            if text:
+                system_prompt_parts.append(text)
+    system_prompt = "\n\n---\n\n".join(system_prompt_parts) if system_prompt_parts else None
+    system_summary = None
+    if system_prompt and len(system_prompt) > 100:
+        system_summary = system_prompt[:500] + "..." if len(system_prompt) > 500 else system_prompt
 
     # Recover assistant responses from SSE for each request that isn't
     # followed by another request (whose messages would contain the response).
@@ -738,6 +741,7 @@ def assemble_conversation(session_id, entries):
         "ended_at": entries[-1]["timestamp"],
         "turn_count": len(turn_details),
         "system_prompt_summary": system_summary,
+        "system_prompt": system_prompt,
         "turns": turn_details,
         "last_turn_has_response": last_turn_has_response,
         "metadata": {
