@@ -43,3 +43,4 @@ dist/
 /greyproxy.db-shm
 /greyproxy.db-wal
 /greyproxy
+exported_logs/
