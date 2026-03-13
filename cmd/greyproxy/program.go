@@ -1,8 +1,12 @@
 package main
 
 import (
+	"bytes"
+	"compress/flate"
+	"compress/gzip"
 	"context"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -14,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/andybalholm/brotli"
 	defaults "github.com/greyhavenhq/greyproxy"
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/logger"
 	svccore "github.com/greyhavenhq/greyproxy/internal/gostcore/service"
@@ -341,6 +346,18 @@ func (p *program) buildGreyproxyService() error {
 		}
 		containerName, _ := greyproxy_plugins.ResolveIdentity(info.ContainerName)
 		go func() {
+			reqCT := info.RequestHeaders.Get("Content-Type")
+			respCT := info.ResponseHeaders.Get("Content-Type")
+
+			// Only store bodies for text-based content types, and decompress if needed
+			var reqBody, respBody []byte
+			if isTextContentType(reqCT) {
+				reqBody = decompressBody(info.RequestBody, info.RequestHeaders.Get("Content-Encoding"))
+			}
+			if isTextContentType(respCT) {
+				respBody = decompressBody(info.ResponseBody, info.ResponseHeaders.Get("Content-Encoding"))
+			}
+
 			txn, err := greyproxy.CreateHttpTransaction(shared.DB, greyproxy.HttpTransactionCreateInput{
 				ContainerName:       containerName,
 				DestinationHost:     host,
@@ -348,12 +365,12 @@ func (p *program) buildGreyproxyService() error {
 				Method:              info.Method,
 				URL:                 "https://" + info.Host + info.URI,
 				RequestHeaders:      info.RequestHeaders,
-				RequestBody:         info.RequestBody,
-				RequestContentType:  info.RequestHeaders.Get("Content-Type"),
+				RequestBody:         reqBody,
+				RequestContentType:  reqCT,
 				StatusCode:          info.StatusCode,
 				ResponseHeaders:     info.ResponseHeaders,
-				ResponseBody:        info.ResponseBody,
-				ResponseContentType: info.ResponseHeaders.Get("Content-Type"),
+				ResponseBody:        respBody,
+				ResponseContentType: respCT,
 				DurationMs:          info.DurationMs,
 				Result:              "auto",
 			})
@@ -575,4 +592,62 @@ func greyproxyDataHome() string {
 		return filepath.Join(home, "Library", "Application Support", "greyproxy")
 	}
 	return filepath.Join(home, ".local", "share", "greyproxy")
+}
+
+// isTextContentType returns true if the content type represents human-readable text.
+func isTextContentType(ct string) bool {
+	ct = strings.ToLower(ct)
+	if i := strings.IndexByte(ct, ';'); i >= 0 {
+		ct = ct[:i]
+	}
+	ct = strings.TrimSpace(ct)
+	switch {
+	case strings.HasPrefix(ct, "text/"):
+		return true
+	case ct == "application/json",
+		ct == "application/xml",
+		ct == "application/javascript",
+		ct == "application/x-javascript",
+		ct == "application/ecmascript",
+		ct == "application/x-www-form-urlencoded",
+		ct == "application/graphql",
+		ct == "application/soap+xml",
+		ct == "application/xhtml+xml",
+		ct == "application/x-ndjson":
+		return true
+	case strings.HasSuffix(ct, "+json"),
+		strings.HasSuffix(ct, "+xml"):
+		return true
+	}
+	return false
+}
+
+// decompressBody decompresses a body based on the Content-Encoding header.
+// Returns the original body unchanged if encoding is identity/unknown or on error.
+func decompressBody(body []byte, encoding string) []byte {
+	if len(body) == 0 {
+		return body
+	}
+	encoding = strings.ToLower(strings.TrimSpace(encoding))
+	var reader io.ReadCloser
+	var err error
+	switch encoding {
+	case "gzip", "x-gzip":
+		reader, err = gzip.NewReader(bytes.NewReader(body))
+	case "deflate":
+		reader = flate.NewReader(bytes.NewReader(body))
+	case "br":
+		reader = io.NopCloser(brotli.NewReader(bytes.NewReader(body)))
+	default:
+		return body
+	}
+	if err != nil {
+		return body
+	}
+	defer reader.Close()
+	decoded, err := io.ReadAll(reader)
+	if err != nil {
+		return body
+	}
+	return decoded
 }
