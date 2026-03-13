@@ -135,6 +135,17 @@ func handleCertGenerate(force bool) {
 	fmt.Println("\nRun 'greyproxy cert install' to trust this CA on your system.")
 }
 
+// linuxCertInstallInfo returns the destination path and update command
+// appropriate for the current Linux distribution.
+func linuxCertInstallInfo() (destPath, updateCmd string) {
+	// Arch Linux, Fedora, RHEL, CentOS, openSUSE use update-ca-trust
+	if _, err := exec.LookPath("update-ca-trust"); err == nil {
+		return "/etc/ca-certificates/trust-source/anchors/greyproxy-ca.crt", "update-ca-trust"
+	}
+	// Debian, Ubuntu, and derivatives use update-ca-certificates
+	return "/usr/local/share/ca-certificates/greyproxy-ca.crt", "update-ca-certificates"
+}
+
 func handleCertInstall() {
 	certFile := filepath.Join(greyproxyDataHome(), "ca-cert.pem")
 
@@ -165,9 +176,28 @@ func handleCertInstall() {
 		fmt.Println("CA certificate installed and trusted.")
 
 	case "linux":
-		fmt.Printf("To trust the CA certificate on Linux, run:\n\n")
-		fmt.Printf("  sudo cp %s /usr/local/share/ca-certificates/greyproxy-ca.crt\n", certFile)
-		fmt.Printf("  sudo update-ca-certificates\n")
+		destPath, updateCmd := linuxCertInstallInfo()
+		fmt.Println("Installing CA certificate into system trust store (requires sudo)...")
+		cpCmd := exec.Command("sudo", "cp", certFile, destPath)
+		cpCmd.Stdout = os.Stdout
+		cpCmd.Stderr = os.Stderr
+		cpCmd.Stdin = os.Stdin
+		if err := cpCmd.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "\nAutomatic install failed. Please run manually:\n\n")
+			fmt.Fprintf(os.Stderr, "  sudo cp %s %s\n", certFile, destPath)
+			fmt.Fprintf(os.Stderr, "  sudo %s\n\n", updateCmd)
+			os.Exit(1)
+		}
+		updCmd := exec.Command("sudo", updateCmd)
+		updCmd.Stdout = os.Stdout
+		updCmd.Stderr = os.Stderr
+		updCmd.Stdin = os.Stdin
+		if err := updCmd.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "\nCertificate copied but trust update failed. Please run manually:\n\n")
+			fmt.Fprintf(os.Stderr, "  sudo %s\n\n", updateCmd)
+			os.Exit(1)
+		}
+		fmt.Println("CA certificate installed and trusted.")
 
 	default:
 		fmt.Printf("CA certificate is at: %s\n", certFile)
