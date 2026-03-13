@@ -1,0 +1,721 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Greyproxy - Conversation Viewer</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+  darkMode: 'class',
+  theme: {
+    extend: {
+      colors: {
+        gp: {
+          bg: 'rgb(var(--color-background) / <alpha-value>)',
+          fg: 'rgb(var(--color-foreground) / <alpha-value>)',
+          card: 'rgb(var(--color-card) / <alpha-value>)',
+          'card-fg': 'rgb(var(--color-card-foreground) / <alpha-value>)',
+          primary: 'rgb(var(--color-primary) / <alpha-value>)',
+          'primary-fg': 'rgb(var(--color-primary-foreground) / <alpha-value>)',
+          secondary: 'rgb(var(--color-secondary) / <alpha-value>)',
+          'secondary-fg': 'rgb(var(--color-secondary-foreground) / <alpha-value>)',
+          muted: 'rgb(var(--color-muted) / <alpha-value>)',
+          'muted-fg': 'rgb(var(--color-muted-foreground) / <alpha-value>)',
+          accent: 'rgb(var(--color-accent) / <alpha-value>)',
+          destructive: 'rgb(var(--color-destructive) / <alpha-value>)',
+          border: 'rgb(var(--color-border) / <alpha-value>)',
+          input: 'rgb(var(--color-input) / <alpha-value>)',
+          ring: 'rgb(var(--color-ring) / <alpha-value>)',
+        }
+      }
+    }
+  }
+}
+</script>
+<style>
+  :root {
+    --color-background: 255 255 255;
+    --color-foreground: 22 22 20;
+    --color-card: 249 249 247;
+    --color-card-foreground: 22 22 20;
+    --color-primary: 217 94 42;
+    --color-primary-foreground: 255 255 255;
+    --color-secondary: 249 249 247;
+    --color-secondary-foreground: 22 22 20;
+    --color-muted: 240 240 236;
+    --color-muted-foreground: 127 127 121;
+    --color-accent: 217 94 42;
+    --color-destructive: 180 51 50;
+    --color-border: 221 221 215;
+    --color-input: 221 221 215;
+    --color-ring: 217 94 42;
+    --color-green: #16a34a;
+    --color-red: #dc2626;
+  }
+  .dark {
+    --color-background: 20 20 19;
+    --color-foreground: 237 237 235;
+    --color-card: 28 28 26;
+    --color-card-foreground: 22 22 20;
+    --color-primary: 217 94 42;
+    --color-primary-foreground: 255 255 255;
+    --color-secondary: 35 35 32;
+    --color-secondary-foreground: 237 237 235;
+    --color-muted: 42 42 39;
+    --color-muted-foreground: 154 154 148;
+    --color-accent: 217 94 42;
+    --color-destructive: 220 80 78;
+    --color-border: 58 58 54;
+    --color-input: 58 58 54;
+    --color-ring: 217 94 42;
+    --color-green: #22c55e;
+    --color-red: #ef4444;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: system-ui, -apple-system, sans-serif;
+    background: rgb(var(--color-background));
+    color: rgb(var(--color-foreground));
+    line-height: 1.6;
+  }
+
+  /* Scrollbar styling */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgb(var(--color-border)); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgb(var(--color-muted-foreground)); }
+
+  /* Markdown rendering */
+  .markdown-body strong, .markdown-body b { font-weight: 700; }
+  .markdown-body em, .markdown-body i { font-style: italic; }
+
+  .markdown-body pre {
+    background: rgb(var(--color-muted));
+    border: 1px solid rgb(var(--color-border));
+    border-radius: 6px;
+    padding: 12px 16px;
+    overflow-x: auto;
+    margin: 8px 0;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .markdown-body code {
+    font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, Consolas, monospace;
+    font-size: 0.9em;
+  }
+  .markdown-body :not(pre) > code {
+    background: rgb(var(--color-muted));
+    border: 1px solid rgb(var(--color-border));
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-size: 0.85em;
+  }
+  .markdown-body ul, .markdown-body ol {
+    padding-left: 24px;
+    margin: 6px 0;
+  }
+  .markdown-body ul { list-style-type: disc; }
+  .markdown-body ol { list-style-type: decimal; }
+  .markdown-body li { margin: 2px 0; }
+  .markdown-body p { margin: 4px 0; }
+  .markdown-body h1, .markdown-body h2, .markdown-body h3,
+  .markdown-body h4, .markdown-body h5, .markdown-body h6 {
+    font-weight: 600;
+    margin: 12px 0 6px;
+  }
+  .markdown-body h1 { font-size: 1.4em; }
+  .markdown-body h2 { font-size: 1.2em; }
+  .markdown-body h3 { font-size: 1.1em; }
+
+  /* Collapsible sections */
+  details { border-radius: 6px; }
+  details summary {
+    cursor: pointer;
+    user-select: none;
+    list-style: none;
+  }
+  details summary::-webkit-details-marker { display: none; }
+  details summary::before {
+    content: '\25B6';
+    display: inline-block;
+    margin-right: 6px;
+    font-size: 0.7em;
+    transition: transform 0.15s;
+  }
+  details[open] summary::before { transform: rotate(90deg); }
+
+  /* Sidebar item */
+  .sidebar-item {
+    transition: background 0.1s, border-color 0.1s;
+  }
+  .sidebar-item:hover {
+    background: rgb(var(--color-muted));
+  }
+  .sidebar-item.active {
+    background: rgb(var(--color-muted));
+    border-left: 3px solid rgb(var(--color-primary));
+  }
+
+  /* Turn styling */
+  .turn-user { border-left: 3px solid rgb(var(--color-primary)); }
+  .turn-assistant { border-left: 3px solid rgb(var(--color-border)); }
+
+  /* Loading spinner */
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spinner {
+    width: 24px; height: 24px;
+    border: 3px solid rgb(var(--color-border));
+    border-top-color: rgb(var(--color-primary));
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+  }
+</style>
+</head>
+<body>
+
+<div id="app" class="flex h-screen overflow-hidden">
+  <!-- Sidebar -->
+  <aside id="sidebar" class="w-80 min-w-[320px] flex flex-col border-r" style="border-color: rgb(var(--color-border))">
+    <!-- Header -->
+    <div class="p-4 border-b flex items-center justify-between" style="border-color: rgb(var(--color-border))">
+      <div class="flex items-center gap-2">
+        <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: rgb(var(--color-primary))">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+        </svg>
+        <h1 class="text-base font-semibold">Conversations</h1>
+      </div>
+      <button id="themeToggle" onclick="toggleTheme()" class="p-2 rounded-lg hover:opacity-80 transition-opacity" style="background: rgb(var(--color-muted))" title="Toggle dark mode">
+        <svg id="iconSun" class="w-4 h-4 hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+        <svg id="iconMoon" class="w-4 h-4 hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+      </button>
+    </div>
+
+    <!-- Conversation list -->
+    <div id="sidebarContent" class="flex-1 overflow-y-auto">
+      <div id="loadingIndicator" class="flex flex-col items-center justify-center gap-3 py-12">
+        <div class="spinner"></div>
+        <span class="text-sm" style="color: rgb(var(--color-muted-foreground))">Loading conversations...</span>
+      </div>
+      <div id="conversationList" class="hidden"></div>
+      <div id="noConversations" class="hidden flex flex-col items-center justify-center gap-2 py-12 px-4 text-center">
+        <svg class="w-10 h-10" style="color: rgb(var(--color-muted-foreground))" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+        <p class="text-sm font-medium" style="color: rgb(var(--color-muted-foreground))">No conversations found</p>
+        <p class="text-xs" style="color: rgb(var(--color-muted-foreground))">Place conversation_XXXX.json files in this directory.</p>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Main content -->
+  <main class="flex-1 flex flex-col overflow-hidden">
+    <!-- Empty state -->
+    <div id="emptyState" class="flex-1 flex flex-col items-center justify-center gap-4" style="color: rgb(var(--color-muted-foreground))">
+      <svg class="w-16 h-16 opacity-40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+      </svg>
+      <p class="text-lg font-medium">Select a conversation</p>
+      <p class="text-sm">Choose a conversation from the sidebar to view its contents.</p>
+    </div>
+
+    <!-- Conversation view -->
+    <div id="conversationView" class="hidden flex-1 flex flex-col overflow-hidden">
+      <!-- Conversation header -->
+      <div id="convHeader" class="p-4 border-b" style="border-color: rgb(var(--color-border)); background: rgb(var(--color-card))">
+      </div>
+
+      <!-- Turns -->
+      <div id="turnsContainer" class="flex-1 overflow-y-auto p-6">
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+// ---- Theme Management ----
+function getSystemTheme() {
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
+function applyTheme(theme) {
+  document.documentElement.classList.toggle('dark', theme === 'dark');
+  document.getElementById('iconSun').classList.toggle('hidden', theme !== 'dark');
+  document.getElementById('iconMoon').classList.toggle('hidden', theme === 'dark');
+}
+
+function toggleTheme() {
+  const current = document.documentElement.classList.contains('dark') ? 'dark' : 'light';
+  const next = current === 'dark' ? 'light' : 'dark';
+  localStorage.setItem('gp-theme', next);
+  applyTheme(next);
+}
+
+(function initTheme() {
+  const stored = localStorage.getItem('gp-theme');
+  applyTheme(stored || getSystemTheme());
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+    if (!localStorage.getItem('gp-theme')) {
+      applyTheme(e.matches ? 'dark' : 'light');
+    }
+  });
+})();
+
+// ---- Markdown Renderer (lightweight) ----
+function renderMarkdown(text) {
+  if (!text) return '';
+  let html = escapeHtml(text);
+
+  // Code blocks (``` ... ```)
+  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
+    return `<pre><code class="${lang}">${code.trimEnd()}</code></pre>`;
+  });
+
+  // Inline code
+  html = html.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+
+  // Bold
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+
+  // Italic
+  html = html.replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, '<em>$1</em>');
+
+  // Headers
+  html = html.replace(/^######\s+(.+)$/gm, '<h6>$1</h6>');
+  html = html.replace(/^#####\s+(.+)$/gm, '<h5>$1</h5>');
+  html = html.replace(/^####\s+(.+)$/gm, '<h4>$1</h4>');
+  html = html.replace(/^###\s+(.+)$/gm, '<h3>$1</h3>');
+  html = html.replace(/^##\s+(.+)$/gm, '<h2>$1</h2>');
+  html = html.replace(/^#\s+(.+)$/gm, '<h1>$1</h1>');
+
+  // Unordered lists
+  html = html.replace(/^(\s*)[-*]\s+(.+)$/gm, '$1<li>$2</li>');
+  html = html.replace(/((?:<li>.*<\/li>\n?)+)/g, '<ul>$1</ul>');
+
+  // Ordered lists
+  html = html.replace(/^(\s*)\d+\.\s+(.+)$/gm, '$1<li>$2</li>');
+
+  // Paragraphs: convert double newlines
+  html = html.replace(/\n\n/g, '</p><p>');
+  // Single newlines to <br> (outside of pre/code)
+  html = html.replace(/\n/g, '<br>');
+
+  // Clean up stray <br> inside tags
+  html = html.replace(/<\/ul><br>/g, '</ul>');
+  html = html.replace(/<br><ul>/g, '<ul>');
+  html = html.replace(/<\/pre><br>/g, '</pre>');
+  html = html.replace(/<br><pre>/g, '<pre>');
+
+  return `<div class="markdown-body"><p>${html}</p></div>`;
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+// ---- Time Utilities ----
+function formatTime(iso) {
+  if (!iso) return 'N/A';
+  const d = new Date(iso);
+  return d.toLocaleString(undefined, {
+    month: 'short', day: 'numeric', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', second: '2-digit'
+  });
+}
+
+function formatTimeShort(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function formatDuration(ms) {
+  if (ms == null) return 'N/A';
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
+function formatTimeRange(start, end) {
+  if (!start) return 'N/A';
+  const s = formatTime(start);
+  if (!end) return s;
+  const e = formatTimeShort(end);
+  return `${s} to ${e}`;
+}
+
+function formatRequestIds(ids) {
+  if (!ids || ids.length === 0) return '';
+  if (ids.length === 1) return `req #${ids[0]}`;
+  // Compress consecutive IDs into ranges: [1,2,3,5,7,8,9] -> "1-3, 5, 7-9"
+  const ranges = [];
+  let start = ids[0], prev = ids[0];
+  for (let i = 1; i <= ids.length; i++) {
+    if (i < ids.length && ids[i] === prev + 1) {
+      prev = ids[i];
+    } else {
+      ranges.push(start === prev ? `${start}` : `${start}-${prev}`);
+      if (i < ids.length) { start = ids[i]; prev = ids[i]; }
+    }
+  }
+  return `req #${ranges.join(', ')}`;
+}
+
+function truncate(str, len) {
+  if (!str) return '';
+  return str.length > len ? str.slice(0, len) + '...' : str;
+}
+
+// ---- Data Loading ----
+const conversations = [];
+let activeConvIndex = -1;
+
+async function loadConversations() {
+  const promises = [];
+  for (let i = 1; i <= 9999; i++) {
+    const filename = `conversation_${String(i).padStart(4, '0')}.json`;
+    promises.push(
+      fetch(filename)
+        .then(r => {
+          if (!r.ok) throw new Error('Not found');
+          return r.json();
+        })
+        .then(data => ({ filename, data }))
+        .catch(() => null)
+    );
+    // Fetch in batches of 20 to avoid overwhelming the server,
+    // but stop early if a full batch returns nothing.
+    if (i % 20 === 0) {
+      const results = await Promise.all(promises);
+      const batch = results.filter(Boolean);
+      batch.forEach(item => conversations.push(item));
+      promises.length = 0;
+      // If this entire batch of 20 had zero results, stop probing.
+      if (batch.length === 0 && i >= 20) break;
+    }
+  }
+  // Handle any remaining promises
+  if (promises.length > 0) {
+    const results = await Promise.all(promises);
+    results.filter(Boolean).forEach(item => conversations.push(item));
+  }
+
+  // Sort by started_at
+  conversations.sort((a, b) => {
+    const ta = new Date(a.data.started_at || 0).getTime();
+    const tb = new Date(b.data.started_at || 0).getTime();
+    return ta - tb;
+  });
+
+  renderSidebar();
+}
+
+// ---- Sidebar Rendering ----
+function renderSidebar() {
+  const loading = document.getElementById('loadingIndicator');
+  const list = document.getElementById('conversationList');
+  const empty = document.getElementById('noConversations');
+
+  loading.classList.add('hidden');
+
+  if (conversations.length === 0) {
+    empty.classList.remove('hidden');
+    return;
+  }
+
+  list.classList.remove('hidden');
+  list.innerHTML = conversations.map((conv, idx) => {
+    const d = conv.data;
+    const id = d.conversation_id || conv.filename;
+    const shortId = id.length > 28 ? id.slice(0, 12) + '...' + id.slice(-8) : id;
+    const model = d.model || 'unknown';
+    const turns = d.turn_count || (d.turns ? d.turns.length : 0);
+    const time = formatTimeShort(d.started_at);
+    const firstPrompt = d.turns && d.turns.length > 0 ? truncate(d.turns[0].user_prompt, 80) : '';
+    const isSubagent = id.includes('/');
+    const subagentLabel = isSubagent ? '<span class="px-1.5 py-0.5 rounded text-[10px] font-medium" style="background: rgb(var(--color-primary) / 0.15); color: rgb(var(--color-primary))">subagent</span>' : '';
+
+    return `
+      <div class="sidebar-item px-4 py-3 cursor-pointer border-l-[3px] border-transparent ${isSubagent ? 'pl-8' : ''}" data-index="${idx}" onclick="selectConversation(${idx})">
+        <div class="flex items-center justify-between mb-1 gap-1">
+          <span class="text-xs font-mono font-medium flex items-center gap-1.5" style="color: rgb(var(--color-primary))">${subagentLabel}${escapeHtml(shortId)}</span>
+          <span class="text-xs shrink-0" style="color: rgb(var(--color-muted-foreground))">${time}</span>
+        </div>
+        <p class="text-sm truncate mb-1" style="color: rgb(var(--color-foreground))">${escapeHtml(firstPrompt) || '<span style="color: rgb(var(--color-muted-foreground))">No user prompt</span>'}</p>
+        <div class="flex items-center gap-3 text-xs" style="color: rgb(var(--color-muted-foreground))">
+          <span>${turns} turn${turns !== 1 ? 's' : ''}</span>
+          <span>${escapeHtml(model)}</span>
+        </div>
+      </div>
+    `;
+  }).join('<div style="border-bottom: 1px solid rgb(var(--color-border))"></div>');
+}
+
+// ---- Conversation Selection ----
+function selectConversation(idx) {
+  activeConvIndex = idx;
+
+  // Update sidebar active state
+  document.querySelectorAll('.sidebar-item').forEach((el, i) => {
+    el.classList.toggle('active', i === idx);
+  });
+
+  const conv = conversations[idx].data;
+  document.getElementById('emptyState').classList.add('hidden');
+  document.getElementById('conversationView').classList.remove('hidden');
+
+  renderConversationHeader(conv);
+  renderTurns(conv);
+}
+
+function renderConversationHeader(conv) {
+  const header = document.getElementById('convHeader');
+  const id = conv.conversation_id || 'Unknown';
+  const model = conv.model || 'unknown';
+  const container = conv.container_name || 'N/A';
+  const timeRange = formatTimeRange(conv.started_at, conv.ended_at);
+  const reqCount = conv.metadata ? conv.metadata.total_requests : (conv.request_ids ? conv.request_ids.length : 'N/A');
+  const turnCount = conv.turn_count || (conv.turns ? conv.turns.length : 0);
+
+  header.innerHTML = `
+    <div class="flex items-start justify-between gap-4 flex-wrap">
+      <div class="min-w-0">
+        <h2 class="text-lg font-semibold truncate" style="color: rgb(var(--color-foreground))">${escapeHtml(id)}</h2>
+        ${conv.system_prompt_summary ? `<p class="text-xs mt-1 truncate" style="color: rgb(var(--color-muted-foreground))">${escapeHtml(truncate(conv.system_prompt_summary, 120))}</p>` : ''}
+      </div>
+    </div>
+    <div class="flex flex-wrap gap-x-5 gap-y-1 mt-3 text-xs" style="color: rgb(var(--color-muted-foreground))">
+      <span class="flex items-center gap-1.5">
+        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/></svg>
+        ${escapeHtml(model)}
+      </span>
+      <span class="flex items-center gap-1.5">
+        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 002 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/></svg>
+        ${escapeHtml(container)}
+      </span>
+      <span class="flex items-center gap-1.5">
+        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        ${escapeHtml(timeRange)}
+      </span>
+      <span class="flex items-center gap-1.5">
+        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+        ${turnCount} turns
+      </span>
+      <span class="flex items-center gap-1.5">
+        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        ${reqCount} requests
+      </span>
+    </div>
+    ${conv.linked_subagents && conv.linked_subagents.length > 0 ? `
+    <div class="mt-3 flex flex-wrap gap-2">
+      ${conv.linked_subagents.map(sub => `
+        <button onclick="navigateToConversation('${escapeHtml(sub.conversation_id)}')"
+          class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium cursor-pointer transition-colors"
+          style="background: rgb(var(--color-primary) / 0.1); color: rgb(var(--color-primary)); border: 1px solid rgb(var(--color-primary) / 0.2)"
+          title="${escapeHtml(sub.first_prompt || '')}">
+          <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>
+          Subagent: ${escapeHtml(truncate(sub.first_prompt || sub.conversation_id, 50))}
+        </button>
+      `).join('')}
+    </div>` : ''}
+  `;
+}
+
+function renderTurns(conv) {
+  const container = document.getElementById('turnsContainer');
+  if (!conv.turns || conv.turns.length === 0) {
+    container.innerHTML = `
+      <div class="flex items-center justify-center h-full" style="color: rgb(var(--color-muted-foreground))">
+        <p>No turns in this conversation.</p>
+      </div>
+    `;
+    return;
+  }
+
+  let html = '';
+
+  // System prompt (collapsible, hidden by default)
+  if (conv.system_prompt) {
+    html += `
+      <details class="mb-6 rounded-lg overflow-hidden" style="background: rgb(var(--color-muted) / 0.3); border: 1px solid rgb(var(--color-border))">
+        <summary class="px-4 py-3 text-xs font-semibold uppercase tracking-wider cursor-pointer" style="color: rgb(var(--color-muted-foreground))">
+          System Prompt (${(conv.system_prompt.length / 1024).toFixed(1)}KB)
+        </summary>
+        <div class="px-4 pb-4 text-sm font-mono whitespace-pre-wrap break-words" style="color: rgb(var(--color-muted-foreground)); max-height: 600px; overflow-y: auto; line-height: 1.5">
+          ${escapeHtml(conv.system_prompt)}
+        </div>
+      </details>`;
+  }
+
+  html += conv.turns.map(turn => renderTurn(turn, conv)).join('');
+  container.innerHTML = html;
+  container.scrollTop = 0;
+}
+
+function renderStep(step) {
+  if (step.type === 'assistant') {
+    let html = '';
+
+    // Thinking
+    if (step.thinking_preview) {
+      html += `
+        <details class="mb-2 rounded-lg overflow-hidden" style="background: rgb(var(--color-muted) / 0.5)">
+          <summary class="px-4 py-2 text-xs font-medium" style="color: rgb(var(--color-muted-foreground))">Thinking</summary>
+          <div class="px-4 pb-3 text-sm italic" style="color: rgb(var(--color-muted-foreground)); opacity: 0.8">${renderMarkdown(step.thinking_preview)}</div>
+        </details>`;
+    }
+
+    // Text
+    if (step.text) {
+      html += `
+        <div class="turn-assistant rounded-lg p-4 mb-2" style="background: rgb(var(--color-secondary))">
+          <div class="flex items-center gap-2 mb-2">
+            <span class="text-xs font-semibold uppercase tracking-wider" style="color: rgb(var(--color-muted-foreground))">Assistant</span>
+          </div>
+          <div class="text-sm" style="color: rgb(var(--color-foreground))">${renderMarkdown(step.text)}</div>
+        </div>`;
+    }
+
+    // Tool calls (each rendered as its own box with result attached)
+    if (step.tool_calls && step.tool_calls.length > 0) {
+      html += step.tool_calls.map(tc => {
+        const linkedId = tc.linked_conversation_id;
+        const linkHtml = linkedId
+          ? `<button onclick="navigateToConversation('${escapeHtml(linkedId)}')" class="ml-1 text-xs underline cursor-pointer" style="color: rgb(var(--color-primary))">view subagent</button>`
+          : '';
+        const hasResult = tc.result_preview != null;
+        const errorStyle = tc.is_error ? 'border-left: 3px solid var(--color-red)' : '';
+
+        let resultHtml = '';
+        if (hasResult) {
+          const resultColor = tc.is_error ? 'color: var(--color-red)' : 'color: rgb(var(--color-muted-foreground))';
+          const resultPreview = tc.result_preview || '';
+          const isLong = resultPreview.length > 120;
+          if (isLong) {
+            resultHtml = `
+              <details class="mt-2 pt-2" style="border-top: 1px solid rgb(var(--color-border) / 0.5)">
+                <summary class="text-xs cursor-pointer" style="color: rgb(var(--color-muted-foreground))">
+                  ${tc.is_error ? 'Error' : 'Result'} (${resultPreview.length} chars)
+                </summary>
+                <div class="mt-1 text-xs font-mono whitespace-pre-wrap break-all" style="${resultColor}">${escapeHtml(truncate(resultPreview, 500))}</div>
+              </details>`;
+          } else {
+            resultHtml = `
+              <div class="mt-2 pt-2 text-xs font-mono whitespace-pre-wrap break-all" style="border-top: 1px solid rgb(var(--color-border) / 0.5); ${resultColor}">${escapeHtml(resultPreview)}</div>`;
+          }
+        }
+
+        return `
+          <div class="mb-2 rounded-lg overflow-hidden p-3" style="background: rgb(var(--color-muted) / 0.5); ${errorStyle}">
+            <div class="flex items-start gap-2 text-xs">
+              <span class="inline-flex items-center px-1.5 py-0.5 rounded font-mono font-medium shrink-0" style="background: rgb(var(--color-primary) / 0.12); color: rgb(var(--color-primary))">${escapeHtml(tc.tool || 'unknown')}</span>
+              <span class="font-mono break-all flex-1" style="color: rgb(var(--color-muted-foreground))">${escapeHtml(truncate(tc.input_preview || '', 200))}</span>
+              ${linkHtml}
+            </div>
+            ${resultHtml}
+          </div>`;
+      }).join('');
+    }
+
+    return html;
+  }
+
+  // tool_results step type is now handled inline above, but keep as fallback
+  return '';
+}
+
+function renderTurn(turn, conv) {
+  const turnNum = turn.turn_number || '?';
+  const timestamp = formatTimeShort(turn.timestamp);
+  const duration = formatDuration(turn.duration_ms);
+  const model = turn.model || '';
+  const apiCalls = turn.api_calls_in_turn;
+
+  // Request IDs for this turn
+  const reqIds = turn.request_ids || (turn.request_id ? [turn.request_id] : []);
+  const reqIdLabel = reqIds.length > 0 ? formatRequestIds(reqIds) : null;
+
+  // Metadata badges
+  const metaParts = [];
+  if (timestamp) metaParts.push(timestamp);
+  if (model) metaParts.push(model);
+  if (duration !== 'N/A') metaParts.push(duration);
+  if (apiCalls != null) metaParts.push(`${apiCalls} API call${apiCalls !== 1 ? 's' : ''}`);
+  if (reqIdLabel) metaParts.push(reqIdLabel);
+
+  const metaHtml = metaParts.map(p =>
+    `<span class="inline-flex items-center px-2 py-0.5 rounded text-xs" style="background: rgb(var(--color-muted)); color: rgb(var(--color-muted-foreground))">${escapeHtml(p)}</span>`
+  ).join('');
+
+  // User prompt
+  const userHtml = turn.user_prompt ? `
+    <div class="turn-user rounded-lg p-4 mb-3" style="background: rgb(var(--color-card))">
+      <div class="flex items-center gap-2 mb-2">
+        <span class="text-xs font-semibold uppercase tracking-wider" style="color: rgb(var(--color-primary))">User</span>
+      </div>
+      <div class="text-sm" style="color: rgb(var(--color-foreground))">${renderMarkdown(turn.user_prompt)}</div>
+    </div>
+  ` : '';
+
+  // Render steps (new step-by-step format)
+  const steps = turn.steps || [];
+  let stepsHtml = '';
+  if (steps.length > 0) {
+    stepsHtml = steps.map(s => renderStep(s)).join('');
+  } else {
+    // Backwards compat: old format with flat fields
+    if (turn.thinking_preview) {
+      stepsHtml += `
+        <details class="mb-3 rounded-lg overflow-hidden" style="background: rgb(var(--color-muted) / 0.5)">
+          <summary class="px-4 py-2 text-xs font-medium" style="color: rgb(var(--color-muted-foreground))">Thinking</summary>
+          <div class="px-4 pb-3 text-sm italic" style="color: rgb(var(--color-muted-foreground)); opacity: 0.8">${renderMarkdown(turn.thinking_preview)}</div>
+        </details>`;
+    }
+    if (turn.assistant_response) {
+      stepsHtml += `
+        <div class="turn-assistant rounded-lg p-4" style="background: rgb(var(--color-secondary))">
+          <div class="flex items-center gap-2 mb-2">
+            <span class="text-xs font-semibold uppercase tracking-wider" style="color: rgb(var(--color-muted-foreground))">Assistant</span>
+          </div>
+          <div class="text-sm" style="color: rgb(var(--color-foreground))">${renderMarkdown(turn.assistant_response)}</div>
+        </div>`;
+    }
+  }
+
+  // Linked subagents banner
+  const linkedSubs = conv.linked_subagents || [];
+  let subagentBanner = '';
+  if (linkedSubs.length > 0 && turn.turn_number === 1) {
+    // Show linked subagents on the conversation level (only on first turn to avoid repetition)
+  }
+
+  return `
+    <div class="mb-6">
+      <div class="flex items-center gap-2 mb-2">
+        <span class="text-xs font-bold" style="color: rgb(var(--color-foreground))">Turn ${turnNum}</span>
+        <div class="flex flex-wrap gap-1.5">${metaHtml}</div>
+      </div>
+      ${userHtml}
+      ${stepsHtml}
+    </div>
+  `;
+}
+
+// ---- Navigation ----
+function navigateToConversation(conversationId) {
+  const idx = conversations.findIndex(c => c.data.conversation_id === conversationId);
+  if (idx >= 0) {
+    selectConversation(idx);
+    // Scroll sidebar to show active item
+    const item = document.querySelector(`.sidebar-item[data-index="${idx}"]`);
+    if (item) item.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+}
+
+// ---- Init ----
+loadConversations();
+</script>
+
+</body>
+</html>

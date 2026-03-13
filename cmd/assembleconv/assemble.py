@@ -8,6 +8,7 @@ by session, and outputs inferred conversations.
 import json
 import os
 import re
+import shutil
 from collections import defaultdict
 from datetime import datetime, timedelta
 
@@ -871,6 +872,13 @@ def main():
             )
             print(f"    Turn {t['turn_number']}: user={user_p!r}")
             print(f"           {len(steps)} steps, {total_tools} tool calls ({with_results} with results)")
+
+    # Copy viewer.html into the output directory as index.html
+    viewer_src = os.path.join(os.path.dirname(os.path.abspath(__file__)), "viewer.html")
+    if os.path.exists(viewer_src):
+        viewer_dst = os.path.join(OUTPUT_DIR, "index.html")
+        shutil.copy2(viewer_src, viewer_dst)
+        print(f"Viewer copied to {viewer_dst}")
 
     print(f"\nDone. {len(all_conversations)} conversations written to {OUTPUT_DIR}/")
 
