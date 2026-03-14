@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Greyproxy - Conversation Viewer</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+  darkMode: 'class',
+  theme: {
+    extend: {
+      colors: {
+        gp: {
+          bg: 'rgb(var(--color-background) / <alpha-value>)',
+          fg: 'rgb(var(--color-foreground) / <alpha-value>)',
+          card: 'rgb(var(--color-card) / <alpha-value>)',
+          'card-fg': 'rgb(var(--color-card-foreground) / <alpha-value>)',
+          primary: 'rgb(var(--color-primary) / <alpha-value>)',
+          'primary-fg': 'rgb(var(--color-primary-foreground) / <alpha-value>)',
+          secondary: 'rgb(var(--color-secondary) / <alpha-value>)',
+          'secondary-fg': 'rgb(var(--color-secondary-foreground) / <alpha-value>)',
+          muted: 'rgb(var(--color-muted) / <alpha-value>)',
+          'muted-fg': 'rgb(var(--color-muted-foreground) / <alpha-value>)',
+          accent: 'rgb(var(--color-accent) / <alpha-value>)',
+          destructive: 'rgb(var(--color-destructive) / <alpha-value>)',
+          border: 'rgb(var(--color-border) / <alpha-value>)',
+          input: 'rgb(var(--color-input) / <alpha-value>)',
+          ring: 'rgb(var(--color-ring) / <alpha-value>)',
+        }
+      }
+    }
+  }
+}
+</script>
+<style>
+  :root {
+    --color-background: 255 255 255;
+    --color-foreground: 22 22 20;
+    --color-card: 249 249 247;
+    --color-card-foreground: 22 22 20;
+    --color-primary: 217 94 42;
+    --color-primary-foreground: 255 255 255;
+    --color-secondary: 249 249 247;
+    --color-secondary-foreground: 22 22 20;
+    --color-muted: 240 240 236;
+    --color-muted-foreground: 127 127 121;
+    --color-accent: 217 94 42;
+    --color-destructive: 180 51 50;
+    --color-border: 221 221 215;
+    --color-input: 221 221 215;
+    --color-ring: 217 94 42;
+    --color-green: #16a34a;
+    --color-red: #dc2626;
+  }
+  .dark {
+    --color-background: 20 20 19;
+    --color-foreground: 237 237 235;
+    --color-card: 28 28 26;
+    --color-card-foreground: 22 22 20;
+    --color-primary: 217 94 42;
+    --color-primary-foreground: 255 255 255;
+    --color-secondary: 35 35 32;
+    --color-secondary-foreground: 237 237 235;
+    --color-muted: 42 42 39;
+    --color-muted-foreground: 154 154 148;
+    --color-accent: 217 94 42;
+    --color-destructive: 220 80 78;
+    --color-border: 58 58 54;
+    --color-input: 58 58 54;
+    --color-ring: 217 94 42;
+    --color-green: #22c55e;
+    --color-red: #ef4444;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: system-ui, -apple-system, sans-serif;
+    background: rgb(var(--color-background));
+    color: rgb(var(--color-foreground));
+    line-height: 1.6;
+  }
+
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgb(var(--color-border)); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgb(var(--color-muted-foreground)); }
+
+  .markdown-body strong, .markdown-body b { font-weight: 700; }
+  .markdown-body em, .markdown-body i { font-style: italic; }
+  .markdown-body pre {
+    background: rgb(var(--color-muted));
+    border: 1px solid rgb(var(--color-border));
+    border-radius: 6px;
+    padding: 12px 16px;
+    overflow-x: auto;
+    margin: 8px 0;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .markdown-body code {
+    font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, Consolas, monospace;
+    font-size: 0.9em;
+  }
+  .markdown-body :not(pre) > code {
+    background: rgb(var(--color-muted));
+    border: 1px solid rgb(var(--color-border));
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-size: 0.85em;
+  }
+  .markdown-body ul, .markdown-body ol { padding-left: 24px; margin: 6px 0; }
+  .markdown-body ul { list-style-type: disc; }
+  .markdown-body ol { list-style-type: decimal; }
+  .markdown-body li { margin: 2px 0; }
+  .markdown-body p { margin: 4px 0; }
+  .markdown-body h1, .markdown-body h2, .markdown-body h3,
+  .markdown-body h4, .markdown-body h5, .markdown-body h6 {
+    font-weight: 600; margin: 12px 0 6px;
+  }
+  .markdown-body h1 { font-size: 1.4em; }
+  .markdown-body h2 { font-size: 1.2em; }
+  .markdown-body h3 { font-size: 1.1em; }
+
+  details { border-radius: 6px; }
+  details summary { cursor: pointer; user-select: none; list-style: none; }
+  details summary::-webkit-details-marker { display: none; }
+  details summary::before {
+    content: '\25B6'; display: inline-block; margin-right: 6px;
+    font-size: 0.7em; transition: transform 0.15s;
+  }
+  details[open] summary::before { transform: rotate(90deg); }
+
+  .sidebar-item { transition: background 0.1s, border-color 0.1s; }
+  .sidebar-item:hover { background: rgb(var(--color-muted)); }
+  .sidebar-item.active {
+    background: rgb(var(--color-muted));
+    border-left: 3px solid rgb(var(--color-primary));
+  }
+
+  .turn-user { border-left: 3px solid rgb(var(--color-primary)); }
+  .turn-assistant { border-left: 3px solid rgb(var(--color-border)); }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spinner {
+    width: 24px; height: 24px;
+    border: 3px solid rgb(var(--color-border));
+    border-top-color: rgb(var(--color-primary));
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+  }
+
+  /* Live indicator */
+  .live-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--color-green);
+    animation: pulse 2s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+</style>
+</head>
+<body>
+
+<div id="app" class="flex h-screen overflow-hidden">
+  <!-- Sidebar -->
+  <aside id="sidebar" class="w-80 min-w-[320px] flex flex-col border-r" style="border-color: rgb(var(--color-border))">
+    <div class="p-4 border-b flex items-center justify-between" style="border-color: rgb(var(--color-border))">
+      <div class="flex items-center gap-2">
+        <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: rgb(var(--color-primary))">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+        </svg>
+        <h1 class="text-base font-semibold">Conversations</h1>
+        <div class="live-dot ml-1" title="Live - auto-refreshing"></div>
+      </div>
+      <button id="themeToggle" onclick="toggleTheme()" class="p-2 rounded-lg hover:opacity-80 transition-opacity" style="background: rgb(var(--color-muted))" title="Toggle dark mode">
+        <svg id="iconSun" class="w-4 h-4 hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+        <svg id="iconMoon" class="w-4 h-4 hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+      </button>
+    </div>
+
+    <div id="sidebarContent" class="flex-1 overflow-y-auto">
+      <div id="loadingIndicator" class="flex flex-col items-center justify-center gap-3 py-12">
+        <div class="spinner"></div>
+        <span class="text-sm" style="color: rgb(var(--color-muted-foreground))">Loading conversations...</span>
+      </div>
+      <div id="conversationList" class="hidden"></div>
+      <div id="noConversations" class="hidden flex flex-col items-center justify-center gap-2 py-12 px-4 text-center">
+        <svg class="w-10 h-10" style="color: rgb(var(--color-muted-foreground))" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+        <p class="text-sm font-medium" style="color: rgb(var(--color-muted-foreground))">No conversations found</p>
+        <p class="text-xs" style="color: rgb(var(--color-muted-foreground))">Waiting for data from greyproxy...</p>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Main content -->
+  <main class="flex-1 flex flex-col overflow-hidden">
+    <div id="emptyState" class="flex-1 flex flex-col items-center justify-center gap-4" style="color: rgb(var(--color-muted-foreground))">
+      <svg class="w-16 h-16 opacity-40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+      </svg>
+      <p class="text-lg font-medium">Select a conversation</p>
+      <p class="text-sm">Choose a conversation from the sidebar to view its contents.</p>
+    </div>
+
+    <div id="conversationView" class="hidden flex-1 flex flex-col overflow-hidden">
+      <div id="convHeader" class="p-4 border-b" style="border-color: rgb(var(--color-border)); background: rgb(var(--color-card))"></div>
+      <div id="turnsContainer" class="flex-1 overflow-y-auto p-6"></div>
+    </div>
+
+    <div id="loadingConv" class="hidden flex-1 flex items-center justify-center">
+      <div class="spinner"></div>
+    </div>
+  </main>
+</div>
+
+<script>
+// ---- Theme ----
+function getSystemTheme() {
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+function applyTheme(theme) {
+  document.documentElement.classList.toggle('dark', theme === 'dark');
+  document.getElementById('iconSun').classList.toggle('hidden', theme !== 'dark');
+  document.getElementById('iconMoon').classList.toggle('hidden', theme === 'dark');
+}
+function toggleTheme() {
+  const current = document.documentElement.classList.contains('dark') ? 'dark' : 'light';
+  const next = current === 'dark' ? 'light' : 'dark';
+  localStorage.setItem('gp-theme', next);
+  applyTheme(next);
+}
+(function initTheme() {
+  const stored = localStorage.getItem('gp-theme');
+  applyTheme(stored || getSystemTheme());
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+    if (!localStorage.getItem('gp-theme')) applyTheme(e.matches ? 'dark' : 'light');
+  });
+})();
+
+// ---- Markdown ----
+function renderMarkdown(text) {
+  if (!text) return '';
+  let html = escapeHtml(text);
+  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) =>
+    `<pre><code class="${lang}">${code.trimEnd()}</code></pre>`);
+  html = html.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, '<em>$1</em>');
+  html = html.replace(/^######\s+(.+)$/gm, '<h6>$1</h6>');
+  html = html.replace(/^#####\s+(.+)$/gm, '<h5>$1</h5>');
+  html = html.replace(/^####\s+(.+)$/gm, '<h4>$1</h4>');
+  html = html.replace(/^###\s+(.+)$/gm, '<h3>$1</h3>');
+  html = html.replace(/^##\s+(.+)$/gm, '<h2>$1</h2>');
+  html = html.replace(/^#\s+(.+)$/gm, '<h1>$1</h1>');
+  html = html.replace(/^(\s*)[-*]\s+(.+)$/gm, '$1<li>$2</li>');
+  html = html.replace(/((?:<li>.*<\/li>\n?)+)/g, '<ul>$1</ul>');
+  html = html.replace(/^(\s*)\d+\.\s+(.+)$/gm, '$1<li>$2</li>');
+  html = html.replace(/\n\n/g, '</p><p>');
+  html = html.replace(/\n/g, '<br>');
+  html = html.replace(/<\/ul><br>/g, '</ul>');
+  html = html.replace(/<br><ul>/g, '<ul>');
+  html = html.replace(/<\/pre><br>/g, '</pre>');
+  html = html.replace(/<br><pre>/g, '<pre>');
+  return `<div class="markdown-body"><p>${html}</p></div>`;
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+// ---- Utilities ----
+function formatTime(iso) {
+  if (!iso) return 'N/A';
+  return new Date(iso).toLocaleString(undefined, {
+    month: 'short', day: 'numeric', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', second: '2-digit'
+  });
+}
+function formatTimeShort(iso) {
+  if (!iso) return '';
+  return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+function formatDuration(ms) {
+  if (ms == null) return 'N/A';
+  return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
+}
+function formatTimeRange(start, end) {
+  if (!start) return 'N/A';
+  const s = formatTime(start);
+  return end ? `${s} to ${formatTimeShort(end)}` : s;
+}
+function formatRequestIds(ids) {
+  if (!ids || ids.length === 0) return '';
+  if (ids.length === 1) return `req #${ids[0]}`;
+  const ranges = [];
+  let start = ids[0], prev = ids[0];
+  for (let i = 1; i <= ids.length; i++) {
+    if (i < ids.length && ids[i] === prev + 1) { prev = ids[i]; }
+    else {
+      ranges.push(start === prev ? `${start}` : `${start}-${prev}`);
+      if (i < ids.length) { start = ids[i]; prev = ids[i]; }
+    }
+  }
+  return `req #${ranges.join(', ')}`;
+}
+function truncate(str, len) {
+  if (!str) return '';
+  return str.length > len ? str.slice(0, len) + '...' : str;
+}
+
+// ---- State ----
+let conversationList = [];  // sidebar items (main conversations only)
+let activeConvId = null;
+let activeSubagents = [];   // subagents for the selected conversation
+let convCache = {};         // full conversation cache by id
+let pollTimer = null;
+
+// ---- API ----
+const API_BASE = '';  // same origin
+
+async function fetchConversationList() {
+  const r = await fetch(`${API_BASE}/api/conversations`);
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
+
+async function fetchConversation(id) {
+  if (convCache[id]) return convCache[id];
+  const r = await fetch(`${API_BASE}/api/conversations/${encodeURIComponent(id)}`);
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  const data = await r.json();
+  convCache[id] = data;
+  return data;
+}
+
+async function fetchSubagents(parentId) {
+  const r = await fetch(`${API_BASE}/api/subagents/${encodeURIComponent(parentId)}`);
+  if (!r.ok) return [];
+  return r.json();
+}
+
+// ---- Loading ----
+async function loadConversations() {
+  try {
+    conversationList = await fetchConversationList();
+    renderSidebar();
+  } catch (e) {
+    console.error('Failed to load conversations:', e);
+    document.getElementById('loadingIndicator').classList.add('hidden');
+    document.getElementById('noConversations').classList.remove('hidden');
+  }
+}
+
+// Poll for new conversations every 15 seconds
+function startPolling() {
+  pollTimer = setInterval(async () => {
+    try {
+      const newList = await fetchConversationList();
+      // Check if anything changed (quick length + last item check)
+      if (newList.length !== conversationList.length ||
+          (newList.length > 0 && conversationList.length > 0 &&
+           newList[newList.length - 1].conversation_id !== conversationList[conversationList.length - 1].conversation_id)) {
+        conversationList = newList;
+        renderSidebar();
+        // If we're viewing a conversation that got updated, refresh it
+        if (activeConvId) {
+          delete convCache[activeConvId];
+          const conv = await fetchConversation(activeConvId);
+          renderConversationHeader(conv);
+          renderTurns(conv);
+        }
+      }
+    } catch (e) {
+      // Silent fail on poll
+    }
+  }, 15000);
+}
+
+// ---- Sidebar ----
+function renderSidebar() {
+  const loading = document.getElementById('loadingIndicator');
+  const list = document.getElementById('conversationList');
+  const empty = document.getElementById('noConversations');
+
+  loading.classList.add('hidden');
+
+  if (conversationList.length === 0) {
+    empty.classList.remove('hidden');
+    list.classList.add('hidden');
+    return;
+  }
+
+  empty.classList.add('hidden');
+  list.classList.remove('hidden');
+
+  const items = [];
+  for (const d of conversationList) {
+    items.push(renderSidebarItem(d, false));
+    // If this is the active conversation, show its subagents right after
+    if (d.conversation_id === activeConvId && activeSubagents.length > 0) {
+      for (const sub of activeSubagents) {
+        items.push(renderSidebarItem(sub, true));
+      }
+    }
+  }
+  list.innerHTML = items.join('<div style="border-bottom: 1px solid rgb(var(--color-border))"></div>');
+}
+
+function renderSidebarItem(d, isSubagent) {
+  const id = d.conversation_id || 'unknown';
+  const shortId = id.length > 28 ? id.slice(0, 12) + '...' + id.slice(-8) : id;
+  const model = d.model || 'unknown';
+  const turns = d.turn_count || 0;
+  const time = formatTimeShort(d.started_at);
+  const firstPrompt = d.first_prompt || '';
+  const isActive = id === activeConvId;
+  const subagentLabel = isSubagent ? '<span class="px-1.5 py-0.5 rounded text-[10px] font-medium" style="background: rgb(var(--color-primary) / 0.15); color: rgb(var(--color-primary))">subagent</span>' : '';
+
+  return `
+    <div class="sidebar-item px-4 py-3 cursor-pointer border-l-[3px] border-transparent ${isSubagent ? 'pl-8' : ''} ${isActive ? 'active' : ''}"
+         data-conv-id="${escapeHtml(id)}" onclick="selectConversation('${escapeHtml(id)}')">
+      <div class="flex items-center justify-between mb-1 gap-1">
+        <span class="text-xs font-mono font-medium flex items-center gap-1.5" style="color: rgb(var(--color-primary))">${subagentLabel}${escapeHtml(shortId)}</span>
+        <span class="text-xs shrink-0" style="color: rgb(var(--color-muted-foreground))">${time}</span>
+      </div>
+      <p class="text-sm truncate mb-1" style="color: rgb(var(--color-foreground))">${escapeHtml(truncate(firstPrompt, 80)) || '<span style="color: rgb(var(--color-muted-foreground))">No user prompt</span>'}</p>
+      <div class="flex items-center gap-3 text-xs" style="color: rgb(var(--color-muted-foreground))">
+        <span>${turns} turn${turns !== 1 ? 's' : ''}</span>
+        <span>${escapeHtml(model)}</span>
+      </div>
+    </div>
+  `;
+}
+
+// ---- Conversation Selection ----
+async function selectConversation(convId) {
+  const isSubagent = convId.includes('/');
+  activeConvId = convId;
+
+  document.getElementById('emptyState').classList.add('hidden');
+  document.getElementById('conversationView').classList.add('hidden');
+  document.getElementById('loadingConv').classList.remove('hidden');
+
+  try {
+    // If selecting a main conversation, fetch its subagents for the sidebar
+    if (!isSubagent) {
+      activeSubagents = await fetchSubagents(convId);
+      renderSidebar();
+    }
+
+    // Update sidebar active state after render
+    document.querySelectorAll('.sidebar-item').forEach(el => {
+      el.classList.toggle('active', el.dataset.convId === convId);
+    });
+
+    const conv = await fetchConversation(convId);
+    document.getElementById('loadingConv').classList.add('hidden');
+    document.getElementById('conversationView').classList.remove('hidden');
+    renderConversationHeader(conv);
+    renderTurns(conv);
+  } catch (e) {
+    document.getElementById('loadingConv').classList.add('hidden');
+    document.getElementById('conversationView').classList.remove('hidden');
+    document.getElementById('convHeader').innerHTML = `<p class="text-sm" style="color: var(--color-red)">Failed to load conversation: ${escapeHtml(e.message)}</p>`;
+    document.getElementById('turnsContainer').innerHTML = '';
+  }
+}
+
+function renderConversationHeader(conv) {
+  const header = document.getElementById('convHeader');
+  const id = conv.conversation_id || 'Unknown';
+  const model = conv.model || 'unknown';
+  const container = conv.container_name || 'N/A';
+  const timeRange = formatTimeRange(conv.started_at, conv.ended_at);
+  const reqCount = conv.metadata ? conv.metadata.total_requests : (conv.request_ids ? conv.request_ids.length : 'N/A');
+  const turnCount = conv.turn_count || (conv.turns ? conv.turns.length : 0);
+
+  header.innerHTML = `
+    <div class="flex items-start justify-between gap-4 flex-wrap">
+      <div class="min-w-0">
+        <h2 class="text-lg font-semibold truncate" style="color: rgb(var(--color-foreground))">${escapeHtml(id)}</h2>
+      </div>
+    </div>
+    <div class="flex flex-wrap gap-x-5 gap-y-1 mt-3 text-xs" style="color: rgb(var(--color-muted-foreground))">
+      <span class="flex items-center gap-1.5">
+        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/></svg>
+        ${escapeHtml(model)}
+      </span>
+      <span class="flex items-center gap-1.5">
+        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 002 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/></svg>
+        ${escapeHtml(container)}
+      </span>
+      <span class="flex items-center gap-1.5">
+        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        ${escapeHtml(timeRange)}
+      </span>
+      <span class="flex items-center gap-1.5">
+        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+        ${turnCount} turns
+      </span>
+      <span class="flex items-center gap-1.5">
+        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        ${reqCount} requests
+      </span>
+    </div>
+    ${conv.linked_subagents && conv.linked_subagents.length > 0 ? `
+    <div class="mt-3 flex flex-wrap gap-2">
+      ${conv.linked_subagents.map(sub => `
+        <button onclick="navigateToConversation('${escapeHtml(sub.conversation_id)}')"
+          class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium cursor-pointer transition-colors"
+          style="background: rgb(var(--color-primary) / 0.1); color: rgb(var(--color-primary)); border: 1px solid rgb(var(--color-primary) / 0.2)"
+          title="${escapeHtml(sub.first_prompt || '')}">
+          <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>
+          Subagent: ${escapeHtml(truncate(sub.first_prompt || sub.conversation_id, 50))}
+        </button>
+      `).join('')}
+    </div>` : ''}
+  `;
+}
+
+function renderTurns(conv) {
+  const container = document.getElementById('turnsContainer');
+  if (!conv.turns || conv.turns.length === 0) {
+    container.innerHTML = `<div class="flex items-center justify-center h-full" style="color: rgb(var(--color-muted-foreground))"><p>No turns in this conversation.</p></div>`;
+    return;
+  }
+
+  let html = '';
+  if (conv.system_prompt) {
+    html += `
+      <details class="mb-6 rounded-lg overflow-hidden" style="background: rgb(var(--color-muted) / 0.3); border: 1px solid rgb(var(--color-border))">
+        <summary class="px-4 py-3 text-xs font-semibold uppercase tracking-wider cursor-pointer" style="color: rgb(var(--color-muted-foreground))">
+          System Prompt (${(conv.system_prompt.length / 1024).toFixed(1)}KB)
+        </summary>
+        <div class="px-4 pb-4 text-sm font-mono whitespace-pre-wrap break-words" style="color: rgb(var(--color-muted-foreground)); max-height: 600px; overflow-y: auto; line-height: 1.5">
+          ${escapeHtml(conv.system_prompt)}
+        </div>
+      </details>`;
+  }
+
+  html += conv.turns.map(turn => renderTurn(turn, conv)).join('');
+  container.innerHTML = html;
+  container.scrollTop = 0;
+}
+
+function renderStep(step) {
+  if (step.type !== 'assistant') return '';
+  let html = '';
+
+  if (step.thinking_preview) {
+    html += `
+      <details class="mb-2 rounded-lg overflow-hidden" style="background: rgb(var(--color-muted) / 0.5)">
+        <summary class="px-4 py-2 text-xs font-medium" style="color: rgb(var(--color-muted-foreground))">Thinking</summary>
+        <div class="px-4 pb-3 text-sm italic" style="color: rgb(var(--color-muted-foreground)); opacity: 0.8">${renderMarkdown(step.thinking_preview)}</div>
+      </details>`;
+  }
+
+  if (step.text) {
+    html += `
+      <div class="turn-assistant rounded-lg p-4 mb-2" style="background: rgb(var(--color-secondary))">
+        <div class="flex items-center gap-2 mb-2">
+          <span class="text-xs font-semibold uppercase tracking-wider" style="color: rgb(var(--color-muted-foreground))">Assistant</span>
+        </div>
+        <div class="text-sm" style="color: rgb(var(--color-foreground))">${renderMarkdown(step.text)}</div>
+      </div>`;
+  }
+
+  if (step.tool_calls && step.tool_calls.length > 0) {
+    html += step.tool_calls.map(tc => {
+      const linkedId = tc.linked_conversation_id;
+      const linkHtml = linkedId
+        ? `<button onclick="navigateToConversation('${escapeHtml(linkedId)}')" class="ml-1 text-xs underline cursor-pointer" style="color: rgb(var(--color-primary))">view subagent</button>`
+        : '';
+      const hasResult = tc.result_preview != null;
+      const errorStyle = tc.is_error ? 'border-left: 3px solid var(--color-red)' : '';
+
+      let resultHtml = '';
+      if (hasResult) {
+        const resultColor = tc.is_error ? 'color: var(--color-red)' : 'color: rgb(var(--color-muted-foreground))';
+        const resultPreview = tc.result_preview || '';
+        if (resultPreview.length > 120) {
+          resultHtml = `
+            <details class="mt-2 pt-2" style="border-top: 1px solid rgb(var(--color-border) / 0.5)">
+              <summary class="text-xs cursor-pointer" style="color: rgb(var(--color-muted-foreground))">
+                ${tc.is_error ? 'Error' : 'Result'} (${resultPreview.length} chars)
+              </summary>
+              <div class="mt-1 text-xs font-mono whitespace-pre-wrap break-all" style="${resultColor}">${escapeHtml(truncate(resultPreview, 500))}</div>
+            </details>`;
+        } else {
+          resultHtml = `
+            <div class="mt-2 pt-2 text-xs font-mono whitespace-pre-wrap break-all" style="border-top: 1px solid rgb(var(--color-border) / 0.5); ${resultColor}">${escapeHtml(resultPreview)}</div>`;
+        }
+      }
+
+      return `
+        <div class="mb-2 rounded-lg overflow-hidden p-3" style="background: rgb(var(--color-muted) / 0.5); ${errorStyle}">
+          <div class="flex items-start gap-2 text-xs">
+            <span class="inline-flex items-center px-1.5 py-0.5 rounded font-mono font-medium shrink-0" style="background: rgb(var(--color-primary) / 0.12); color: rgb(var(--color-primary))">${escapeHtml(tc.tool || 'unknown')}</span>
+            <span class="font-mono break-all flex-1" style="color: rgb(var(--color-muted-foreground))">${escapeHtml(truncate(tc.input_preview || '', 200))}</span>
+            ${linkHtml}
+          </div>
+          ${resultHtml}
+        </div>`;
+    }).join('');
+  }
+
+  return html;
+}
+
+function renderTurn(turn, conv) {
+  const turnNum = turn.turn_number || '?';
+  const timestamp = formatTimeShort(turn.timestamp);
+  const duration = formatDuration(turn.duration_ms);
+  const model = turn.model || '';
+  const apiCalls = turn.api_calls_in_turn;
+  const reqIds = turn.request_ids || [];
+  const reqIdLabel = reqIds.length > 0 ? formatRequestIds(reqIds) : null;
+
+  const metaParts = [];
+  if (timestamp) metaParts.push(timestamp);
+  if (model) metaParts.push(model);
+  if (duration !== 'N/A') metaParts.push(duration);
+  if (apiCalls != null) metaParts.push(`${apiCalls} API call${apiCalls !== 1 ? 's' : ''}`);
+  if (reqIdLabel) metaParts.push(reqIdLabel);
+
+  const metaHtml = metaParts.map(p =>
+    `<span class="inline-flex items-center px-2 py-0.5 rounded text-xs" style="background: rgb(var(--color-muted)); color: rgb(var(--color-muted-foreground))">${escapeHtml(p)}</span>`
+  ).join('');
+
+  const userHtml = turn.user_prompt ? `
+    <div class="turn-user rounded-lg p-4 mb-3" style="background: rgb(var(--color-card))">
+      <div class="flex items-center gap-2 mb-2">
+        <span class="text-xs font-semibold uppercase tracking-wider" style="color: rgb(var(--color-primary))">User</span>
+      </div>
+      <div class="text-sm" style="color: rgb(var(--color-foreground))">${renderMarkdown(turn.user_prompt)}</div>
+    </div>
+  ` : '';
+
+  const steps = turn.steps || [];
+  const stepsHtml = steps.length > 0 ? steps.map(s => renderStep(s)).join('') : '';
+
+  return `
+    <div class="mb-6">
+      <div class="flex items-center gap-2 mb-2">
+        <span class="text-xs font-bold" style="color: rgb(var(--color-foreground))">Turn ${turnNum}</span>
+        <div class="flex flex-wrap gap-1.5">${metaHtml}</div>
+      </div>
+      ${userHtml}
+      ${stepsHtml}
+    </div>
+  `;
+}
+
+// ---- Navigation ----
+function navigateToConversation(conversationId) {
+  selectConversation(conversationId).then(() => {
+    const item = document.querySelector(`.sidebar-item[data-conv-id="${CSS.escape(conversationId)}"]`);
+    if (item) item.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  });
+}
+
+// ---- Init ----
+loadConversations().then(() => startPolling());
+</script>
+
+</body>
+</html>
