@@ -103,11 +103,36 @@ var funcMap = template.FuncMap{
 		}
 		return plural
 	},
-	"truncate": func(s string, n int) string {
+	"truncate": func(v any, n int) string {
+		s := fmt.Sprintf("%v", v)
 		if len(s) <= n {
 			return s
 		}
 		return s[:n]
+	},
+	"strLen": func(v any) int {
+		if v == nil {
+			return 0
+		}
+		return len(fmt.Sprintf("%v", v))
+	},
+	"cleanToolOutput": func(v any) string {
+		s := fmt.Sprintf("%v", v)
+		lines := strings.Split(s, "\n")
+		for i, line := range lines {
+			// Strip line number prefixes like "     1→" or "   42→"
+			for j := 0; j < len(line); j++ {
+				if line[j] == '\xe2' && j+2 < len(line) && line[j+1] == '\x86' && line[j+2] == '\x92' {
+					// Found → (U+2192), strip everything before and including it
+					lines[i] = line[j+3:]
+					break
+				}
+				if line[j] != ' ' && (line[j] < '0' || line[j] > '9') {
+					break
+				}
+			}
+		}
+		return strings.Join(lines, "\n")
 	},
 	"expiresIn": func(t time.Time) string {
 		d := time.Until(t)

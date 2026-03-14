@@ -1001,6 +1001,21 @@ func linkSubagentConversations(allConvs []assembledConversation) {
 			linked = append(linked, sub)
 		}
 		allConvs[i].linkedSubagents = linked
+
+		// Link Agent tool calls to subagent conversations by order
+		subIdx := 0
+		for _, turn := range allConvs[i].turns {
+			for _, step := range turn.steps {
+				tcs, _ := step["tool_calls"].([]map[string]any)
+				for _, tc := range tcs {
+					toolName, _ := tc["tool"].(string)
+					if toolName == "Agent" && subIdx < len(subs) {
+						tc["linked_conversation_id"] = subs[subIdx].conversationID
+						subIdx++
+					}
+				}
+			}
+		}
 	}
 }
 

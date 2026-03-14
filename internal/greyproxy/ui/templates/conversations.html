@@ -1,3 +1,51 @@
+{{define "head"}}
+<!-- Marked.js for markdown rendering -->
+<script src="https://cdn.jsdelivr.net/npm/marked@15/marked.min.js"></script>
+<style>
+    .conv-markdown h1, .conv-markdown h2, .conv-markdown h3, .conv-markdown h4 {
+        font-weight: 600;
+        margin-top: 0.75em;
+        margin-bottom: 0.25em;
+        line-height: 1.4;
+    }
+    .conv-markdown h1 { font-size: 1.1em; }
+    .conv-markdown h2 { font-size: 1em; }
+    .conv-markdown h3 { font-size: 0.95em; }
+    .conv-markdown p { margin: 0.35em 0; }
+    .conv-markdown ul { margin: 0.35em 0; padding-left: 1.5em; list-style-type: disc; }
+    .conv-markdown ol { margin: 0.35em 0; padding-left: 1.5em; list-style-type: decimal; }
+    .conv-markdown li { margin: 0.15em 0; }
+    .conv-markdown code {
+        background: rgb(var(--color-muted));
+        padding: 0.1em 0.35em;
+        border-radius: 3px;
+        font-size: 0.9em;
+    }
+    .conv-markdown pre {
+        background: rgb(var(--color-muted));
+        padding: 0.5em 0.75em;
+        border-radius: 4px;
+        overflow-x: auto;
+        margin: 0.5em 0;
+    }
+    .conv-markdown pre code {
+        background: none;
+        padding: 0;
+    }
+    .conv-markdown blockquote {
+        border-left: 3px solid rgb(var(--color-border));
+        padding-left: 0.75em;
+        margin: 0.5em 0;
+        color: rgb(var(--color-muted-foreground));
+    }
+    .conv-markdown a { color: rgb(var(--color-primary)); text-decoration: underline; }
+    .conv-markdown table { border-collapse: collapse; margin: 0.5em 0; }
+    .conv-markdown th, .conv-markdown td { border: 1px solid rgb(var(--color-border)); padding: 0.25em 0.5em; font-size: 0.9em; }
+    .conv-markdown > *:first-child { margin-top: 0; }
+    .conv-markdown > *:last-child { margin-bottom: 0; }
+</style>
+{{end}}
+
 {{define "content"}}
 <div class="space-y-4">
     <div class="flex justify-between items-center">
@@ -56,19 +104,38 @@ function refreshConversations() {
     var url = '{{.Prefix}}/htmx/conversation-list?container=' + encodeURIComponent(container);
     fetch(url).then(function(r) { return r.text(); }).then(function(html) {
         document.getElementById('conv-list').innerHTML = html;
+        // Re-highlight current selection if any
+        if (currentConvId) {
+            document.querySelectorAll('[data-conv-id]').forEach(function(el) {
+                el.classList.toggle('bg-muted', el.dataset.convId === currentConvId);
+            });
+        }
     });
+}
+
+function renderMarkdown() {
+    if (typeof marked !== 'undefined') {
+        document.querySelectorAll('#conv-detail .conv-markdown').forEach(function(el) {
+            el.innerHTML = marked.parse(el.textContent);
+        });
+    }
 }
 
 function selectConversation(id) {
     currentConvId = id;
+    // Update URL without reload
+    var url = new URL(window.location);
+    url.searchParams.set('id', id);
+    history.pushState({convId: id}, '', url);
     // Highlight selected
     document.querySelectorAll('[data-conv-id]').forEach(function(el) {
         el.classList.toggle('bg-muted', el.dataset.convId === id);
     });
     // Load detail
-    var url = '{{.Prefix}}/htmx/conversation-detail?id=' + encodeURIComponent(id);
-    fetch(url).then(function(r) { return r.text(); }).then(function(html) {
+    var detailUrl = '{{.Prefix}}/htmx/conversation-detail?id=' + encodeURIComponent(id);
+    fetch(detailUrl).then(function(r) { return r.text(); }).then(function(html) {
         document.getElementById('conv-detail').innerHTML = html;
+        renderMarkdown();
     });
 }
 
@@ -83,6 +150,35 @@ function toggleSection(sectionId) {
     }
 }
 
+function toggleToolContent(btn) {
+    var expanded = btn.nextElementSibling;
+    var preview = btn.previousElementSibling;
+    if (expanded && expanded.classList.contains('hidden')) {
+        expanded.classList.remove('hidden');
+        if (preview) preview.classList.add('hidden');
+        btn.textContent = 'Show less';
+    } else if (expanded) {
+        expanded.classList.add('hidden');
+        if (preview) preview.classList.remove('hidden');
+        btn.textContent = 'Show more';
+    }
+}
+
+// Handle browser back/forward
+window.addEventListener('popstate', function(e) {
+    if (e.state && e.state.convId) {
+        selectConversation(e.state.convId);
+    } else {
+        currentConvId = null;
+        document.querySelectorAll('[data-conv-id]').forEach(function(el) {
+            el.classList.remove('bg-muted');
+        });
+        document.getElementById('conv-detail').innerHTML =
+            '<div class="flex items-center justify-center h-full text-muted-foreground">' +
+            '<p class="text-sm">Select a conversation to view details</p></div>';
+    }
+});
+
 // Auto-refresh on conversation update events
 window.addEventListener('proxy:conversation-event', function() {
     refreshConversations();
@@ -93,5 +189,15 @@ window.addEventListener('proxy:conversation-event', function() {
 
 // Initial load
 refreshConversations();
+
+// Restore from URL if conversation ID is present
+(function() {
+    var params = new URLSearchParams(window.location.search);
+    var id = params.get('id');
+    if (id) {
+        // Wait for conversation list to load, then select
+        setTimeout(function() { selectConversation(id); }, 200);
+    }
+})();
 </script>
 {{end}}
