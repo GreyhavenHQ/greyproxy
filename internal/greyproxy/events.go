@@ -18,6 +18,9 @@ const (
 	EventHttpPendingCreated  = "http_pending.created"
 	EventHttpPendingAllowed  = "http_pending.allowed"
 	EventHttpPendingDenied   = "http_pending.denied"
+
+	// Conversation dissector events
+	EventConversationUpdated = "conversation.updated"
 )
 
 // Event represents a broadcast event.

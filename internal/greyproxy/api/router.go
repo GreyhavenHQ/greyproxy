@@ -84,6 +84,11 @@ func NewRouter(s *Shared, pathPrefix string) (*gin.Engine, *gin.RouterGroup) {
 		api.GET("/pending/requests/:id", PendingHttpDetailHandler(s))
 		api.POST("/pending/requests/:id/allow", PendingHttpAllowHandler(s))
 		api.POST("/pending/requests/:id/deny", PendingHttpDenyHandler(s))
+
+		// Conversations (LLM conversation dissection)
+		api.GET("/conversations", ConversationsListHandler(s))
+		api.GET("/conversations/:id", ConversationsDetailHandler(s))
+		api.GET("/conversations/:id/subagents", ConversationsSubagentsHandler(s))
 	}
 
 	// WebSocket

@@ -149,6 +149,59 @@ var funcMap = template.FuncMap{
 		}
 		return result
 	},
+	// Conversation detail template helpers
+	"isStep": func(step any, stepType string) bool {
+		if m, ok := step.(map[string]any); ok {
+			return m["type"] == stepType
+		}
+		return false
+	},
+	"hasStepField": func(step any, field string) bool {
+		if m, ok := step.(map[string]any); ok {
+			v, exists := m[field]
+			if !exists {
+				return false
+			}
+			if s, ok := v.(string); ok {
+				return s != ""
+			}
+			return v != nil
+		}
+		return false
+	},
+	"stepField": func(step any, field string) string {
+		if m, ok := step.(map[string]any); ok {
+			if v, ok := m[field]; ok {
+				if s, ok := v.(string); ok {
+					return s
+				}
+				return fmt.Sprintf("%v", v)
+			}
+		}
+		return ""
+	},
+	"stepToolCalls": func(step any) []map[string]any {
+		if m, ok := step.(map[string]any); ok {
+			if tcs, ok := m["tool_calls"].([]any); ok {
+				var result []map[string]any
+				for _, tc := range tcs {
+					if tcMap, ok := tc.(map[string]any); ok {
+						result = append(result, tcMap)
+					}
+				}
+				return result
+			}
+		}
+		return nil
+	},
+	"stepID": func(step any) string {
+		if m, ok := step.(map[string]any); ok {
+			if id, ok := m["tool_use_id"].(string); ok {
+				return id
+			}
+		}
+		return fmt.Sprintf("%p", step)
+	},
 }
 
 func parseTemplate(name string, files ...string) *template.Template {
@@ -170,7 +223,8 @@ var (
 	logsTmpl      = parseTemplate("base.html", "base.html", "logs.html")
 	settingsTmpl  = parseTemplate("base.html", "base.html", "settings.html")
 
-	trafficTmpl = parseTemplate("base.html", "base.html", "traffic.html")
+	trafficTmpl       = parseTemplate("base.html", "base.html", "traffic.html")
+	conversationsTmpl = parseTemplate("base.html", "base.html", "conversations.html")
 
 	dashboardStatsTmpl    = parseTemplate("dashboard_stats.html", "partials/dashboard_stats.html")
 	pendingListTmpl       = parseTemplate("pending_list.html", "partials/pending_list.html")
@@ -178,6 +232,8 @@ var (
 	rulesListTmpl         = parseTemplate("rules_list.html", "partials/rules_list.html")
 	logsTableTmpl         = parseTemplate("logs_table.html", "partials/logs_table.html")
 	trafficTableTmpl      = parseTemplate("traffic_table.html", "partials/traffic_table.html")
+	convListTmpl          = parseTemplate("conversation_list.html", "partials/conversation_list.html")
+	convDetailTmpl        = parseTemplate("conversation_detail.html", "partials/conversation_detail.html")
 )
 
 // cacheBuster is set once at startup for static asset cache busting.
@@ -277,6 +333,16 @@ func RegisterPageRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 			Prefix:      prefix,
 			CacheBuster: cacheBuster,
 			Title:       "HTTP Traffic - Greyproxy",
+			Containers:  getContainers(db),
+		})
+	})
+
+	r.GET("/conversations", func(c *gin.Context) {
+		conversationsTmpl.Execute(c.Writer, PageData{
+			CurrentPath: c.Request.URL.Path,
+			Prefix:      prefix,
+			CacheBuster: cacheBuster,
+			Title:       "Conversations - Greyproxy",
 			Containers:  getContainers(db),
 		})
 	})
@@ -709,6 +775,68 @@ func RegisterHTMXRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 			"Page":       page,
 			"Pages":      pages,
 			"HasFilters": hasFilters,
+		})
+	})
+
+	// Conversation HTMX routes
+	htmx.GET("/conversation-list", func(c *gin.Context) {
+		container := c.Query("container")
+		f := greyproxy.ConversationFilter{
+			Container: container,
+			Limit:     50,
+		}
+		convs, total, err := greyproxy.QueryConversations(db, f)
+		if err != nil {
+			c.String(http.StatusInternalServerError, "Error: %v", err)
+			return
+		}
+		var items []greyproxy.ConversationJSON
+		for _, conv := range convs {
+			items = append(items, conv.ToJSON(false))
+		}
+		c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+		convListTmpl.Execute(c.Writer, gin.H{
+			"Prefix": prefix,
+			"Items":  items,
+			"Total":  total,
+		})
+	})
+
+	htmx.GET("/conversation-detail", func(c *gin.Context) {
+		id := c.Query("id")
+		if id == "" {
+			c.String(http.StatusBadRequest, "Missing id")
+			return
+		}
+		conv, err := greyproxy.GetConversation(db, id)
+		if err != nil {
+			c.String(http.StatusInternalServerError, "Error: %v", err)
+			return
+		}
+
+		var convJSON *greyproxy.ConversationJSON
+		var subagents []greyproxy.ConversationJSON
+		var txnIDs []int64
+		if conv != nil {
+			j := conv.ToJSON(true)
+			convJSON = &j
+
+			// Load subagents
+			subs, _ := greyproxy.GetSubagents(db, id)
+			for _, s := range subs {
+				subagents = append(subagents, s.ToJSON(false))
+			}
+
+			// Get transaction IDs
+			txnIDs, _ = greyproxy.GetTransactionsByConversationID(db, id)
+		}
+
+		c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+		convDetailTmpl.Execute(c.Writer, gin.H{
+			"Prefix":    prefix,
+			"Conv":      convJSON,
+			"Subagents": subagents,
+			"TxnIDs":    txnIDs,
 		})
 	})
 }

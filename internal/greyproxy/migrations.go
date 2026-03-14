@@ -110,6 +110,55 @@ var migrations = []string{
 	);
 	CREATE INDEX IF NOT EXISTS idx_pending_http_container ON pending_http_requests(container_name);
 	CREATE INDEX IF NOT EXISTS idx_pending_http_status ON pending_http_requests(status);`,
+
+	// Migration 7: Create conversations and turns tables for LLM conversation dissection
+	`CREATE TABLE IF NOT EXISTS conversations (
+		id TEXT PRIMARY KEY,
+		model TEXT,
+		container_name TEXT,
+		provider TEXT,
+		started_at TEXT,
+		ended_at TEXT,
+		turn_count INTEGER DEFAULT 0,
+		system_prompt TEXT,
+		system_prompt_summary TEXT,
+		parent_conversation_id TEXT,
+		last_turn_has_response INTEGER DEFAULT 0,
+		metadata_json TEXT,
+		linked_subagents_json TEXT,
+		request_ids_json TEXT,
+		incomplete INTEGER DEFAULT 0,
+		incomplete_reason TEXT,
+		updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+	);
+	CREATE INDEX IF NOT EXISTS idx_conv_started ON conversations(started_at);
+	CREATE INDEX IF NOT EXISTS idx_conv_parent ON conversations(parent_conversation_id);
+	CREATE INDEX IF NOT EXISTS idx_conv_provider ON conversations(provider);
+
+	CREATE TABLE IF NOT EXISTS turns (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+		turn_number INTEGER NOT NULL,
+		user_prompt TEXT,
+		steps_json TEXT,
+		api_calls_in_turn INTEGER DEFAULT 0,
+		request_ids_json TEXT,
+		timestamp TEXT,
+		timestamp_end TEXT,
+		duration_ms INTEGER,
+		model TEXT,
+		UNIQUE(conversation_id, turn_number)
+	);
+	CREATE INDEX IF NOT EXISTS idx_turns_conv ON turns(conversation_id);
+
+	CREATE TABLE IF NOT EXISTS conversation_processing_state (
+		key TEXT PRIMARY KEY,
+		value TEXT NOT NULL
+	);`,
+
+	// Migration 8: Add conversation_id column to http_transactions for bidirectional linking
+	`ALTER TABLE http_transactions ADD COLUMN conversation_id TEXT;
+	CREATE INDEX IF NOT EXISTS idx_http_transactions_conv ON http_transactions(conversation_id);`,
 }
 
 func runMigrations(db *sql.DB) error {

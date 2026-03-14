@@ -43,7 +43,8 @@ type program struct {
 	srvGreyproxy *greyproxy.Service
 	srvProfiling *http.Server
 
-	cancel context.CancelFunc
+	cancel          context.CancelFunc
+	assemblerCancel context.CancelFunc
 }
 
 func (p *program) initParser() {
@@ -202,6 +203,9 @@ func (p *program) Stop(s service.Service) error {
 	if p.srvProfiling != nil {
 		p.srvProfiling.Close()
 		logger.Default().Debug("service @profiling shutdown")
+	}
+	if p.assemblerCancel != nil {
+		p.assemblerCancel()
 	}
 	if p.srvGreyproxy != nil {
 		p.srvGreyproxy.Close()
@@ -499,6 +503,12 @@ func (p *program) buildGreyproxyService() error {
 
 	p.srvGreyproxy = svc
 	shared.Notifier.Start()
+
+	// Start conversation assembler (dissects LLM API transactions into conversations)
+	assemblerCtx, assemblerCancel := context.WithCancel(context.Background())
+	p.assemblerCancel = assemblerCancel
+	assembler := greyproxy.NewConversationAssembler(shared.DB, shared.Bus)
+	go assembler.Start(assemblerCtx)
 
 	go func() {
 		log.Info("listening on ", svc.Addr())
