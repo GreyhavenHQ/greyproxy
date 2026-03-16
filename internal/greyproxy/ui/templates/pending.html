@@ -57,13 +57,6 @@
         </div>
     </div>
 
-    <!-- Request-level pending (MITM HTTP requests held for approval) -->
-    <div id="pending-http-list"
-         hx-get="{{.Prefix}}/htmx/pending-http-list"
-         hx-trigger="load, pending-http-refresh from:body" hx-swap="innerHTML">
-    </div>
-
-    <!-- Connection-level pending (destination approval) -->
     <div id="pending-list"
          hx-get="{{.Prefix}}/htmx/pending-list" hx-include="#pending-filter-form"
          hx-trigger="load, pending-refresh from:body" hx-swap="innerHTML">
@@ -132,13 +125,6 @@
         if (e.detail.target && e.detail.target.id === 'pending-list') {
             highlightPending();
         }
-    });
-    var httpPendingRefreshTimer = null;
-    window.addEventListener('proxy:http-pending-event', function(e) {
-        clearTimeout(httpPendingRefreshTimer);
-        httpPendingRefreshTimer = setTimeout(function() {
-            document.body.dispatchEvent(new CustomEvent('pending-http-refresh'));
-        }, 500);
     });
 </script>
 {{end}}

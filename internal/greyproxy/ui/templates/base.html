@@ -311,10 +311,6 @@
                             fetchPendingCount();
                             window.dispatchEvent(new CustomEvent('proxy:pending-event', { detail: msg }));
                         }
-                        if (msg.type && msg.type.indexOf('http_pending.') === 0) {
-                            fetchPendingCount();
-                            window.dispatchEvent(new CustomEvent('proxy:http-pending-event', { detail: msg }));
-                        }
                         if (msg.type === 'transaction.new') {
                             window.dispatchEvent(new CustomEvent('proxy:transaction-event', { detail: msg }));
                         }

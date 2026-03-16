@@ -12,9 +12,6 @@ type Rule struct {
 	ContainerPattern   string         `json:"container_pattern"`
 	DestinationPattern string         `json:"destination_pattern"`
 	PortPattern        string         `json:"port_pattern"`
-	MethodPattern      string         `json:"method_pattern"`
-	PathPattern        string         `json:"path_pattern"`
-	ContentAction      string         `json:"content_action"`
 	RuleType           string         `json:"rule_type"`
 	Action             string         `json:"action"`
 	CreatedAt          time.Time      `json:"created_at"`
@@ -29,9 +26,6 @@ type RuleJSON struct {
 	ContainerPattern   string  `json:"container_pattern"`
 	DestinationPattern string  `json:"destination_pattern"`
 	PortPattern        string  `json:"port_pattern"`
-	MethodPattern      string  `json:"method_pattern"`
-	PathPattern        string  `json:"path_pattern"`
-	ContentAction      string  `json:"content_action"`
 	RuleType           string  `json:"rule_type"`
 	Action             string  `json:"action"`
 	CreatedAt          string  `json:"created_at"`
@@ -48,9 +42,6 @@ func (r *Rule) ToJSON() RuleJSON {
 		ContainerPattern:   r.ContainerPattern,
 		DestinationPattern: r.DestinationPattern,
 		PortPattern:        r.PortPattern,
-		MethodPattern:      r.MethodPattern,
-		PathPattern:        r.PathPattern,
-		ContentAction:      r.ContentAction,
 		RuleType:           r.RuleType,
 		Action:             r.Action,
 		CreatedAt:          r.CreatedAt.UTC().Format(time.RFC3339),
@@ -289,62 +280,6 @@ func (t *HttpTransaction) ToJSON(includeBody bool) HttpTransactionJSON {
 			s := string(t.ResponseBody)
 			j.ResponseBody = &s
 		}
-	}
-	return j
-}
-
-// PendingHttpRequest represents an HTTP request held for user approval.
-type PendingHttpRequest struct {
-	ID              int64          `json:"id"`
-	ContainerName   string         `json:"container_name"`
-	DestinationHost string         `json:"destination_host"`
-	DestinationPort int            `json:"destination_port"`
-	Method          string         `json:"method"`
-	URL             string         `json:"url"`
-	RequestHeaders  sql.NullString `json:"-"`
-	RequestBody     []byte         `json:"-"`
-	RequestBodySize sql.NullInt64  `json:"-"`
-	CreatedAt       time.Time      `json:"created_at"`
-	Status          string         `json:"status"`
-}
-
-type PendingHttpRequestJSON struct {
-	ID              int64   `json:"id"`
-	ContainerName   string  `json:"container_name"`
-	DestinationHost string  `json:"destination_host"`
-	DestinationPort int     `json:"destination_port"`
-	Method          string  `json:"method"`
-	URL             string  `json:"url"`
-	RequestHeaders  any     `json:"request_headers,omitempty"`
-	RequestBody     *string `json:"request_body,omitempty"`
-	RequestBodySize *int64  `json:"request_body_size,omitempty"`
-	CreatedAt       string  `json:"created_at"`
-	Status          string  `json:"status"`
-}
-
-func (p *PendingHttpRequest) ToJSON(includeBody bool) PendingHttpRequestJSON {
-	j := PendingHttpRequestJSON{
-		ID:              p.ID,
-		ContainerName:   p.ContainerName,
-		DestinationHost: p.DestinationHost,
-		DestinationPort: p.DestinationPort,
-		Method:          p.Method,
-		URL:             p.URL,
-		CreatedAt:       p.CreatedAt.UTC().Format(time.RFC3339),
-		Status:          p.Status,
-	}
-	if p.RequestHeaders.Valid {
-		var h map[string]any
-		if json.Unmarshal([]byte(p.RequestHeaders.String), &h) == nil {
-			j.RequestHeaders = h
-		}
-	}
-	if p.RequestBodySize.Valid {
-		j.RequestBodySize = &p.RequestBodySize.Int64
-	}
-	if includeBody && len(p.RequestBody) > 0 {
-		s := string(p.RequestBody)
-		j.RequestBody = &s
 	}
 	return j
 }

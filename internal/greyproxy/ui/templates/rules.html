@@ -82,39 +82,13 @@
                                 <input type="text" name="port_pattern" id="port_pattern" value="*" placeholder="e.g., 443, 80,443, *"
                                     class="mt-1 block w-full px-3 py-2 border border-border rounded-md shadow-sm focus:outline-none focus:ring-ring focus:border-ring bg-background">
                             </div>
-                            <div class="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label for="method_pattern" class="block text-sm font-medium text-foreground">HTTP Method</label>
-                                    <input type="text" name="method_pattern" id="method_pattern" value="*" placeholder="e.g., GET, POST,PUT, DELETE, *"
-                                        class="mt-1 block w-full px-3 py-2 border border-border rounded-md shadow-sm focus:outline-none focus:ring-ring focus:border-ring bg-background">
-                                    <p class="mt-1 text-xs text-muted-foreground">* for any, or comma-separated</p>
-                                </div>
-                                <div>
-                                    <label for="path_pattern" class="block text-sm font-medium text-foreground">Path Pattern</label>
-                                    <input type="text" name="path_pattern" id="path_pattern" value="*" placeholder="e.g., /api/*, /v1/chat, *"
-                                        class="mt-1 block w-full px-3 py-2 border border-border rounded-md shadow-sm focus:outline-none focus:ring-ring focus:border-ring bg-background">
-                                    <p class="mt-1 text-xs text-muted-foreground">* for any, supports glob</p>
-                                </div>
-                            </div>
-                            <div class="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label for="action" class="block text-sm font-medium text-foreground">Action</label>
-                                    <select name="action" id="action"
-                                        class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-border focus:outline-none focus:ring-ring focus:border-ring rounded-md bg-background">
-                                        <option value="allow">Allow</option>
-                                        <option value="deny">Deny</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label for="content_action" class="block text-sm font-medium text-foreground">Content Action</label>
-                                    <select name="content_action" id="content_action"
-                                        class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-border focus:outline-none focus:ring-ring focus:border-ring rounded-md bg-background">
-                                        <option value="allow">Allow (pass through)</option>
-                                        <option value="hold">Hold (require approval)</option>
-                                        <option value="deny">Deny (block content)</option>
-                                    </select>
-                                    <p class="mt-1 text-xs text-muted-foreground">Controls MITM request inspection</p>
-                                </div>
+                            <div>
+                                <label for="action" class="block text-sm font-medium text-foreground">Action</label>
+                                <select name="action" id="action"
+                                    class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-border focus:outline-none focus:ring-ring focus:border-ring rounded-md bg-background">
+                                    <option value="allow">Allow</option>
+                                    <option value="deny">Deny</option>
+                                </select>
                             </div>
                             <div>
                                 <label for="rule_type" class="block text-sm font-medium text-foreground">Duration</label>
@@ -166,9 +140,6 @@
         document.getElementById('modal-title').textContent = 'Create New Rule';
         document.getElementById('rule-form').reset();
         document.getElementById('action').value = 'allow';
-        document.getElementById('method_pattern').value = '*';
-        document.getElementById('path_pattern').value = '*';
-        document.getElementById('content_action').value = 'allow';
         document.getElementById('rule-form').setAttribute('hx-post', '{{.Prefix}}/htmx/rules');
     }
     function hideRuleModal() { document.getElementById('rule-modal').classList.add('hidden'); }
