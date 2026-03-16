@@ -34,13 +34,21 @@ func NewConversationAssembler(db *DB, bus *EventBus) *ConversationAssembler {
 	return &ConversationAssembler{db: db, bus: bus}
 }
 
-// StoredAssemblerVersion returns the version stored in the DB, or 0 if unset.
+// StoredAssemblerVersion returns the version stored in the DB, or 0 if unset/invalid.
 func StoredAssemblerVersion(db *DB) int {
-	v, _ := GetConversationProcessingState(db, "assembler_version")
+	v, err := GetConversationProcessingState(db, "assembler_version")
+	if err != nil {
+		slog.Warn("assembler: failed to read assembler_version", "error", err)
+		return 0
+	}
 	if v == "" {
 		return 0
 	}
-	n, _ := strconv.Atoi(v)
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		slog.Warn("assembler: invalid assembler_version value", "value", v, "error", err)
+		return 0
+	}
 	return n
 }
 
@@ -118,7 +126,12 @@ func (a *ConversationAssembler) processNewTransactionsLocked() {
 	}
 	lastID := int64(0)
 	if lastIDStr != "" {
-		lastID, _ = strconv.ParseInt(lastIDStr, 10, 64)
+		parsed, err := strconv.ParseInt(lastIDStr, 10, 64)
+		if err != nil {
+			slog.Warn("assembler: invalid last_processed_id", "value", lastIDStr, "error", err)
+		} else {
+			lastID = parsed
+		}
 	}
 
 	// Load new transactions that match any dissector
@@ -255,6 +268,7 @@ func (a *ConversationAssembler) loadNewTransactions(sinceID int64) ([]transactio
 		)
 		if err := rows.Scan(&id, &ts, &container, &url, &method, &host,
 			&reqBody, &respBody, &respCT, &durationMs); err != nil {
+			slog.Warn("assembler: failed to scan transaction row", "error", err)
 			continue
 		}
 		if id > maxID {
@@ -284,7 +298,9 @@ func (a *ConversationAssembler) loadNewTransactions(sinceID int64) ([]transactio
 		// Parse body for assembly logic
 		var body map[string]any
 		if len(reqBody) > 0 {
-			json.Unmarshal(reqBody, &body)
+			if err := json.Unmarshal(reqBody, &body); err != nil {
+				slog.Debug("assembler: failed to parse request body JSON", "txn_id", id, "error", err)
+			}
 		}
 
 		entries = append(entries, transactionEntry{
@@ -337,6 +353,7 @@ func (a *ConversationAssembler) loadTransactionsForSessions(sessionIDs map[strin
 		)
 		if err := rows.Scan(&id, &ts, &container, &url, &method, &host,
 			&reqBody, &respBody, &respCT, &durationMs); err != nil {
+			slog.Warn("assembler: failed to scan session transaction row", "error", err)
 			continue
 		}
 
@@ -362,7 +379,9 @@ func (a *ConversationAssembler) loadTransactionsForSessions(sessionIDs map[strin
 
 		var body map[string]any
 		if len(reqBody) > 0 {
-			json.Unmarshal(reqBody, &body)
+			if err := json.Unmarshal(reqBody, &body); err != nil {
+				slog.Debug("assembler: failed to parse request body JSON", "txn_id", id, "error", err)
+			}
 		}
 
 		entries = append(entries, transactionEntry{
@@ -425,8 +444,13 @@ func groupBySession(txns []transactionEntry) map[string][]transactionEntry {
 				current = append(current, entry)
 				continue
 			}
-			prevTs, _ := time.Parse(time.RFC3339, current[len(current)-1].timestamp)
-			currTs, _ := time.Parse(time.RFC3339, entry.timestamp)
+			prevTs, err1 := time.Parse(time.RFC3339, current[len(current)-1].timestamp)
+			currTs, err2 := time.Parse(time.RFC3339, entry.timestamp)
+			if err1 != nil || err2 != nil {
+				// Cannot determine time gap; keep in same group
+				current = append(current, entry)
+				continue
+			}
 			if currTs.Sub(prevTs) > timeGapThreshold {
 				groups = append(groups, current)
 				current = []transactionEntry{entry}
@@ -439,15 +463,25 @@ func groupBySession(txns []transactionEntry) map[string][]transactionEntry {
 		}
 
 		for _, group := range groups {
-			groupStart, _ := time.Parse(time.RFC3339, group[0].timestamp)
-			groupEnd, _ := time.Parse(time.RFC3339, group[len(group)-1].timestamp)
+			groupStart, err1 := time.Parse(time.RFC3339, group[0].timestamp)
+			groupEnd, err2 := time.Parse(time.RFC3339, group[len(group)-1].timestamp)
+
+			if err1 != nil || err2 != nil {
+				// Cannot determine overlap; assign to heuristic group
+				fakeID := fmt.Sprintf("heuristic_%d_%d", group[0].txnID, group[len(group)-1].txnID)
+				rawSessions[fakeID] = group
+				continue
+			}
 
 			var bestSession string
 			var bestOverlap time.Duration
 
 			for sid, sentries := range rawSessions {
-				sStart, _ := time.Parse(time.RFC3339, sentries[0].timestamp)
-				sEnd, _ := time.Parse(time.RFC3339, sentries[len(sentries)-1].timestamp)
+				sStart, e1 := time.Parse(time.RFC3339, sentries[0].timestamp)
+				sEnd, e2 := time.Parse(time.RFC3339, sentries[len(sentries)-1].timestamp)
+				if e1 != nil || e2 != nil {
+					continue
+				}
 				overlapStart := maxTime(sStart, groupStart)
 				overlapEnd := minTime(sEnd.Add(timeGapThreshold), groupEnd.Add(timeGapThreshold))
 				if overlapStart.Before(overlapEnd) || overlapStart.Equal(overlapEnd) {
@@ -672,7 +706,7 @@ func getAssistantSummary(msg dissector.Message) map[string]any {
 	if len(thinking) > 0 {
 		t := thinking[0]
 		if len(t) > 500 {
-			t = t[:500] + "..."
+			t = truncateUTF8(t, 500) + "..."
 		}
 		result["thinking"] = t
 	}
@@ -860,7 +894,7 @@ func assembleConversation(sessionID string, entries []transactionEntry) assemble
 			if len(sp) > 100 {
 				summary := sp
 				if len(summary) > 500 {
-					summary = summary[:500] + "..."
+					summary = truncateUTF8(summary, 500) + "..."
 				}
 				conv.systemPromptSummary = &summary
 			}
@@ -1038,7 +1072,7 @@ func linkSubagentConversations(allConvs []assembledConversation) {
 			if len(s.turns) > 0 && s.turns[0].userPrompt != nil {
 				prompt := *s.turns[0].userPrompt
 				if len(prompt) > 200 {
-					prompt = prompt[:200]
+					prompt = truncateUTF8(prompt, 200)
 				}
 				sub["first_prompt"] = prompt
 			}
@@ -1122,6 +1156,19 @@ func (a *ConversationAssembler) upsertConversation(conv assembledConversation) e
 }
 
 // --- helpers ---
+
+// truncateUTF8 truncates s to at most maxBytes bytes without splitting a
+// multi-byte UTF-8 character.
+func truncateUTF8(s string, maxBytes int) string {
+	if len(s) <= maxBytes {
+		return s
+	}
+	// Back up from maxBytes to avoid splitting a multi-byte rune
+	for maxBytes > 0 && maxBytes < len(s) && s[maxBytes]>>6 == 0b10 {
+		maxBytes--
+	}
+	return s[:maxBytes]
+}
 
 // escapeLikePattern escapes SQL LIKE special characters (%, _, \) so they
 // are matched literally when used with ESCAPE '\'.

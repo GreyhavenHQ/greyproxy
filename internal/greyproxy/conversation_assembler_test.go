@@ -28,6 +28,32 @@ func insertAssemblerTransaction(t *testing.T, db *DB, containerName, url string,
 	return txn.ID
 }
 
+func TestTruncateUTF8(t *testing.T) {
+	tests := []struct {
+		input    string
+		max      int
+		expected string
+	}{
+		{"hello", 10, "hello"},       // shorter than max
+		{"hello", 5, "hello"},        // exact length
+		{"hello", 3, "hel"},          // simple ASCII truncation
+		{"héllo", 2, "h"},            // don't split 2-byte é (0xC3 0xA9)
+		{"héllo", 3, "hé"},           // include the full é
+		{"日本語", 3, "日"},           // 3-byte CJK char fits exactly
+		{"日本語", 4, "日"},           // 4 bytes, but 本 needs 3 more, so still just 日
+		{"日本語", 6, "日本"},         // two 3-byte chars
+		{"a🎉b", 2, "a"},            // don't split 4-byte emoji
+		{"a🎉b", 5, "a🎉"},         // include full emoji
+		{"", 5, ""},                  // empty string
+	}
+	for _, tt := range tests {
+		got := truncateUTF8(tt.input, tt.max)
+		if got != tt.expected {
+			t.Errorf("truncateUTF8(%q, %d) = %q, want %q", tt.input, tt.max, got, tt.expected)
+		}
+	}
+}
+
 // TestEscapeLikePattern verifies that SQL LIKE special characters are properly escaped.
 func TestEscapeLikePattern(t *testing.T) {
 	tests := []struct {
