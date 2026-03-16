@@ -82,8 +82,10 @@ func (a *ConversationAssembler) Start(ctx context.Context) {
 	ch := a.bus.Subscribe(128)
 	defer a.bus.Unsubscribe(ch)
 
+	// trigger is a non-blocking signal channel used by the debounce timer
+	// to notify the main loop that processing should run.
+	trigger := make(chan struct{}, 1)
 	var debounceTimer *time.Timer
-	pending := false
 
 	for {
 		select {
@@ -96,16 +98,17 @@ func (a *ConversationAssembler) Start(ctx context.Context) {
 			if evt.Type != EventTransactionNew {
 				continue
 			}
-			pending = true
 			if debounceTimer != nil {
 				debounceTimer.Stop()
 			}
 			debounceTimer = time.AfterFunc(500*time.Millisecond, func() {
-				if pending {
-					pending = false
-					a.processNewTransactions()
+				select {
+				case trigger <- struct{}{}:
+				default:
 				}
 			})
+		case <-trigger:
+			a.processNewTransactions()
 		}
 	}
 }
