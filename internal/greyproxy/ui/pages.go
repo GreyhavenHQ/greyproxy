@@ -249,6 +249,7 @@ var (
 	settingsTmpl  = parseTemplate("base.html", "base.html", "settings.html")
 
 	trafficTmpl       = parseTemplate("base.html", "base.html", "traffic.html")
+	activityTmpl      = parseTemplate("base.html", "base.html", "activity.html")
 	conversationsTmpl = parseTemplate("base.html", "base.html", "conversations.html")
 
 	dashboardStatsTmpl    = parseTemplate("dashboard_stats.html", "partials/dashboard_stats.html")
@@ -256,6 +257,7 @@ var (
 	rulesListTmpl         = parseTemplate("rules_list.html", "partials/rules_list.html")
 	logsTableTmpl         = parseTemplate("logs_table.html", "partials/logs_table.html")
 	trafficTableTmpl      = parseTemplate("traffic_table.html", "partials/traffic_table.html")
+	activityTableTmpl     = parseTemplate("activity_table.html", "partials/activity_table.html")
 	convListTmpl          = parseTemplate("conversation_list.html", "partials/conversation_list.html")
 	convDetailTmpl        = parseTemplate("conversation_detail.html", "partials/conversation_detail.html")
 )
@@ -332,13 +334,7 @@ func RegisterPageRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 	})
 
 	r.GET("/logs", func(c *gin.Context) {
-		logsTmpl.Execute(c.Writer, PageData{
-			CurrentPath: c.Request.URL.Path,
-			Prefix:      prefix,
-			CacheBuster: cacheBuster,
-			Title:       "Logs - Greyproxy",
-			Containers:  getContainers(db),
-		})
+		c.Redirect(http.StatusFound, prefix+"/activity?kind=connection")
 	})
 
 	r.GET("/settings", func(c *gin.Context) {
@@ -352,11 +348,15 @@ func RegisterPageRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 	})
 
 	r.GET("/traffic", func(c *gin.Context) {
-		trafficTmpl.Execute(c.Writer, PageData{
+		c.Redirect(http.StatusFound, prefix+"/activity?kind=http")
+	})
+
+	r.GET("/activity", func(c *gin.Context) {
+		activityTmpl.Execute(c.Writer, PageData{
 			CurrentPath: c.Request.URL.Path,
 			Prefix:      prefix,
 			CacheBuster: cacheBuster,
-			Title:       "HTTP Traffic - Greyproxy",
+			Title:       "Activity - Greyproxy",
 			Containers:  getContainers(db),
 		})
 	})
@@ -717,6 +717,57 @@ func RegisterHTMXRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 
 		c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
 		trafficTableTmpl.Execute(c.Writer, gin.H{
+			"Prefix":     prefix,
+			"Items":      items,
+			"Total":      total,
+			"Page":       page,
+			"Pages":      pages,
+			"HasFilters": hasFilters,
+		})
+	})
+
+	// Activity HTMX route (unified logs + traffic)
+	htmx.GET("/activity-table", func(c *gin.Context) {
+		limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+		offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+
+		if page, err := strconv.Atoi(c.Query("page")); err == nil && page > 1 {
+			offset = (page - 1) * limit
+		}
+
+		container := c.Query("container")
+		destination := c.Query("destination")
+		kind := c.Query("kind")
+		result := c.Query("result")
+
+		f := greyproxy.ActivityFilter{
+			Container:   container,
+			Destination: destination,
+			Kind:        kind,
+			Result:      result,
+			Limit:       limit,
+			Offset:      offset,
+		}
+
+		items, total, err := greyproxy.QueryActivity(db, f)
+		if err != nil {
+			c.String(http.StatusInternalServerError, "Error: %v", err)
+			return
+		}
+
+		page := 1
+		if limit > 0 && offset > 0 {
+			page = offset/limit + 1
+		}
+		pages := 1
+		if limit > 0 && total > 0 {
+			pages = int(math.Ceil(float64(total) / float64(limit)))
+		}
+
+		hasFilters := container != "" || destination != "" || kind != "" || result != ""
+
+		c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+		activityTableTmpl.Execute(c.Writer, gin.H{
 			"Prefix":     prefix,
 			"Items":      items,
 			"Total":      total,

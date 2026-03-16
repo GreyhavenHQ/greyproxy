@@ -92,7 +92,7 @@ func setupRouter(t *testing.T, db *greyproxy.DB) *gin.Engine {
 	return r
 }
 
-func TestTrafficPageRoute(t *testing.T) {
+func TestTrafficPageRedirect(t *testing.T) {
 	db := setupTestDB(t)
 	r := setupRouter(t, db)
 
@@ -100,24 +100,39 @@ func TestTrafficPageRoute(t *testing.T) {
 	req, _ := http.NewRequest("GET", "/traffic", nil)
 	r.ServeHTTP(w, req)
 
+	if w.Code != 302 {
+		t.Fatalf("status: got %d, want 302", w.Code)
+	}
+	loc := w.Header().Get("Location")
+	if loc != "/activity?kind=http" {
+		t.Fatalf("redirect: got %q, want /activity?kind=http", loc)
+	}
+}
+
+func TestActivityPageRoute(t *testing.T) {
+	db := setupTestDB(t)
+	r := setupRouter(t, db)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/activity", nil)
+	r.ServeHTTP(w, req)
+
 	if w.Code != 200 {
 		t.Fatalf("status: got %d, want 200", w.Code)
 	}
 
 	body := w.Body.String()
-	// Page should contain the traffic page structure
-	if !strings.Contains(body, "HTTP Traffic") {
-		t.Error("page missing title 'HTTP Traffic'")
+	if !strings.Contains(body, "Activity") {
+		t.Error("page missing title 'Activity'")
 	}
-	if !strings.Contains(body, "traffic-table") {
-		t.Error("page missing traffic-table container")
+	if !strings.Contains(body, "activity-table") {
+		t.Error("page missing activity-table container")
 	}
-	if !strings.Contains(body, "traffic-filter-form") {
-		t.Error("page missing traffic filter form")
+	if !strings.Contains(body, "activity-filter-form") {
+		t.Error("page missing activity filter form")
 	}
-	// Navigation should have active Traffic link
-	if !strings.Contains(body, `href="/traffic"`) {
-		t.Error("page missing traffic nav link")
+	if !strings.Contains(body, `href="/activity"`) {
+		t.Error("page missing activity nav link")
 	}
 }
 
