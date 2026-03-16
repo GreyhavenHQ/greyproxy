@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/greyhavenhq/greyproxy/internal/greyproxy/dissector"
@@ -25,6 +26,7 @@ const AssemblerVersion = 2
 type ConversationAssembler struct {
 	db  *DB
 	bus *EventBus
+	mu  sync.Mutex // protects processNewTransactions / RebuildAllConversations
 }
 
 // NewConversationAssembler creates a new assembler.
@@ -45,9 +47,11 @@ func StoredAssemblerVersion(db *DB) int {
 // RebuildAllConversations resets the processing cursor so the assembler
 // reprocesses every transaction from scratch on its next cycle.
 func (a *ConversationAssembler) RebuildAllConversations() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	slog.Info("assembler: rebuild requested, resetting processing cursor")
 	SetConversationProcessingState(a.db, "last_processed_id", "0")
-	a.processNewTransactions()
+	a.processNewTransactionsLocked()
 	SetConversationProcessingState(a.db, "assembler_version", strconv.Itoa(AssemblerVersion))
 	slog.Info("assembler: rebuild complete")
 }
@@ -98,8 +102,15 @@ func (a *ConversationAssembler) Start(ctx context.Context) {
 	}
 }
 
-// processNewTransactions runs incremental assembly on new transactions.
+// processNewTransactions acquires the mutex and runs incremental assembly.
 func (a *ConversationAssembler) processNewTransactions() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.processNewTransactionsLocked()
+}
+
+// processNewTransactionsLocked runs incremental assembly. Caller must hold a.mu.
+func (a *ConversationAssembler) processNewTransactionsLocked() {
 	lastIDStr, err := GetConversationProcessingState(a.db, "last_processed_id")
 	if err != nil {
 		slog.Warn("assembler: failed to get last processed ID", "error", err)
