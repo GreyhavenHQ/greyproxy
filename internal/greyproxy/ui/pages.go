@@ -857,6 +857,7 @@ func RegisterHTMXRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 		}
 
 		c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+		c.Writer.Header().Set("Cache-Control", "no-store")
 		convDetailTmpl.Execute(c.Writer, gin.H{
 			"Prefix":    prefix,
 			"Conv":      convJSON,

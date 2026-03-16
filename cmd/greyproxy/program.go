@@ -508,6 +508,7 @@ func (p *program) buildGreyproxyService() error {
 	assemblerCtx, assemblerCancel := context.WithCancel(context.Background())
 	p.assemblerCancel = assemblerCancel
 	assembler := greyproxy.NewConversationAssembler(shared.DB, shared.Bus)
+	shared.Assembler = assembler
 	go assembler.Start(assemblerCtx)
 
 	go func() {

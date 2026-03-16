@@ -17,6 +17,7 @@ type Shared struct {
 	ConnTracker *greyproxy.ConnTracker
 	Notifier    *greyproxy.Notifier
 	Settings    *greyproxy.SettingsManager
+	Assembler   *greyproxy.ConversationAssembler
 	Version     string
 	Ports       map[string]int
 }
@@ -89,6 +90,10 @@ func NewRouter(s *Shared, pathPrefix string) (*gin.Engine, *gin.RouterGroup) {
 		api.GET("/conversations", ConversationsListHandler(s))
 		api.GET("/conversations/:id", ConversationsDetailHandler(s))
 		api.GET("/conversations/:id/subagents", ConversationsSubagentsHandler(s))
+
+		// Maintenance
+		api.POST("/maintenance/rebuild-conversations", RebuildConversationsHandler(s))
+		api.GET("/maintenance/status", MaintenanceStatusHandler(s))
 	}
 
 	// WebSocket

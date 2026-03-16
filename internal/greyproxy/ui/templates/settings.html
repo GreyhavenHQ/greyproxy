@@ -76,6 +76,35 @@
             </div>
         </div>
     </div>
+
+    <!-- Advanced (collapsed by default) -->
+    <div class="mb-6">
+        <button onclick="toggleAdvanced()" class="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors">
+            <svg id="advanced-icon" class="h-4 w-4 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+            </svg>
+            Advanced
+        </button>
+        <div id="advanced-section" class="hidden mt-4">
+            <div class="bg-card border border-border rounded-lg p-6">
+                <h2 class="text-lg font-semibold mb-4">Maintenance</h2>
+
+                <!-- Conversation rebuild -->
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="font-medium">Rebuild conversations</p>
+                        <p class="text-sm text-muted-foreground">Reprocess all HTTP transactions through the conversation assembler. Useful after upgrading when the analysis logic has improved.</p>
+                        <p id="assembler-version-info" class="text-xs text-muted-foreground mt-1"></p>
+                    </div>
+                    <button id="rebuild-btn" onclick="rebuildConversations()"
+                        class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-primary-foreground bg-primary hover:bg-primary/90 flex-shrink-0 ml-4">
+                        Rebuild
+                    </button>
+                </div>
+                <div id="rebuild-status" class="hidden mt-3 text-sm"></div>
+            </div>
+        </div>
+    </div>
 </div>
 {{end}}
 
@@ -197,6 +226,54 @@
         })
         .catch(function() {});
     };
+
+    window.toggleAdvanced = function() {
+        var section = document.getElementById('advanced-section');
+        var icon = document.getElementById('advanced-icon');
+        section.classList.toggle('hidden');
+        icon.style.transform = section.classList.contains('hidden') ? '' : 'rotate(90deg)';
+    };
+
+    window.rebuildConversations = function() {
+        var btn = document.getElementById('rebuild-btn');
+        var status = document.getElementById('rebuild-status');
+        btn.disabled = true;
+        btn.textContent = 'Rebuilding...';
+        btn.classList.add('opacity-50');
+        status.classList.remove('hidden');
+        status.innerHTML = '<span class="text-muted-foreground">Rebuild in progress...</span>';
+
+        fetch(prefix + '/api/maintenance/rebuild-conversations', { method: 'POST' })
+            .then(function(r) { return r.json(); })
+            .then(function() {
+                status.innerHTML = '<span class="text-green-600">Rebuild started. Conversations will update shortly.</span>';
+                btn.textContent = 'Rebuild';
+                btn.disabled = false;
+                btn.classList.remove('opacity-50');
+                loadMaintenanceStatus();
+            })
+            .catch(function(err) {
+                status.innerHTML = '<span class="text-red-600">Error: ' + err.message + '</span>';
+                btn.textContent = 'Rebuild';
+                btn.disabled = false;
+                btn.classList.remove('opacity-50');
+            });
+    };
+
+    function loadMaintenanceStatus() {
+        fetch(prefix + '/api/maintenance/status')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                var info = document.getElementById('assembler-version-info');
+                info.textContent = 'Assembler version: ' + data.assembler_version_stored + ' (current: ' + data.assembler_version_current + ')';
+                if (data.needs_rebuild) {
+                    info.innerHTML += ' <span class="text-yellow-600 font-medium">— rebuild recommended</span>';
+                }
+            })
+            .catch(function() {});
+    }
+
+    loadMaintenanceStatus();
 
     // Load settings from server
     fetch(prefix + '/api/settings')

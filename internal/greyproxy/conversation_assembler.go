@@ -14,6 +14,12 @@ import (
 	"github.com/greyhavenhq/greyproxy/internal/greyproxy/dissector"
 )
 
+// AssemblerVersion is incremented when the assembly logic changes in a way
+// that requires reprocessing existing conversations (e.g. new fields, linking).
+// When the stored version differs from this constant, the settings page
+// offers a "Rebuild conversations" action.
+const AssemblerVersion = 2
+
 // ConversationAssembler subscribes to EventTransactionNew and reassembles
 // LLM conversations from HTTP transactions using registered dissectors.
 type ConversationAssembler struct {
@@ -26,11 +32,38 @@ func NewConversationAssembler(db *DB, bus *EventBus) *ConversationAssembler {
 	return &ConversationAssembler{db: db, bus: bus}
 }
 
+// StoredAssemblerVersion returns the version stored in the DB, or 0 if unset.
+func StoredAssemblerVersion(db *DB) int {
+	v, _ := GetConversationProcessingState(db, "assembler_version")
+	if v == "" {
+		return 0
+	}
+	n, _ := strconv.Atoi(v)
+	return n
+}
+
+// RebuildAllConversations resets the processing cursor so the assembler
+// reprocesses every transaction from scratch on its next cycle.
+func (a *ConversationAssembler) RebuildAllConversations() {
+	slog.Info("assembler: rebuild requested, resetting processing cursor")
+	SetConversationProcessingState(a.db, "last_processed_id", "0")
+	a.processNewTransactions()
+	SetConversationProcessingState(a.db, "assembler_version", strconv.Itoa(AssemblerVersion))
+	slog.Info("assembler: rebuild complete")
+}
+
 // Start begins listening for new transactions and processing them.
 // On startup it backfills any existing unprocessed transactions (covers
 // first run or transactions that arrived while the assembler was stopped).
 // Then it debounces rapid-fire transactions (500ms) to batch processing.
 func (a *ConversationAssembler) Start(ctx context.Context) {
+	// Auto-rebuild if assembler version changed
+	if StoredAssemblerVersion(a.db) < AssemblerVersion {
+		slog.Info("assembler: version changed, rebuilding all conversations",
+			"stored", StoredAssemblerVersion(a.db), "current", AssemblerVersion)
+		a.RebuildAllConversations()
+	}
+
 	// Backfill: process any transactions already in the DB but not yet assembled
 	a.processNewTransactions()
 

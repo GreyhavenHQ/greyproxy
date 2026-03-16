@@ -134,7 +134,9 @@ function selectConversation(id) {
     // Load detail
     var detailUrl = '{{.Prefix}}/htmx/conversation-detail?id=' + encodeURIComponent(id);
     fetch(detailUrl).then(function(r) { return r.text(); }).then(function(html) {
-        document.getElementById('conv-detail').innerHTML = html;
+        var el = document.getElementById('conv-detail');
+        el.innerHTML = html;
+        el.scrollTop = 0;
         renderMarkdown();
     });
 }
