@@ -297,8 +297,8 @@ func (a *ConversationAssembler) loadTransactionsForSessions(sessionIDs map[strin
 	var likeClauses []string
 	var args []any
 	for sid := range sessionIDs {
-		likeClauses = append(likeClauses, "CAST(request_body AS TEXT) LIKE ?")
-		args = append(args, "%session_"+sid+"%")
+		likeClauses = append(likeClauses, `CAST(request_body AS TEXT) LIKE ? ESCAPE '\'`)
+		args = append(args, "%session_"+escapeLikePattern(sid)+"%")
 	}
 
 	query := fmt.Sprintf(`
@@ -1111,6 +1111,15 @@ func (a *ConversationAssembler) upsertConversation(conv assembledConversation) e
 }
 
 // --- helpers ---
+
+// escapeLikePattern escapes SQL LIKE special characters (%, _, \) so they
+// are matched literally when used with ESCAPE '\'.
+func escapeLikePattern(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `%`, `\%`)
+	s = strings.ReplaceAll(s, `_`, `\_`)
+	return s
+}
 
 func maxTime(a, b time.Time) time.Time {
 	if a.After(b) {
