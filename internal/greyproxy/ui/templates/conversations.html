@@ -50,9 +50,13 @@
 <div class="space-y-4">
     <div class="flex justify-between items-center">
         <h1 class="text-2xl font-bold text-foreground">Conversations</h1>
-        <button onclick="refreshConversations()"
-            class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-primary-foreground bg-primary hover:bg-primary/90">
-            Refresh
+        <button id="conv-live-btn" onclick="toggleConvLive()" type="button"
+            class="inline-flex items-center px-4 py-2 border text-sm font-medium rounded-md transition-colors">
+            <span id="conv-live-icon" class="mr-2">
+                <svg class="h-3 w-3" viewBox="0 0 12 12" fill="currentColor"><circle cx="6" cy="6" r="6"/></svg>
+            </span>
+            <span id="conv-live-text">Live</span>
+            <span id="conv-pending-badge" class="hidden ml-2 inline-flex items-center justify-center px-1.5 py-0.5 text-xs font-bold leading-none rounded-full min-w-[1.25rem]"></span>
         </button>
     </div>
 
@@ -98,12 +102,47 @@
 
 <script>
 var currentConvId = null;
+var convLive = true;
+var convPendingCount = 0;
+
+function applyConvLiveStyle() {
+    var btn = document.getElementById('conv-live-btn');
+    var text = document.getElementById('conv-live-text');
+    var badge = document.getElementById('conv-pending-badge');
+    if (convLive) {
+        btn.className = 'inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-primary-foreground bg-primary hover:bg-primary/90 transition-colors';
+        text.textContent = 'Live';
+        badge.classList.add('hidden');
+    } else {
+        btn.className = 'inline-flex items-center px-4 py-2 border border-border text-sm font-medium rounded-md text-secondary-foreground bg-background hover:bg-muted transition-colors';
+        if (convPendingCount > 0) {
+            text.textContent = 'Paused';
+            badge.textContent = convPendingCount;
+            badge.className = 'ml-2 inline-flex items-center justify-center px-1.5 py-0.5 text-xs font-bold leading-none text-primary-foreground bg-primary rounded-full min-w-[1.25rem]';
+        } else {
+            text.textContent = 'Paused';
+            badge.classList.add('hidden');
+        }
+    }
+}
+
+function toggleConvLive() {
+    convLive = !convLive;
+    if (convLive && convPendingCount > 0) {
+        convPendingCount = 0;
+        refreshConversations();
+    }
+    applyConvLiveStyle();
+}
 
 function refreshConversations() {
+    var listEl = document.getElementById('conv-list');
+    var scrollTop = listEl.scrollTop;
     var container = document.getElementById('conv-container').value;
     var url = '{{.Prefix}}/htmx/conversation-list?container=' + encodeURIComponent(container);
     fetch(url).then(function(r) { return r.text(); }).then(function(html) {
-        document.getElementById('conv-list').innerHTML = html;
+        listEl.innerHTML = html;
+        listEl.scrollTop = scrollTop;
         // Re-highlight current selection if any
         if (currentConvId) {
             document.querySelectorAll('[data-conv-id]').forEach(function(el) {
@@ -183,13 +222,19 @@ window.addEventListener('popstate', function(e) {
 
 // Auto-refresh on conversation update events
 window.addEventListener('proxy:conversation-event', function() {
-    refreshConversations();
-    if (currentConvId) {
-        selectConversation(currentConvId);
+    if (convLive) {
+        refreshConversations();
+        if (currentConvId) {
+            selectConversation(currentConvId);
+        }
+    } else {
+        convPendingCount++;
+        applyConvLiveStyle();
     }
 });
 
 // Initial load
+applyConvLiveStyle();
 refreshConversations();
 
 // Restore from URL if conversation ID is present
