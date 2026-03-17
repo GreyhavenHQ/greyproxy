@@ -417,7 +417,7 @@ func RegisterHTMXRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 	})
 
 	// Bulk dismiss via HTMX
-	htmx.DELETE("/pending/bulk-dismiss", func(c *gin.Context) {
+	htmx.POST("/pending/bulk-dismiss", func(c *gin.Context) {
 		ids := c.PostFormArray("selected")
 		for _, idStr := range ids {
 			id, err := strconv.ParseInt(idStr, 10, 64)
