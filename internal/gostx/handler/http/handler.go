@@ -31,6 +31,7 @@ import (
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/observer"
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/observer/stats"
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/recorder"
+	gostx "github.com/greyhavenhq/greyproxy/internal/gostx"
 	xbypass "github.com/greyhavenhq/greyproxy/internal/gostx/bypass"
 	xctx "github.com/greyhavenhq/greyproxy/internal/gostx/ctx"
 	ictx "github.com/greyhavenhq/greyproxy/internal/gostx/internal/ctx"
@@ -160,6 +161,16 @@ func (h *httpHandler) Handle(ctx context.Context, conn net.Conn, opts ...handler
 		ro.Duration = time.Since(start)
 		if err := ro.Record(ctx, h.recorder.Recorder); err != nil {
 			log.Error("record: %v", err)
+		}
+
+		if ro.MitmSkipReason != "" {
+			if hook := gostx.GlobalConnectionFinishHook; hook != nil {
+				hook(gostx.ConnectionFinishInfo{
+					Host:           ro.Host,
+					MitmSkipReason: ro.MitmSkipReason,
+					ContainerName:  ro.ClientID,
+				})
+			}
 		}
 
 		log.WithFields(map[string]any{
@@ -431,14 +442,24 @@ func (h *httpHandler) handleRequest(ctx context.Context, conn net.Conn, req *htt
 				sniffing.WithLog(log),
 			)
 		case sniffing.ProtoTLS:
-			return sniffer.HandleTLS(ctx, "tcp", conn,
+			if err := sniffer.HandleTLS(ctx, "tcp", conn,
 				sniffing.WithService(h.options.Service),
 				sniffing.WithDial(dial),
 				sniffing.WithDialTLS(dialTLS),
 				sniffing.WithRecorderObject(ro),
 				sniffing.WithLog(log),
-			)
+			); err != nil {
+				if ro.MitmSkipReason == "" {
+					ro.MitmSkipReason = "mitm_error"
+				}
+				return err
+			}
+			return nil
+		default:
+			ro.MitmSkipReason = "non_tls"
 		}
+	} else {
+		ro.MitmSkipReason = "sniffing_disabled"
 	}
 
 	start := time.Now()

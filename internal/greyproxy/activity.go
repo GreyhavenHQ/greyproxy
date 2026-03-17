@@ -19,6 +19,7 @@ type ActivityItem struct {
 	ResolvedHostname sql.NullString
 	RuleID           sql.NullInt64
 	RuleSummary      sql.NullString
+	MitmSkipReason sql.NullString
 	// HTTP-specific fields
 	Method         sql.NullString
 	URL            sql.NullString
@@ -69,6 +70,7 @@ func QueryActivity(db *DB, f ActivityFilter) ([]ActivityItem, int, error) {
 		q := fmt.Sprintf(`SELECT 'connection' as kind, l.id, l.timestamp, l.container_name,
 			l.destination_host, COALESCE(l.destination_port, 0) as destination_port, l.result,
 			l.resolved_hostname, l.rule_id, r.destination_pattern as rule_summary,
+			l.mitm_skip_reason,
 			NULL as method, NULL as url, NULL as status_code, NULL as duration_ms,
 			NULL as conversation_id
 			FROM request_logs l LEFT JOIN rules r ON l.rule_id = r.id
@@ -93,7 +95,7 @@ func QueryActivity(db *DB, f ActivityFilter) ([]ActivityItem, int, error) {
 			COALESCE(t.rule_id, (
 				SELECT cl.rule_id FROM request_logs cl
 				WHERE cl.container_name = t.container_name
-				AND cl.destination_host = t.destination_host
+				AND (cl.destination_host = t.destination_host OR cl.resolved_hostname = t.destination_host)
 				AND COALESCE(cl.destination_port, 0) = t.destination_port
 				AND cl.result = 'allowed' AND cl.rule_id IS NOT NULL
 				ORDER BY cl.timestamp DESC LIMIT 1
@@ -101,11 +103,12 @@ func QueryActivity(db *DB, f ActivityFilter) ([]ActivityItem, int, error) {
 			(SELECT r.destination_pattern FROM rules r WHERE r.id = COALESCE(t.rule_id, (
 				SELECT cl2.rule_id FROM request_logs cl2
 				WHERE cl2.container_name = t.container_name
-				AND cl2.destination_host = t.destination_host
+				AND (cl2.destination_host = t.destination_host OR cl2.resolved_hostname = t.destination_host)
 				AND COALESCE(cl2.destination_port, 0) = t.destination_port
 				AND cl2.result = 'allowed' AND cl2.rule_id IS NOT NULL
 				ORDER BY cl2.timestamp DESC LIMIT 1
 			))) as rule_summary,
+			NULL as mitm_skip_reason,
 			t.method, t.url, t.status_code, t.duration_ms, t.conversation_id
 			FROM http_transactions t
 			WHERE %s`, where)
@@ -146,6 +149,7 @@ func QueryActivity(db *DB, f ActivityFilter) ([]ActivityItem, int, error) {
 			&item.Kind, &item.ID, &ts, &item.ContainerName,
 			&item.DestinationHost, &item.DestinationPort, &item.Result,
 			&item.ResolvedHostname, &item.RuleID, &item.RuleSummary,
+			&item.MitmSkipReason,
 			&item.Method, &item.URL, &item.StatusCode, &item.DurationMs,
 			&item.ConversationID,
 		)
@@ -194,7 +198,7 @@ func buildActivityConnWhere(f ActivityFilter, dedup bool) (string, []any) {
 		conds = append(conds, `NOT EXISTS (
 			SELECT 1 FROM http_transactions t
 			WHERE t.container_name = l.container_name
-			AND t.destination_host = l.destination_host
+			AND (t.destination_host = l.destination_host OR t.destination_host = l.resolved_hostname)
 			AND t.destination_port = COALESCE(l.destination_port, 0)
 		)`)
 	}

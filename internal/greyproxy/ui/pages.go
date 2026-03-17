@@ -110,6 +110,26 @@ var funcMap = template.FuncMap{
 		}
 		return s[:n]
 	},
+	"mitmSkipReasonLabel": func(reason string) string {
+		switch reason {
+		case "no_cert":
+			return "CA certificate not configured"
+		case "mitm_bypass":
+			return "Host is in MITM bypass list"
+		case "sniffing_disabled":
+			return "Traffic sniffing is disabled"
+		case "non_tls":
+			return "Protocol is not TLS"
+		case "mitm_disabled":
+			return "MITM is globally disabled"
+		case "non_http_after_tls":
+			return "Decrypted stream is not HTTP"
+		case "mitm_error":
+			return "TLS interception failed (client may reject forged certificate)"
+		default:
+			return reason
+		}
+	},
 	"strLen": func(v any) int {
 		if v == nil {
 			return 0

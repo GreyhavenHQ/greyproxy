@@ -14,6 +14,7 @@ import (
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/observer/stats"
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/recorder"
 	"github.com/greyhavenhq/greyproxy/internal/gosocks5"
+	gostx "github.com/greyhavenhq/greyproxy/internal/gostx"
 	xctx "github.com/greyhavenhq/greyproxy/internal/gostx/ctx"
 	"github.com/greyhavenhq/greyproxy/internal/gostx/internal/util/socks"
 	stats_util "github.com/greyhavenhq/greyproxy/internal/gostx/internal/util/stats"
@@ -139,6 +140,16 @@ func (h *socks5Handler) Handle(ctx context.Context, conn net.Conn, opts ...handl
 		ro.Duration = time.Since(start)
 		if err := ro.Record(ctx, h.recorder.Recorder); err != nil {
 			log.Errorf("record: %v", err)
+		}
+
+		if ro.MitmSkipReason != "" {
+			if hook := gostx.GlobalConnectionFinishHook; hook != nil {
+				hook(gostx.ConnectionFinishInfo{
+					Host:           ro.Host,
+					MitmSkipReason: ro.MitmSkipReason,
+					ContainerName:  ro.ClientID,
+				})
+			}
 		}
 
 		log.WithFields(map[string]any{

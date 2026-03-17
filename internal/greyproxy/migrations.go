@@ -136,6 +136,9 @@ var migrations = []string{
 	// Migration 6: Add conversation_id column to http_transactions for bidirectional linking
 	`ALTER TABLE http_transactions ADD COLUMN conversation_id TEXT;
 	CREATE INDEX IF NOT EXISTS idx_http_transactions_conv ON http_transactions(conversation_id);`,
+
+	// Migration 7: Add mitm_skip_reason column to request_logs for tracking why MITM was skipped
+	`ALTER TABLE request_logs ADD COLUMN mitm_skip_reason TEXT;`,
 }
 
 func runMigrations(db *sql.DB) error {

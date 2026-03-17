@@ -182,14 +182,24 @@ func (h *socks5Handler) handleConnect(ctx context.Context, conn net.Conn, networ
 				sniffing.WithLog(log),
 			)
 		case sniffing.ProtoTLS:
-			return sniffer.HandleTLS(ctx, "tcp", conn,
+			if err := sniffer.HandleTLS(ctx, "tcp", conn,
 				sniffing.WithService(h.options.Service),
 				sniffing.WithDial(dial),
 				sniffing.WithDialTLS(dialTLS),
 				sniffing.WithRecorderObject(ro),
 				sniffing.WithLog(log),
-			)
+			); err != nil {
+				if ro.MitmSkipReason == "" {
+					ro.MitmSkipReason = "mitm_error"
+				}
+				return err
+			}
+			return nil
+		default:
+			ro.MitmSkipReason = "non_tls"
 		}
+	} else {
+		ro.MitmSkipReason = "sniffing_disabled"
 	}
 
 	t := time.Now()

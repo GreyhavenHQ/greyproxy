@@ -10,6 +10,15 @@ import (
 type settingsResponse struct {
 	Theme         string                   `json:"theme"`
 	Notifications notificationSettingsResp `json:"notifications"`
+	Mitm          mitmSettingsResp         `json:"mitm"`
+}
+
+type mitmSettingsResp struct {
+	Enabled       bool   `json:"enabled"`
+	CertGenerated bool   `json:"certGenerated"`
+	CertExpiry    string `json:"certExpiry,omitempty"`
+	CertPath      string `json:"certPath"`
+	Installed     bool   `json:"installed"`
 }
 
 type notificationSettingsResp struct {
@@ -28,6 +37,17 @@ func buildSettingsResponse(s *Shared) settingsResponse {
 		info = s.Notifier.BackendInfo()
 	}
 
+	certStatus := buildCertStatus(s.DataHome)
+	mitm := mitmSettingsResp{
+		Enabled:       resolved.MitmEnabled,
+		CertGenerated: certStatus.Generated,
+		CertPath:      certStatus.CertPath,
+		Installed:     certStatus.Installed,
+	}
+	if certStatus.ExpiresAt != nil {
+		mitm.CertExpiry = certStatus.ExpiresAt.Format("2006-01-02")
+	}
+
 	return settingsResponse{
 		Theme: resolved.Theme,
 		Notifications: notificationSettingsResp{
@@ -37,6 +57,7 @@ func buildSettingsResponse(s *Shared) settingsResponse {
 			InstallHint:     info.InstallHint,
 			SupportsActions: info.SupportsActions,
 		},
+		Mitm: mitm,
 	}
 }
 
@@ -53,6 +74,9 @@ func SettingsUpdateHandler(s *Shared) gin.HandlerFunc {
 			Notifications *struct {
 				Enabled *bool `json:"enabled"`
 			} `json:"notifications"`
+			Mitm *struct {
+				Enabled *bool `json:"enabled"`
+			} `json:"mitm"`
 		}
 		if err := c.ShouldBindJSON(&body); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -70,6 +94,9 @@ func SettingsUpdateHandler(s *Shared) gin.HandlerFunc {
 		}
 		if body.Notifications != nil && body.Notifications.Enabled != nil {
 			patch.NotificationsEnabled = body.Notifications.Enabled
+		}
+		if body.Mitm != nil && body.Mitm.Enabled != nil {
+			patch.MitmEnabled = body.Mitm.Enabled
 		}
 
 		if _, err := s.Settings.Update(patch); err != nil {

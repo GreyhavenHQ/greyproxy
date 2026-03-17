@@ -12,12 +12,14 @@ import (
 type UserSettings struct {
 	Theme                *string `json:"theme,omitempty"`
 	NotificationsEnabled *bool   `json:"notificationsEnabled,omitempty"`
+	MitmEnabled          *bool   `json:"mitmEnabled,omitempty"`
 }
 
 // ResolvedSettings is the fully resolved settings with defaults applied.
 type ResolvedSettings struct {
 	Theme                string `json:"theme"`
 	NotificationsEnabled bool   `json:"notificationsEnabled"`
+	MitmEnabled          bool   `json:"mitmEnabled"`
 }
 
 // SettingsManager handles loading and saving user settings, merging
@@ -31,6 +33,7 @@ type SettingsManager struct {
 	defaultNotificationsEnabled bool
 
 	onNotificationsChanged func(bool)
+	onMitmChanged          func(bool)
 }
 
 func NewSettingsManager(path string, defaultNotificationsEnabled bool) *SettingsManager {
@@ -44,6 +47,11 @@ func NewSettingsManager(path string, defaultNotificationsEnabled bool) *Settings
 // enabled state changes.
 func (m *SettingsManager) OnNotificationsChanged(fn func(bool)) {
 	m.onNotificationsChanged = fn
+}
+
+// OnMitmChanged sets a callback invoked when the MITM enabled state changes.
+func (m *SettingsManager) OnMitmChanged(fn func(bool)) {
+	m.onMitmChanged = fn
 }
 
 // Load reads user settings from disk. If the file doesn't exist,
@@ -74,12 +82,16 @@ func (m *SettingsManager) resolve() ResolvedSettings {
 	s := ResolvedSettings{
 		Theme:                "system",
 		NotificationsEnabled: m.defaultNotificationsEnabled,
+		MitmEnabled:          true, // MITM enabled by default
 	}
 	if m.user.Theme != nil {
 		s.Theme = *m.user.Theme
 	}
 	if m.user.NotificationsEnabled != nil {
 		s.NotificationsEnabled = *m.user.NotificationsEnabled
+	}
+	if m.user.MitmEnabled != nil {
+		s.MitmEnabled = *m.user.MitmEnabled
 	}
 	return s
 }
@@ -101,6 +113,13 @@ func (m *SettingsManager) Update(patch UserSettings) (ResolvedSettings, error) {
 		notifChanged = old != *patch.NotificationsEnabled
 	}
 
+	var mitmChanged bool
+	if patch.MitmEnabled != nil {
+		old := m.resolve().MitmEnabled
+		m.user.MitmEnabled = patch.MitmEnabled
+		mitmChanged = old != *patch.MitmEnabled
+	}
+
 	if err := m.save(); err != nil {
 		return ResolvedSettings{}, err
 	}
@@ -110,12 +129,15 @@ func (m *SettingsManager) Update(patch UserSettings) (ResolvedSettings, error) {
 	if notifChanged && m.onNotificationsChanged != nil {
 		m.onNotificationsChanged(resolved.NotificationsEnabled)
 	}
+	if mitmChanged && m.onMitmChanged != nil {
+		m.onMitmChanged(resolved.MitmEnabled)
+	}
 
 	return resolved, nil
 }
 
 func (m *SettingsManager) save() error {
-	if m.user.Theme == nil && m.user.NotificationsEnabled == nil {
+	if m.user.Theme == nil && m.user.NotificationsEnabled == nil && m.user.MitmEnabled == nil {
 		return nil
 	}
 

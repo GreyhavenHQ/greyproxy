@@ -124,6 +124,7 @@ type RequestLog struct {
 	Result           string         `json:"result"`
 	RuleID           sql.NullInt64  `json:"rule_id"`
 	ResponseTimeMs   sql.NullInt64  `json:"response_time_ms"`
+	MitmSkipReason   sql.NullString `json:"mitm_skip_reason"`
 	RuleSummary      sql.NullString `json:"-"` // Computed at query time via JOIN
 }
 

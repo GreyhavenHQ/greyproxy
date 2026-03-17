@@ -805,6 +805,7 @@ type LogCreateInput struct {
 	Result           string
 	RuleID           *int64
 	ResponseTimeMs   *int64
+	MitmSkipReason   string
 }
 
 func CreateLogEntry(db *DB, input LogCreateInput) (*RequestLog, error) {
@@ -813,8 +814,8 @@ func CreateLogEntry(db *DB, input LogCreateInput) (*RequestLog, error) {
 
 	result, err := db.WriteDB().Exec(
 		`INSERT INTO request_logs (container_name, container_id, destination_host, destination_port,
-		 resolved_hostname, method, result, rule_id, response_time_ms)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 resolved_hostname, method, result, rule_id, response_time_ms, mitm_skip_reason)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		input.ContainerName,
 		sql.NullString{String: input.ContainerID, Valid: input.ContainerID != ""},
 		input.DestinationHost,
@@ -824,6 +825,7 @@ func CreateLogEntry(db *DB, input LogCreateInput) (*RequestLog, error) {
 		input.Result,
 		sql.NullInt64{Int64: ptrInt64OrZero(input.RuleID), Valid: input.RuleID != nil},
 		sql.NullInt64{Int64: ptrInt64OrZero(input.ResponseTimeMs), Valid: input.ResponseTimeMs != nil},
+		sql.NullString{String: input.MitmSkipReason, Valid: input.MitmSkipReason != ""},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("insert log: %w", err)
@@ -831,6 +833,28 @@ func CreateLogEntry(db *DB, input LogCreateInput) (*RequestLog, error) {
 
 	id, _ := result.LastInsertId()
 	return getLogByID(db.WriteDB(), id)
+}
+
+// UpdateLatestLogMitmSkipReason sets the mitm_skip_reason on the most recent
+// log entry matching the given container and destination. This is called after
+// the handler finishes, when we know whether MITM was attempted and why it was skipped.
+func UpdateLatestLogMitmSkipReason(db *DB, containerName, destHost string, destPort int, reason string) error {
+	if reason == "" {
+		return nil
+	}
+	db.Lock()
+	defer db.Unlock()
+
+	_, err := db.WriteDB().Exec(
+		`UPDATE request_logs SET mitm_skip_reason = ?
+		 WHERE id = (
+			SELECT id FROM request_logs
+			WHERE container_name = ? AND (destination_host = ? OR resolved_hostname = ?) AND COALESCE(destination_port, 0) = ?
+			ORDER BY id DESC LIMIT 1
+		 )`,
+		reason, containerName, destHost, destHost, destPort,
+	)
+	return err
 }
 
 func ptrInt64OrZero(p *int64) int64 {
@@ -844,10 +868,11 @@ func getLogByID(conn *sql.DB, id int64) (*RequestLog, error) {
 	var l RequestLog
 	err := conn.QueryRow(
 		`SELECT id, timestamp, container_name, container_id, destination_host, destination_port,
-		        resolved_hostname, method, result, rule_id, response_time_ms
+		        resolved_hostname, method, result, rule_id, response_time_ms, mitm_skip_reason
 		 FROM request_logs WHERE id = ?`, id,
 	).Scan(&l.ID, &l.Timestamp, &l.ContainerName, &l.ContainerID, &l.DestinationHost,
-		&l.DestinationPort, &l.ResolvedHostname, &l.Method, &l.Result, &l.RuleID, &l.ResponseTimeMs)
+		&l.DestinationPort, &l.ResolvedHostname, &l.Method, &l.Result, &l.RuleID, &l.ResponseTimeMs,
+		&l.MitmSkipReason)
 	if err != nil {
 		return nil, err
 	}
@@ -903,7 +928,7 @@ func QueryLogs(db *DB, f LogFilter) ([]RequestLog, int, error) {
 
 	rows, err := db.ReadDB().Query(
 		`SELECT rl.id, rl.timestamp, rl.container_name, rl.container_id, rl.destination_host, rl.destination_port,
-		        rl.resolved_hostname, rl.method, rl.result, rl.rule_id, rl.response_time_ms,
+		        rl.resolved_hostname, rl.method, rl.result, rl.rule_id, rl.response_time_ms, rl.mitm_skip_reason,
 		        CASE WHEN r.id IS NOT NULL THEN r.container_pattern || ' → ' || r.destination_pattern || ':' || r.port_pattern ELSE NULL END AS rule_summary
 		 FROM request_logs rl
 		 LEFT JOIN rules r ON rl.rule_id = r.id
@@ -920,7 +945,7 @@ func QueryLogs(db *DB, f LogFilter) ([]RequestLog, int, error) {
 		var l RequestLog
 		if err := rows.Scan(&l.ID, &l.Timestamp, &l.ContainerName, &l.ContainerID, &l.DestinationHost,
 			&l.DestinationPort, &l.ResolvedHostname, &l.Method, &l.Result, &l.RuleID, &l.ResponseTimeMs,
-			&l.RuleSummary); err != nil {
+			&l.MitmSkipReason, &l.RuleSummary); err != nil {
 			return nil, 0, err
 		}
 		logs = append(logs, l)

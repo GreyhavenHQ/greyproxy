@@ -77,6 +77,106 @@
         </div>
     </div>
 
+    <!-- TLS Interception -->
+    <div class="bg-card border border-border rounded-lg p-6 mb-6">
+        <h2 class="text-lg font-semibold mb-4">TLS Interception</h2>
+
+        <!-- MITM Toggle -->
+        <div class="flex items-center justify-between mb-6">
+            <div>
+                <p class="font-medium">HTTPS Decoding</p>
+                <p class="text-sm text-muted-foreground">Intercept and decode HTTPS traffic for visibility</p>
+            </div>
+            <button id="mitm-toggle-btn" type="button" onclick="toggleMitmSetting()"
+                class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-background cursor-pointer"
+                role="switch" aria-checked="true">
+                <span id="mitm-toggle-dot"
+                    class="inline-block h-4 w-4 transform rounded-full bg-white transition-transform translate-x-5"></span>
+            </button>
+        </div>
+
+        <div id="cert-section">
+            <!-- Loading state -->
+            <div id="cert-loading" class="text-sm text-muted-foreground">Loading certificate status...</div>
+
+            <!-- Not generated -->
+            <div id="cert-not-generated" class="hidden">
+                <div class="p-4 bg-yellow-50 dark:bg-yellow-950/30 rounded-lg border border-yellow-200 dark:border-yellow-800 mb-4">
+                    <div class="flex items-start gap-3">
+                        <svg class="h-5 w-5 text-yellow-600 dark:text-yellow-500 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                        </svg>
+                        <div>
+                            <p class="font-medium text-yellow-800 dark:text-yellow-200">CA certificate not generated</p>
+                            <p class="mt-1 text-sm text-yellow-700 dark:text-yellow-300">HTTPS traffic cannot be decoded without a CA certificate. Generate one to enable TLS interception.</p>
+                        </div>
+                    </div>
+                </div>
+                <button id="cert-generate-btn" onclick="generateCert(false)"
+                    class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-primary-foreground bg-primary hover:bg-primary/90">
+                    Generate Certificate
+                </button>
+                <div id="cert-generate-status" class="hidden mt-3 text-sm"></div>
+            </div>
+
+            <!-- Generated -->
+            <div id="cert-generated" class="hidden">
+                <!-- Status line -->
+                <div id="cert-status-line" class="flex items-center gap-2 mb-4">
+                    <div id="cert-status-icon"></div>
+                    <span id="cert-status-text" class="text-sm"></span>
+                </div>
+
+                <!-- Install instructions (shown when not installed) -->
+                <div id="cert-install-section" class="hidden mb-4">
+                    <div class="p-4 bg-muted rounded-lg border border-border">
+                        <p class="font-medium text-sm mb-2">Install in system trust store</p>
+                        <p class="text-xs text-muted-foreground mb-3">Run this command in your terminal to trust the CA certificate system-wide:</p>
+                        <div class="relative">
+                            <pre id="cert-install-cmd" class="text-xs bg-background rounded p-3 pr-10 overflow-x-auto border border-border font-mono"></pre>
+                            <button onclick="copyInstallCmd()" class="absolute top-2 right-2 p-1 rounded hover:bg-muted-foreground/10" title="Copy to clipboard">
+                                <svg class="h-4 w-4 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184" />
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Environment variable hints (collapsible) -->
+                <div id="cert-env-section" class="mb-4">
+                    <button onclick="toggleEnvHints()" class="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors">
+                        <svg id="env-hints-icon" class="h-4 w-4 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+                        </svg>
+                        Environment variable hints for CLI tools
+                    </button>
+                    <div id="env-hints-content" class="hidden mt-3">
+                        <div class="p-4 bg-muted rounded-lg border border-border">
+                            <p class="text-xs text-muted-foreground mb-3">Some tools require explicit CA bundle configuration. Add these to your shell profile if needed:</p>
+                            <div id="env-hints-list" class="space-y-2"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Actions -->
+                <div class="flex items-center gap-3">
+                    <a id="cert-download-link" class="inline-flex items-center px-3 py-1.5 border border-border text-sm font-medium rounded-md hover:bg-muted transition-colors" download>
+                        <svg class="h-4 w-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                        </svg>
+                        Download CA Certificate
+                    </a>
+                    <button onclick="regenerateCert()"
+                        class="inline-flex items-center px-3 py-1.5 border border-border text-sm font-medium rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
+                        Regenerate
+                    </button>
+                </div>
+                <div id="cert-regen-status" class="hidden mt-3 text-sm"></div>
+            </div>
+        </div>
+    </div>
+
     <!-- Advanced (collapsed by default) -->
     <div class="mb-6">
         <button onclick="toggleAdvanced()" class="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors">
@@ -275,6 +375,188 @@
 
     loadMaintenanceStatus();
 
+    // --- MITM Toggle ---
+    var mitmEnabled = true;
+
+    function updateMitmToggle(enabled) {
+        mitmEnabled = enabled;
+        var btn = document.getElementById('mitm-toggle-btn');
+        var dot = document.getElementById('mitm-toggle-dot');
+        btn.setAttribute('aria-checked', String(enabled));
+        if (enabled) {
+            btn.classList.add('bg-primary');
+            btn.classList.remove('bg-muted');
+            dot.classList.add('translate-x-5');
+            dot.classList.remove('translate-x-1');
+        } else {
+            btn.classList.remove('bg-primary');
+            btn.classList.add('bg-muted');
+            dot.classList.remove('translate-x-5');
+            dot.classList.add('translate-x-1');
+        }
+    }
+
+    window.toggleMitmSetting = function() {
+        var newState = !mitmEnabled;
+        fetch(prefix + '/api/settings', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mitm: { enabled: newState } })
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            updateMitmToggle(data.mitm.enabled);
+        })
+        .catch(function() {});
+    };
+
+    // --- TLS Interception / Certificate Management ---
+    function loadCertStatus() {
+        fetch(prefix + '/api/cert/status')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                document.getElementById('cert-loading').classList.add('hidden');
+                if (!data.generated) {
+                    document.getElementById('cert-not-generated').classList.remove('hidden');
+                    document.getElementById('cert-generated').classList.add('hidden');
+                } else {
+                    document.getElementById('cert-not-generated').classList.add('hidden');
+                    document.getElementById('cert-generated').classList.remove('hidden');
+                    updateCertStatus(data);
+                }
+            })
+            .catch(function() {
+                document.getElementById('cert-loading').textContent = 'Failed to load certificate status.';
+            });
+    }
+
+    function updateCertStatus(data) {
+        var icon = document.getElementById('cert-status-icon');
+        var text = document.getElementById('cert-status-text');
+
+        if (data.installed) {
+            icon.innerHTML = '<svg class="h-5 w-5 text-[var(--color-green)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" /></svg>';
+            text.innerHTML = '<span class="text-[var(--color-green)]">CA certificate active</span>';
+            if (data.expiresAt) {
+                text.innerHTML += ' <span class="text-muted-foreground">&middot; expires ' + data.expiresAt.split('T')[0] + '</span>';
+            }
+            document.getElementById('cert-install-section').classList.add('hidden');
+        } else {
+            icon.innerHTML = '<svg class="h-5 w-5 text-yellow-600 dark:text-yellow-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>';
+            text.innerHTML = '<span class="text-yellow-600 dark:text-yellow-500">Certificate generated but not installed in system trust store</span>';
+            if (data.expiresAt) {
+                text.innerHTML += ' <span class="text-muted-foreground">&middot; expires ' + data.expiresAt.split('T')[0] + '</span>';
+            }
+            document.getElementById('cert-install-section').classList.remove('hidden');
+            // Show install command for the current platform
+            var cmd = data.installCommands.linux || data.installCommands.macos || '';
+            document.getElementById('cert-install-cmd').textContent = cmd;
+        }
+
+        // Download link
+        document.getElementById('cert-download-link').href = prefix + '/api/cert/download';
+
+        // Env hints
+        if (data.envHints) {
+            var list = document.getElementById('env-hints-list');
+            list.innerHTML = '';
+            var keys = Object.keys(data.envHints);
+            for (var i = 0; i < keys.length; i++) {
+                var div = document.createElement('div');
+                div.className = 'flex items-center justify-between gap-2';
+                div.innerHTML = '<code class="text-xs font-mono bg-background rounded px-2 py-1 border border-border flex-1 overflow-x-auto">' +
+                    escapeHtml(data.envHints[keys[i]]) + '</code>' +
+                    '<span class="text-xs text-muted-foreground flex-shrink-0">' + keys[i] + '</span>';
+                list.appendChild(div);
+            }
+        }
+    }
+
+    function escapeHtml(text) {
+        var div = document.createElement('div');
+        div.appendChild(document.createTextNode(text));
+        return div.innerHTML;
+    }
+
+    window.generateCert = function(force) {
+        var btn = document.getElementById('cert-generate-btn');
+        var status = document.getElementById('cert-generate-status');
+        btn.disabled = true;
+        btn.textContent = 'Generating...';
+        btn.classList.add('opacity-50');
+        status.classList.remove('hidden');
+        status.innerHTML = '<span class="text-muted-foreground">Generating certificate...</span>';
+
+        var url = prefix + '/api/cert/generate';
+        if (force) url += '?force=true';
+
+        fetch(url, { method: 'POST' })
+            .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
+            .then(function(res) {
+                if (res.ok) {
+                    status.innerHTML = '<span class="text-[var(--color-green)]">Certificate generated. Restart greyproxy to use it for new connections.</span>';
+                    loadCertStatus();
+                } else {
+                    status.innerHTML = '<span class="text-red-600">' + escapeHtml(res.data.error) + '</span>';
+                }
+                btn.textContent = 'Generate Certificate';
+                btn.disabled = false;
+                btn.classList.remove('opacity-50');
+            })
+            .catch(function(err) {
+                status.innerHTML = '<span class="text-red-600">Error: ' + escapeHtml(err.message) + '</span>';
+                btn.textContent = 'Generate Certificate';
+                btn.disabled = false;
+                btn.classList.remove('opacity-50');
+            });
+    };
+
+    window.regenerateCert = function() {
+        if (!confirm('Regenerate the CA certificate? You will need to reinstall it in your system trust store and restart greyproxy.')) {
+            return;
+        }
+        var status = document.getElementById('cert-regen-status');
+        status.classList.remove('hidden');
+        status.innerHTML = '<span class="text-muted-foreground">Regenerating...</span>';
+
+        fetch(prefix + '/api/cert/generate?force=true', { method: 'POST' })
+            .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
+            .then(function(res) {
+                if (res.ok) {
+                    status.innerHTML = '<span class="text-[var(--color-green)]">Certificate regenerated. Reinstall it and restart greyproxy.</span>';
+                    loadCertStatus();
+                } else {
+                    status.innerHTML = '<span class="text-red-600">' + escapeHtml(res.data.error) + '</span>';
+                }
+            })
+            .catch(function(err) {
+                status.innerHTML = '<span class="text-red-600">Error: ' + escapeHtml(err.message) + '</span>';
+            });
+    };
+
+    window.copyInstallCmd = function() {
+        var cmd = document.getElementById('cert-install-cmd').textContent;
+        navigator.clipboard.writeText(cmd).then(function() {
+            // Brief visual feedback
+            var btn = document.querySelector('#cert-install-section button[onclick="copyInstallCmd()"]');
+            if (btn) {
+                btn.innerHTML = '<svg class="h-4 w-4 text-[var(--color-green)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>';
+                setTimeout(function() {
+                    btn.innerHTML = '<svg class="h-4 w-4 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184" /></svg>';
+                }, 1500);
+            }
+        });
+    };
+
+    window.toggleEnvHints = function() {
+        var content = document.getElementById('env-hints-content');
+        var icon = document.getElementById('env-hints-icon');
+        content.classList.toggle('hidden');
+        icon.style.transform = content.classList.contains('hidden') ? '' : 'rotate(90deg)';
+    };
+
+    loadCertStatus();
+
     // Load settings from server
     fetch(prefix + '/api/settings')
         .then(function(r) { return r.json(); })
@@ -282,6 +564,7 @@
             updateThemeButtons(data.theme);
             updateNotifToggle(data.notifications.enabled, data.notifications.available);
             updateNotifStatus(data.notifications);
+            updateMitmToggle(data.mitm.enabled);
         })
         .catch(function() {});
 

@@ -13,8 +13,9 @@ import (
 	"io"
 	"math"
 	"net"
-	"sync"
 	"net/http"
+	"sync"
+	"sync/atomic"
 	"net/http/httputil"
 	"strings"
 	"time"
@@ -124,6 +125,10 @@ var GlobalHTTPRoundTripHook func(info HTTPRoundTripInfo)
 // ErrRequestDenied is returned by the hold hook to indicate the request should be denied.
 var ErrRequestDenied = errors.New("request denied")
 
+// ErrNotHTTP is returned by HandleHTTP when the decrypted stream is not HTTP.
+// The caller should fall back to raw piping.
+var ErrNotHTTP = errors.New("not HTTP")
+
 // HTTPRequestHoldInfo contains request details for the hold hook to evaluate.
 type HTTPRequestHoldInfo struct {
 	Host          string
@@ -137,6 +142,27 @@ type HTTPRequestHoldInfo struct {
 // GlobalHTTPRequestHoldHook is called (if set) before forwarding a MITM-intercepted HTTP request upstream.
 // Return nil to allow, ErrRequestDenied to send 403, or block until approval.
 var GlobalHTTPRequestHoldHook func(ctx context.Context, info HTTPRequestHoldInfo) error
+
+// globalMitmEnabled controls whether MITM TLS interception is active. Default: enabled (1).
+var globalMitmEnabled atomic.Int32
+
+func init() {
+	globalMitmEnabled.Store(1) // enabled by default
+}
+
+// SetGlobalMitmEnabled enables or disables MITM TLS interception globally.
+func SetGlobalMitmEnabled(enabled bool) {
+	if enabled {
+		globalMitmEnabled.Store(1)
+	} else {
+		globalMitmEnabled.Store(0)
+	}
+}
+
+// IsMitmEnabled returns whether MITM TLS interception is globally enabled.
+func IsMitmEnabled() bool {
+	return globalMitmEnabled.Load() != 0
+}
 
 type Sniffer struct {
 	Websocket           bool
@@ -153,6 +179,9 @@ type Sniffer struct {
 	MitmBypass         bypass.Bypass
 
 	ReadTimeout time.Duration
+
+	// UpstreamRootCAs overrides the system root CAs when verifying upstream TLS certificates.
+	UpstreamRootCAs *x509.CertPool
 
 	// OnHTTPRoundTrip is called after each decrypted HTTP round-trip with request/response details.
 	OnHTTPRoundTrip func(info HTTPRoundTripInfo)
@@ -172,6 +201,14 @@ func (h *Sniffer) HandleHTTP(ctx context.Context, network string, conn net.Conn,
 	conn = stats_wrapper.WrapConn(conn, &pStats)
 
 	br := bufio.NewReader(conn)
+
+	// Peek at the first bytes to verify this is actually HTTP before attempting
+	// to parse. After MITM TLS termination without ALPN, the decrypted stream
+	// could be a non-HTTP protocol. In that case, fall back to raw piping.
+	if hdr, err := br.Peek(5); err == nil && !isHTTP(string(hdr)) {
+		return ErrNotHTTP
+	}
+
 	req, err := http.ReadRequest(br)
 	if err != nil {
 		return err
@@ -743,14 +780,18 @@ func (h *Sniffer) HandleTLS(ctx context.Context, network string, conn net.Conn, 
 	ro.SrcAddr = cc.LocalAddr().String()
 	ro.DstAddr = cc.RemoteAddr().String()
 
-	if h.Certificate != nil && h.PrivateKey != nil &&
-		len(clientHello.SupportedProtos) > 0 && (clientHello.SupportedProtos[0] == "h2" || clientHello.SupportedProtos[0] == "http/1.1") {
+	if !IsMitmEnabled() {
+		ro.MitmSkipReason = "mitm_disabled"
+	} else if h.Certificate != nil && h.PrivateKey != nil {
 		if host == "" {
 			host = ro.Host
 		}
 		if h.MitmBypass == nil || !h.MitmBypass.Contains(ctx, network, host, bypass.WithService(ho.service)) {
 			return h.terminateTLS(ctx, network, xnet.NewReadWriteConn(io.MultiReader(buf, conn), conn, conn), cc, clientHello, &ho)
 		}
+		ro.MitmSkipReason = "mitm_bypass"
+	} else {
+		ro.MitmSkipReason = "no_cert"
 	}
 
 	if _, err := buf.WriteTo(cc); err != nil {
@@ -810,6 +851,7 @@ func (h *Sniffer) terminateTLS(ctx context.Context, network string, conn, cc net
 		ServerName:   clientHello.ServerName,
 		NextProtos:   nextProtos,
 		CipherSuites: clientHello.CipherSuites,
+		RootCAs:      h.UpstreamRootCAs,
 	}
 	if cfg.ServerName == "" {
 		cfg.InsecureSkipVerify = true
@@ -904,7 +946,16 @@ func (h *Sniffer) terminateTLS(ctx context.Context, network string, conn, cc net
 		WithRecorderObject(ro),
 		WithLog(log),
 	}
-	return h.HandleHTTP(ctx, network, serverConn, opts...)
+	if err := h.HandleHTTP(ctx, network, serverConn, opts...); err != nil && errors.Is(err, ErrNotHTTP) {
+		// Decrypted stream is not HTTP (binary protocol over TLS).
+		// Fall back to piping the decrypted connections.
+		log.Debugf("MITM: decrypted stream is not HTTP, falling back to pipe")
+		ro.MitmSkipReason = "non_http_after_tls"
+		xnet.Pipe(ctx, serverConn, clientConn)
+		return nil
+	} else {
+		return err
+	}
 }
 
 // terminateTLSDeferred performs the client-side TLS handshake FIRST (without upstream),
@@ -923,9 +974,12 @@ func (h *Sniffer) terminateTLSDeferred(ctx context.Context, network string, conn
 		host = hostPart
 	}
 
-	// For deferred mode, negotiate http/1.1 with the client
+	// For deferred mode, prefer http/1.1 with the client but respect client ALPN if present.
 	// (HTTP/2 deferred connect is a future enhancement)
 	nextProtos := []string{"http/1.1"}
+	if len(clientHello.SupportedProtos) > 0 {
+		nextProtos = clientHello.SupportedProtos
+	}
 
 	ro.TLS.Proto = "http/1.1"
 
@@ -985,11 +1039,12 @@ func (h *Sniffer) terminateTLSDeferred(ctx context.Context, network string, conn
 
 	lazyDial := func(ctx context.Context, network, address string) (net.Conn, error) {
 		upstreamOnce.Do(func() {
-			// TLS handshake with upstream — force HTTP/1.1 to match our client-side negotiation
+			// TLS handshake with upstream — match what we negotiated with the client
 			upstreamCfg := &tls.Config{
 				ServerName:   clientHello.ServerName,
-				NextProtos:   []string{"http/1.1"},
+				NextProtos:   nextProtos,
 				CipherSuites: clientHello.CipherSuites,
+				RootCAs:      h.UpstreamRootCAs,
 			}
 			if upstreamCfg.ServerName == "" {
 				upstreamCfg.InsecureSkipVerify = true
@@ -1017,7 +1072,19 @@ func (h *Sniffer) terminateTLSDeferred(ctx context.Context, network string, conn
 		WithRecorderObject(ro),
 		WithLog(log),
 	}
-	return h.HandleHTTP(ctx, network, serverConn, opts...)
+	if err := h.HandleHTTP(ctx, network, serverConn, opts...); err != nil && errors.Is(err, ErrNotHTTP) {
+		// Decrypted stream is not HTTP. Establish upstream and pipe raw bytes.
+		log.Debugf("MITM: decrypted stream is not HTTP, falling back to pipe")
+		ro.MitmSkipReason = "non_http_after_tls"
+		upstream, dialErr := lazyDial(ctx, network, "")
+		if dialErr != nil {
+			return dialErr
+		}
+		xnet.Pipe(ctx, serverConn, upstream)
+		return nil
+	} else {
+		return err
+	}
 }
 
 type h2Handler struct {

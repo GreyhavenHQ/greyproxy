@@ -297,6 +297,7 @@ func (p *program) buildGreyproxyService() error {
 	shared.Bus = tmpSvc.Bus
 	shared.Waiters = tmpSvc.Waiters
 	shared.ConnTracker = greyproxy.NewConnTracker()
+	shared.DataHome = greyproxyDataHome()
 
 	// User settings (persisted to disk, merged with defaults from config).
 	settingsPath := filepath.Join(greyproxyDataHome(), "settings.json")
@@ -313,6 +314,12 @@ func (p *program) buildGreyproxyService() error {
 	// Wire settings changes back to the notifier.
 	shared.Settings.OnNotificationsChanged(func(enabled bool) {
 		shared.Notifier.SetEnabled(enabled)
+	})
+
+	// Wire MITM toggle: apply initial setting and listen for changes.
+	gostx.SetGlobalMitmEnabled(resolvedSettings.MitmEnabled)
+	shared.Settings.OnMitmChanged(func(enabled bool) {
+		gostx.SetGlobalMitmEnabled(enabled)
 	})
 
 	shared.Version = version
@@ -386,6 +393,27 @@ func (p *program) buildGreyproxyService() error {
 				Type: greyproxy.EventTransactionNew,
 				Data: txn.ToJSON(false),
 			})
+		}()
+	})
+
+	// Wire connection-finish hook to update log entries with MITM skip reason
+	gostx.SetGlobalConnectionFinishHook(func(info gostx.ConnectionFinishInfo) {
+		if info.MitmSkipReason == "" {
+			return
+		}
+		host, portStr, _ := net.SplitHostPort(info.Host)
+		if host == "" {
+			host = info.Host
+		}
+		port, _ := strconv.Atoi(portStr)
+		if port == 0 {
+			port = 443
+		}
+		containerName, _ := greyproxy_plugins.ResolveIdentity(info.ContainerName)
+		go func() {
+			if err := greyproxy.UpdateLatestLogMitmSkipReason(shared.DB, containerName, host, port, info.MitmSkipReason); err != nil {
+				log.Warnf("failed to update MITM skip reason: %v", err)
+			}
 		}()
 	})
 

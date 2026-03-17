@@ -637,8 +637,8 @@ func TestMigrations(t *testing.T) {
 	// Verify migration versions were recorded
 	var count int
 	db.ReadDB().QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&count)
-	if count != 6 {
-		t.Errorf("expected 6 migration versions, got %d", count)
+	if count != 7 {
+		t.Errorf("expected 7 migration versions, got %d", count)
 	}
 }
 
@@ -969,5 +969,189 @@ func TestHttpTransactionToJSON(t *testing.T) {
 	}
 	if j.ResponseBody == nil || *j.ResponseBody != `{"content":"hello"}` {
 		t.Errorf("ToJSON(true) response_body = %v, want the body content", j.ResponseBody)
+	}
+}
+
+func TestCreateLogEntryWithMitmSkipReason(t *testing.T) {
+	db := setupTestDB(t)
+
+	entry, err := CreateLogEntry(db, LogCreateInput{
+		ContainerName:   "myapp",
+		DestinationHost: "example.com",
+		DestinationPort: 443,
+		Method:          "SOCKS5",
+		Result:          "allowed",
+		MitmSkipReason:  "no_cert",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !entry.MitmSkipReason.Valid || entry.MitmSkipReason.String != "no_cert" {
+		t.Errorf("got mitm_skip_reason %v, want 'no_cert'", entry.MitmSkipReason)
+	}
+}
+
+func TestUpdateLatestLogMitmSkipReason(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Create a log entry without a skip reason
+	_, err := CreateLogEntry(db, LogCreateInput{
+		ContainerName:   "myapp",
+		DestinationHost: "10.0.0.1",
+		DestinationPort: 443,
+		Method:          "SOCKS5",
+		Result:          "allowed",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Update with skip reason
+	err = UpdateLatestLogMitmSkipReason(db, "myapp", "10.0.0.1", 443, "mitm_bypass")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify the update
+	logs, _, err := QueryLogs(db, LogFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(logs) != 1 {
+		t.Fatalf("expected 1 log, got %d", len(logs))
+	}
+	if !logs[0].MitmSkipReason.Valid || logs[0].MitmSkipReason.String != "mitm_bypass" {
+		t.Errorf("got mitm_skip_reason %v, want 'mitm_bypass'", logs[0].MitmSkipReason)
+	}
+}
+
+func TestUpdateLatestLogMitmSkipReasonMatchesLatest(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Create two log entries for the same destination
+	_, err := CreateLogEntry(db, LogCreateInput{
+		ContainerName:   "myapp",
+		DestinationHost: "10.0.0.1",
+		DestinationPort: 443,
+		Method:          "SOCKS5",
+		Result:          "allowed",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	time.Sleep(10 * time.Millisecond)
+
+	entry2, err := CreateLogEntry(db, LogCreateInput{
+		ContainerName:   "myapp",
+		DestinationHost: "10.0.0.1",
+		DestinationPort: 443,
+		Method:          "SOCKS5",
+		Result:          "allowed",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Update should only affect the latest entry
+	err = UpdateLatestLogMitmSkipReason(db, "myapp", "10.0.0.1", 443, "no_cert")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Query all logs and verify only the latest was updated
+	logs, _, err := QueryLogs(db, LogFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(logs) != 2 {
+		t.Fatalf("expected 2 logs, got %d", len(logs))
+	}
+
+	// Logs are returned newest first
+	if !logs[0].MitmSkipReason.Valid || logs[0].MitmSkipReason.String != "no_cert" {
+		t.Errorf("latest entry: got mitm_skip_reason %v, want 'no_cert'", logs[0].MitmSkipReason)
+	}
+	if logs[0].ID != entry2.ID {
+		t.Errorf("expected latest entry to be updated (ID %d), got ID %d", entry2.ID, logs[0].ID)
+	}
+	if logs[1].MitmSkipReason.Valid {
+		t.Errorf("older entry should have no skip reason, got %v", logs[1].MitmSkipReason)
+	}
+}
+
+func TestUpdateLatestLogMitmSkipReasonNoMatch(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Create a log entry for a different container
+	_, err := CreateLogEntry(db, LogCreateInput{
+		ContainerName:   "myapp",
+		DestinationHost: "10.0.0.1",
+		DestinationPort: 443,
+		Method:          "SOCKS5",
+		Result:          "allowed",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Try to update with a non-matching container -- should not error
+	err = UpdateLatestLogMitmSkipReason(db, "other-app", "10.0.0.1", 443, "no_cert")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The original entry should remain unchanged
+	logs, _, err := QueryLogs(db, LogFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if logs[0].MitmSkipReason.Valid {
+		t.Errorf("expected no skip reason, got %v", logs[0].MitmSkipReason)
+	}
+}
+
+func TestUpdateLatestLogMitmSkipReasonEmpty(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Empty reason should be a no-op
+	err := UpdateLatestLogMitmSkipReason(db, "myapp", "10.0.0.1", 443, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestUpdateLatestLogMitmSkipReasonMatchesResolvedHostname(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Log entry stores the raw IP as destination_host but has a resolved_hostname.
+	// The hook passes the SNI hostname (which matches resolved_hostname, not destination_host).
+	_, err := CreateLogEntry(db, LogCreateInput{
+		ContainerName:    "claude",
+		DestinationHost:  "104.16.0.34",
+		DestinationPort:  443,
+		ResolvedHostname: "registry.npmjs.org",
+		Method:           "SOCKS5",
+		Result:           "allowed",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Update by resolved hostname (simulates the hook passing SNI hostname)
+	err = UpdateLatestLogMitmSkipReason(db, "claude", "registry.npmjs.org", 443, "mitm_error")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	logs, _, err := QueryLogs(db, LogFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(logs) != 1 {
+		t.Fatalf("expected 1 log, got %d", len(logs))
+	}
+	if !logs[0].MitmSkipReason.Valid || logs[0].MitmSkipReason.String != "mitm_error" {
+		t.Errorf("got mitm_skip_reason %v, want 'mitm_error'", logs[0].MitmSkipReason)
 	}
 }

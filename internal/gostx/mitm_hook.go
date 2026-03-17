@@ -33,8 +33,33 @@ type MitmRequestHoldInfo struct {
 	ContainerName  string
 }
 
+// ConnectionFinishInfo contains connection metadata reported after a handler finishes.
+type ConnectionFinishInfo struct {
+	Host           string
+	MitmSkipReason string
+	ContainerName  string
+}
+
+// GlobalConnectionFinishHook is called (if set) after a handler finishes processing a CONNECT tunnel.
+var GlobalConnectionFinishHook func(info ConnectionFinishInfo)
+
+// SetGlobalConnectionFinishHook sets a callback that fires when a CONNECT tunnel handler finishes.
+func SetGlobalConnectionFinishHook(hook func(info ConnectionFinishInfo)) {
+	GlobalConnectionFinishHook = hook
+}
+
 // ErrRequestDenied is returned by the hold hook to deny a request.
 var ErrRequestDenied = sniffing.ErrRequestDenied
+
+// SetGlobalMitmEnabled enables or disables MITM TLS interception globally.
+func SetGlobalMitmEnabled(enabled bool) {
+	sniffing.SetGlobalMitmEnabled(enabled)
+}
+
+// IsMitmEnabled returns whether MITM TLS interception is globally enabled.
+func IsMitmEnabled() bool {
+	return sniffing.IsMitmEnabled()
+}
 
 // SetGlobalMitmHook sets a global callback that fires after every MITM-intercepted HTTP round-trip.
 func SetGlobalMitmHook(hook func(info MitmRoundTripInfo)) {

@@ -3,13 +3,13 @@
     <div class="flex justify-between items-center">
         <h1 class="text-2xl font-bold text-foreground">Activity</h1>
         <button id="activity-live-btn" onclick="toggleActivityLive()" type="button"
-            class="inline-flex items-center px-4 py-2 border text-sm font-medium rounded-md transition-colors">
-            <span id="activity-live-icon" class="mr-2">
-                <!-- filled circle = live -->
-                <svg class="h-3 w-3" viewBox="0 0 12 12" fill="currentColor"><circle cx="6" cy="6" r="6"/></svg>
+            class="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-md transition-colors">
+            <span id="activity-live-dot" class="relative flex h-2.5 w-2.5">
+                <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-500 opacity-75"></span>
+                <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span>
             </span>
             <span id="activity-live-text">Live</span>
-            <span id="activity-pending-badge" class="hidden ml-2 inline-flex items-center justify-center px-1.5 py-0.5 text-xs font-bold leading-none rounded-full min-w-[1.25rem]"></span>
+            <span id="activity-pending-badge" class="hidden ml-0.5 inline-flex items-center justify-center px-1.5 py-0.5 text-xs font-bold leading-none rounded-full min-w-[1.25rem]"></span>
         </button>
     </div>
 
@@ -93,16 +93,20 @@
         var btn = document.getElementById('activity-live-btn');
         var text = document.getElementById('activity-live-text');
         var badge = document.getElementById('activity-pending-badge');
+        var dot = document.getElementById('activity-live-dot');
         if (activityLive) {
-            btn.className = 'inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-primary-foreground bg-primary hover:bg-primary/90 transition-colors';
+            btn.className = 'inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-md text-foreground hover:bg-muted transition-colors';
             text.textContent = 'Live';
             badge.classList.add('hidden');
+            dot.innerHTML = '<span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-500 opacity-75"></span>'
+                          + '<span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span>';
         } else {
-            btn.className = 'inline-flex items-center px-4 py-2 border border-border text-sm font-medium rounded-md text-secondary-foreground bg-background hover:bg-muted transition-colors';
+            btn.className = 'inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-md text-muted-foreground hover:bg-muted transition-colors';
+            dot.innerHTML = '<span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-muted-foreground/50"></span>';
             if (activityPendingCount > 0) {
                 text.textContent = 'Paused';
                 badge.textContent = activityPendingCount;
-                badge.className = 'ml-2 inline-flex items-center justify-center px-1.5 py-0.5 text-xs font-bold leading-none text-primary-foreground bg-primary rounded-full min-w-[1.25rem]';
+                badge.className = 'ml-0.5 inline-flex items-center justify-center px-1.5 py-0.5 text-xs font-bold leading-none text-primary-foreground bg-primary rounded-full min-w-[1.25rem]';
             } else {
                 text.textContent = 'Paused';
                 badge.classList.add('hidden');
