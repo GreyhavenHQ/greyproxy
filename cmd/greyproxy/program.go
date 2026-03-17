@@ -18,6 +18,7 @@ import (
 	"syscall"
 
 	"github.com/andybalholm/brotli"
+	"github.com/klauspost/compress/zstd"
 	defaults "github.com/greyhavenhq/greyproxy"
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/logger"
 	svccore "github.com/greyhavenhq/greyproxy/internal/gostcore/service"
@@ -544,6 +545,17 @@ func decompressBody(body []byte, encoding string) []byte {
 		reader = flate.NewReader(bytes.NewReader(body))
 	case "br":
 		reader = io.NopCloser(brotli.NewReader(bytes.NewReader(body)))
+	case "zstd":
+		zr, zerr := zstd.NewReader(bytes.NewReader(body))
+		if zerr != nil {
+			return body
+		}
+		defer zr.Close()
+		decoded, derr := io.ReadAll(zr)
+		if derr != nil {
+			return body
+		}
+		return decoded
 	default:
 		return body
 	}
