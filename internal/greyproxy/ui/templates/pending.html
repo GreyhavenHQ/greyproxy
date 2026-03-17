@@ -51,7 +51,7 @@
             <div class="space-x-2">
                 <button hx-post="{{.Prefix}}/htmx/pending/bulk-allow" hx-include="[name='selected']:checked" hx-target="#pending-list" hx-swap="innerHTML"
                     class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-primary-foreground bg-primary hover:bg-primary/90">Allow Selected</button>
-                <button hx-delete="{{.Prefix}}/htmx/pending/bulk-dismiss" hx-include="[name='selected']:checked" hx-target="#pending-list" hx-swap="innerHTML"
+                <button hx-post="{{.Prefix}}/htmx/pending/bulk-dismiss" hx-include="[name='selected']:checked" hx-target="#pending-list" hx-swap="innerHTML"
                     class="inline-flex items-center px-4 py-2 border border-border text-sm font-medium rounded-md text-secondary-foreground bg-background hover:bg-muted">Dismiss Selected</button>
             </div>
         </div>

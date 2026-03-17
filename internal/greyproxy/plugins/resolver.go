@@ -40,14 +40,19 @@ func (r *Resolver) Resolve(ctx context.Context, network, host string, opts ...re
 		return nil, fmt.Errorf("resolve %s: no results", host)
 	}
 
-	// Cache all resolved IPs -> hostname
-	ipStrs := make([]string, len(ips))
-	for i, ip := range ips {
-		ipStrs[i] = ip.String()
+	// Cache all resolved IPs -> hostname, but only when host is an actual
+	// hostname (not an IP). When gost calls the resolver with a raw IP,
+	// LookupIP returns the IP itself; registering it would overwrite
+	// a correct hostname entry previously populated by the DNS handler.
+	if net.ParseIP(host) == nil {
+		ipStrs := make([]string, len(ips))
+		for i, ip := range ips {
+			ipStrs[i] = ip.String()
+		}
+		r.cache.RegisterIPs(host, ipStrs)
 	}
-	r.cache.RegisterIPs(host, ipStrs)
 
-	r.log.Debugf("resolved %s -> %v", host, ipStrs)
+	r.log.Debugf("resolved %s -> %v", host, ips)
 	return ips, nil
 }
 
