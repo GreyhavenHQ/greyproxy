@@ -36,6 +36,8 @@ import (
 )
 
 var sessionIDPattern = regexp.MustCompile(`session_([a-f0-9-]{36})`)
+var sessionIDJSONPattern = regexp.MustCompile(`"session_id"\s*:\s*"([a-f0-9-]{36})"`)
+
 
 // AnthropicDissector parses Anthropic Messages API transactions.
 type AnthropicDissector struct{}
@@ -70,7 +72,7 @@ func (d *AnthropicDissector) Extract(input ExtractionInput) (*ExtractionResult, 
 			Description string `json:"description"`
 		} `json:"tools"`
 		Metadata struct {
-			UserID string `json:"user_id"`
+			UserID json.RawMessage `json:"user_id"`
 		} `json:"metadata"`
 	}
 
@@ -85,10 +87,9 @@ func (d *AnthropicDissector) Extract(input ExtractionInput) (*ExtractionResult, 
 		return result, nil
 	}
 
-	// Session ID
-	if m := sessionIDPattern.FindStringSubmatch(body.Metadata.UserID); len(m) > 1 {
-		result.SessionID = m[1]
-	} else {
+	// Session ID - user_id can be a string or a JSON object with session_id field
+	result.SessionID = extractSessionIDFromUserID(body.Metadata.UserID)
+	if result.SessionID == "" {
 		result.SessionID = extractSessionIDFromRaw(string(input.RequestBody))
 	}
 
@@ -196,8 +197,39 @@ func parseContentBlock(bmap map[string]any) ContentBlock {
 	return cb
 }
 
+// extractSessionIDFromUserID handles both the legacy string format
+// ("user_HASH_account_UUID_session_UUID") and the new JSON object format
+// ({"session_id": "UUID", ...}).
+func extractSessionIDFromUserID(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+
+	// Try as string first (legacy format)
+	var s string
+	if json.Unmarshal(raw, &s) == nil && s != "" {
+		if m := sessionIDPattern.FindStringSubmatch(s); len(m) > 1 {
+			return m[1]
+		}
+	}
+
+	// Try as object with session_id field
+	var obj struct {
+		SessionID string `json:"session_id"`
+	}
+	if json.Unmarshal(raw, &obj) == nil && obj.SessionID != "" {
+		return obj.SessionID
+	}
+
+	return ""
+}
+
 func extractSessionIDFromRaw(body string) string {
 	if m := sessionIDPattern.FindStringSubmatch(body); len(m) > 1 {
+		return m[1]
+	}
+	// Also try "session_id":"UUID" pattern (new metadata format in raw JSON)
+	if m := sessionIDJSONPattern.FindStringSubmatch(body); len(m) > 1 {
 		return m[1]
 	}
 	return ""

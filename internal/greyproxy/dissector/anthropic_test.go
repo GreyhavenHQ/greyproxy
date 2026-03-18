@@ -167,6 +167,44 @@ func TestAnthropicExtractSystemPrompt(t *testing.T) {
 	}
 }
 
+func TestExtractSessionIDFromUserID(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{
+			"legacy string format",
+			`"user_abc123_account_5a3241c6-4cbe-47e2-a7d3-981f6bf69be8_session_9d4a2584-4176-4653-be44-7d5f270feb21"`,
+			"9d4a2584-4176-4653-be44-7d5f270feb21",
+		},
+		{
+			"json object format",
+			`{"device_id":"d8c2852a","account_uuid":"5a3241c6-4cbe-47e2-a7d3-981f6bf69be8","session_id":"9d4a2584-4176-4653-be44-7d5f270feb21"}`,
+			"9d4a2584-4176-4653-be44-7d5f270feb21",
+		},
+		{
+			"empty",
+			`""`,
+			"",
+		},
+		{
+			"null",
+			`null`,
+			"",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractSessionIDFromUserID(json.RawMessage(tt.raw))
+			if got != tt.want {
+				t.Errorf("extractSessionIDFromUserID(%s) = %q, want %q", tt.raw, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestFindDissector(t *testing.T) {
 	d := FindDissector("https://api.anthropic.com/v1/messages?beta=true", "POST", "api.anthropic.com")
 	if d == nil {
