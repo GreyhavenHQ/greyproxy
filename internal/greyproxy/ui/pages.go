@@ -208,6 +208,36 @@ var funcMap = template.FuncMap{
 		}
 		return false
 	},
+	// toolIconCategory normalizes tool names across providers (Anthropic PascalCase,
+	// OpenAI lowercase) and returns a category string for icon rendering.
+	"toolIconCategory": func(tool string) string {
+		switch strings.ToLower(tool) {
+		case "read":
+			return "read"
+		case "edit", "apply_patch":
+			return "edit"
+		case "write", "notebookedit":
+			return "write"
+		case "bash":
+			return "bash"
+		case "grep", "glob":
+			return "search"
+		case "agent", "task":
+			return "agent"
+		case "webfetch", "websearch":
+			return "web"
+		case "skill":
+			return "skill"
+		case "toolsearch":
+			return "toolsearch"
+		case "askuserquestion", "question":
+			return "question"
+		case "todowrite", "todoread":
+			return "todo"
+		default:
+			return "generic"
+		}
+	},
 	"hasStepField": func(step any, field string) bool {
 		if m, ok := step.(map[string]any); ok {
 			v, exists := m[field]
