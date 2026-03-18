@@ -23,9 +23,10 @@ func handleCert(args []string) {
 Commands:
   generate    Generate CA certificate and key pair
   install     Trust the CA certificate on the OS
+  uninstall   Remove the CA certificate from the OS trust store
 
 Options:
-  -f          Force overwrite existing files (generate only)
+  -f          Force overwrite existing files (generate, install)
 `)
 		os.Exit(1)
 	}
@@ -35,7 +36,10 @@ Options:
 		force := len(args) > 1 && args[1] == "-f"
 		handleCertGenerate(force)
 	case "install":
-		handleCertInstall()
+		force := len(args) > 1 && args[1] == "-f"
+		handleCertInstall(force)
+	case "uninstall":
+		handleCertUninstall()
 	default:
 		fmt.Fprintf(os.Stderr, "unknown cert command: %s\n", args[0])
 		os.Exit(1)
@@ -146,11 +150,42 @@ func linuxCertInstallInfo() (destPath, updateCmd string) {
 	return "/usr/local/share/ca-certificates/greyproxy-ca.crt", "update-ca-certificates"
 }
 
-func handleCertInstall() {
+func isCertInstalled() bool {
+	switch runtime.GOOS {
+	case "darwin":
+		err := exec.Command("security", "find-certificate", "-c", "Greyproxy CA").Run()
+		return err == nil
+	case "linux":
+		destPath, _ := linuxCertInstallInfo()
+		_, err := os.Stat(destPath)
+		return err == nil
+	default:
+		return false
+	}
+}
+
+func certInstallLocation() string {
+	switch runtime.GOOS {
+	case "darwin":
+		return "/Library/Keychains/System.keychain"
+	case "linux":
+		destPath, _ := linuxCertInstallInfo()
+		return destPath
+	default:
+		return "(unknown)"
+	}
+}
+
+func handleCertInstall(force bool) {
 	certFile := filepath.Join(greyproxyDataHome(), "ca-cert.pem")
 
 	if _, err := os.Stat(certFile); os.IsNotExist(err) {
 		fmt.Fprintf(os.Stderr, "CA certificate not found: %s\nRun 'greyproxy cert generate' first.\n", certFile)
+		os.Exit(1)
+	}
+
+	if !force && isCertInstalled() {
+		fmt.Fprintf(os.Stderr, "CA certificate is already installed at %s\nUse -f to overwrite.\n", certInstallLocation())
 		os.Exit(1)
 	}
 
@@ -173,7 +208,7 @@ func handleCertInstall() {
 			fmt.Fprintf(os.Stderr, "  sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain \"%s\"\n\n", certFile)
 			os.Exit(1)
 		}
-		fmt.Println("CA certificate installed and trusted.")
+		fmt.Printf("CA certificate installed and trusted in %s\n", certInstallLocation())
 
 	case "linux":
 		destPath, updateCmd := linuxCertInstallInfo()
@@ -197,10 +232,61 @@ func handleCertInstall() {
 			fmt.Fprintf(os.Stderr, "  sudo %s\n\n", updateCmd)
 			os.Exit(1)
 		}
-		fmt.Println("CA certificate installed and trusted.")
+		fmt.Printf("CA certificate installed and trusted at %s\n", destPath)
 
 	default:
 		fmt.Printf("CA certificate is at: %s\n", certFile)
 		fmt.Printf("Please install it manually in your OS trust store.\n")
+	}
+}
+
+func handleCertUninstall() {
+	switch runtime.GOOS {
+	case "darwin":
+		if !isCertInstalled() {
+			fmt.Println("CA certificate is not installed in the system trust store.")
+			return
+		}
+		fmt.Println("Removing CA certificate from system trust store...")
+		cmd := exec.Command("security", "delete-certificate", "-c", "Greyproxy CA")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "\nAutomatic removal failed. Please run manually:\n\n")
+			fmt.Fprintf(os.Stderr, "  security delete-certificate -c \"Greyproxy CA\"\n\n")
+			os.Exit(1)
+		}
+		fmt.Println("CA certificate removed from system trust store.")
+
+	case "linux":
+		destPath, updateCmd := linuxCertInstallInfo()
+		if _, err := os.Stat(destPath); os.IsNotExist(err) {
+			fmt.Println("CA certificate is not installed in the system trust store.")
+			return
+		}
+		fmt.Println("Removing CA certificate from system trust store (requires sudo)...")
+		rmCmd := exec.Command("sudo", "rm", destPath)
+		rmCmd.Stdout = os.Stdout
+		rmCmd.Stderr = os.Stderr
+		rmCmd.Stdin = os.Stdin
+		if err := rmCmd.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "\nAutomatic removal failed. Please run manually:\n\n")
+			fmt.Fprintf(os.Stderr, "  sudo rm %s\n", destPath)
+			fmt.Fprintf(os.Stderr, "  sudo %s\n\n", updateCmd)
+			os.Exit(1)
+		}
+		updCmd := exec.Command("sudo", updateCmd)
+		updCmd.Stdout = os.Stdout
+		updCmd.Stderr = os.Stderr
+		updCmd.Stdin = os.Stdin
+		if err := updCmd.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "\nCertificate removed but trust update failed. Please run manually:\n\n")
+			fmt.Fprintf(os.Stderr, "  sudo %s\n\n", updateCmd)
+			os.Exit(1)
+		}
+		fmt.Printf("CA certificate removed from %s\n", destPath)
+
+	default:
+		fmt.Println("Please remove the Greyproxy CA certificate manually from your OS trust store.")
 	}
 }

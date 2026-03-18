@@ -162,7 +162,7 @@ Usage: greyproxy <command>
 
 Commands:
   serve       Run the proxy server in foreground
-  cert        Manage MITM CA certificate (generate/install)
+  cert        Manage MITM CA certificate (generate/install/uninstall)
   install     Install binary and register as a background service [-f]
   uninstall   Stop service, remove registration and binary [-f]
   service     Manage the OS service (start/stop/restart/status/...)
