@@ -182,6 +182,8 @@ func (a *ConversationAssembler) processNewTransactionsLocked() {
 	linkSubagentConversations(allConversations)
 
 	// Upsert into database
+	upserted := 0
+	upsertLastLog := time.Now()
 	for _, conv := range allConversations {
 		if err := a.upsertConversation(conv); err != nil {
 			slog.Warn("assembler: failed to upsert conversation", "id", conv.conversationID, "error", err)
@@ -191,6 +193,11 @@ func (a *ConversationAssembler) processNewTransactionsLocked() {
 			Type: EventConversationUpdated,
 			Data: map[string]any{"conversation_id": conv.conversationID},
 		})
+		upserted++
+		if now := time.Now(); now.Sub(upsertLastLog) >= 10*time.Second {
+			slog.Info("assembler: upserting conversations", "progress", fmt.Sprintf("%d/%d", upserted, len(allConversations)))
+			upsertLastLog = now
+		}
 	}
 
 	SetConversationProcessingState(a.db, "last_processed_id", strconv.FormatInt(maxID, 10))
@@ -247,6 +254,10 @@ type assembledTurn struct {
 // --- Transaction loading ---
 
 func (a *ConversationAssembler) loadNewTransactions(sinceID int64) ([]transactionEntry, int64, error) {
+	var totalRows int
+	_ = a.db.ReadDB().QueryRow(`SELECT COUNT(*) FROM http_transactions WHERE id > ?`, sinceID).Scan(&totalRows)
+	slog.Info("assembler: starting scan", "transactions_to_scan", totalRows)
+
 	rows, err := a.db.ReadDB().Query(`
 		SELECT id, timestamp, container_name, url, method, destination_host,
 		       request_body, response_body, response_content_type, duration_ms
@@ -260,6 +271,9 @@ func (a *ConversationAssembler) loadNewTransactions(sinceID int64) ([]transactio
 
 	var entries []transactionEntry
 	maxID := sinceID
+	scanned := 0
+	matched := 0
+	lastLog := time.Now()
 
 	for rows.Next() {
 		var (
@@ -274,8 +288,13 @@ func (a *ConversationAssembler) loadNewTransactions(sinceID int64) ([]transactio
 			slog.Warn("assembler: failed to scan transaction row", "error", err)
 			continue
 		}
+		scanned++
 		if id > maxID {
 			maxID = id
+		}
+		if now := time.Now(); now.Sub(lastLog) >= 10*time.Second {
+			slog.Info("assembler: scanning transactions", "scanned", scanned, "matched", matched, "current_id", id)
+			lastLog = now
 		}
 
 		d := dissector.FindDissector(url, method, host)
@@ -306,6 +325,7 @@ func (a *ConversationAssembler) loadNewTransactions(sinceID int64) ([]transactio
 			}
 		}
 
+		matched++
 		entries = append(entries, transactionEntry{
 			txnID:         id,
 			timestamp:     ts,
@@ -319,11 +339,19 @@ func (a *ConversationAssembler) loadNewTransactions(sinceID int64) ([]transactio
 			durationMs:    durationMs,
 		})
 	}
+	if scanned > 0 {
+		slog.Info("assembler: scan complete", "scanned", scanned, "matched", matched)
+	}
 	return entries, maxID, nil
 }
 
 func (a *ConversationAssembler) loadTransactionsForSessions(sessionIDs map[string]bool) ([]transactionEntry, error) {
-	// Build LIKE clauses for session ID filtering
+	// Build LIKE clauses for session ID filtering.
+	// The LIKE query is a pre-filter to avoid scanning all transactions.
+	// The actual filtering happens post-extraction: we only keep entries
+	// whose dissector-extracted SessionID is in our target set. This prevents
+	// cross-contamination when one provider's transactions mention another
+	// provider's session IDs (e.g. in tool results or status reports).
 	var likeClauses []string
 	var args []any
 	for sid := range sessionIDs {
@@ -338,7 +366,8 @@ func (a *ConversationAssembler) loadTransactionsForSessions(sessionIDs map[strin
 		SELECT id, timestamp, container_name, url, method, destination_host,
 		       request_body, response_body, response_content_type, duration_ms
 		FROM http_transactions
-		WHERE url LIKE '%%api.anthropic.com/v1/messages%%'
+		WHERE (url LIKE '%%api.anthropic.com/v1/messages%%'
+		    OR url LIKE '%%api.openai.com/v1/responses%%')
 		  AND (%s)
 		ORDER BY id`, strings.Join(likeClauses, " OR "))
 
@@ -380,6 +409,14 @@ func (a *ConversationAssembler) loadTransactionsForSessions(sessionIDs map[strin
 			DurationMs:    durationMs,
 		})
 		if err != nil || result == nil {
+			continue
+		}
+
+		// Only keep entries whose extracted session ID is in our target set.
+		// The LIKE query is just a pre-filter; a transaction might match
+		// because it *mentions* a session ID (e.g. in a tool result) rather
+		// than *belonging* to that session.
+		if result.SessionID == "" || !sessionIDs[result.SessionID] {
 			continue
 		}
 
@@ -536,7 +573,105 @@ func groupBySession(txns []transactionEntry) map[string][]transactionEntry {
 			}
 		}
 	}
+
+	// For OpenAI: remap orphan subagent sessions under their parent main session.
+	// OpenCode spawns subagents with separate session IDs (prompt_cache_key).
+	// The link is in the main session's "task" tool output: "task_id: ses_XXX".
+	remapOpenAISubagents(sessions)
+
 	return sessions
+}
+
+// remapOpenAISubagents finds OpenAI main sessions that reference subagent
+// session IDs via the "task" tool, and remaps those subagent sessions to be
+// children of the main session (using the sid/subagent_N convention).
+func remapOpenAISubagents(sessions map[string][]transactionEntry) {
+	// Find main OpenAI sessions and extract task_id references
+	type mainInfo struct {
+		sid      string
+		taskSIDs []string // subagent session IDs referenced by task tool
+	}
+	var mains []mainInfo
+
+	for sid, entries := range sessions {
+		if strings.Contains(sid, "/") {
+			continue // already a subagent key
+		}
+		// Check if this is an OpenAI main session
+		isOpenAI := false
+		for _, e := range entries {
+			if e.result != nil && e.result.Provider == "openai" {
+				isOpenAI = true
+				break
+			}
+		}
+		if !isOpenAI {
+			continue
+		}
+
+		// Scan for task_id references in function_call_output items
+		var taskSIDs []string
+		for _, e := range entries {
+			if e.result == nil {
+				continue
+			}
+			for _, msg := range e.result.Messages {
+				for _, cb := range msg.Content {
+					if cb.Type == "tool_result" && cb.Content != "" {
+						if tid := extractTaskID(cb.Content); tid != "" {
+							taskSIDs = append(taskSIDs, tid)
+						}
+					}
+				}
+			}
+			// Also check SSE response for task tool results
+			if e.result.SSEResponse != nil {
+				for _, tc := range e.result.SSEResponse.ToolCalls {
+					if tc.ResultPreview != "" {
+						if tid := extractTaskID(tc.ResultPreview); tid != "" {
+							taskSIDs = append(taskSIDs, tid)
+						}
+					}
+				}
+			}
+		}
+		if len(taskSIDs) > 0 {
+			mains = append(mains, mainInfo{sid: sid, taskSIDs: taskSIDs})
+		}
+	}
+
+	// Remap subagent sessions under their parent
+	for _, m := range mains {
+		subIdx := 0
+		for _, taskSID := range m.taskSIDs {
+			// Look for sessions keyed by this task session ID (or containing it)
+			for existingKey := range sessions {
+				// Match: the session key starts with the task session ID
+				baseSID := existingKey
+				if i := strings.Index(existingKey, "/"); i >= 0 {
+					baseSID = existingKey[:i]
+				}
+				if baseSID != taskSID {
+					continue
+				}
+				subIdx++
+				newKey := fmt.Sprintf("%s/subagent_%d", m.sid, subIdx)
+				sessions[newKey] = sessions[existingKey]
+				delete(sessions, existingKey)
+			}
+		}
+	}
+}
+
+var taskIDPattern = regexp.MustCompile(`task_id:\s*(ses_[A-Za-z0-9_]+)`)
+
+// extractTaskID finds a "task_id: ses_XXX" pattern in text.
+func extractTaskID(text string) string {
+	m := taskIDPattern.FindStringSubmatch(text)
+	if len(m) >= 2 {
+		return m[1]
+	}
+	return ""
 }
 
 func splitSessionIntoThreads(entries []transactionEntry) map[string][]transactionEntry {
@@ -546,7 +681,7 @@ func splitSessionIntoThreads(entries []transactionEntry) map[string][]transactio
 			threads["main"] = append(threads["main"], entry)
 			continue
 		}
-		threadType := dissector.ClassifyThread(entry.result.SystemBlocks, len(entry.result.Tools))
+		threadType := dissector.ClassifyThread(entry.result.Provider, entry.result.SystemBlocks, entry.result.Tools)
 		switch threadType {
 		case "main":
 			threads["main"] = append(threads["main"], entry)
@@ -805,6 +940,19 @@ func buildRoundsFromMessages(messages []dissector.Message) []assembledTurn {
 	return rounds
 }
 
+// detectProvider infers the LLM provider from the transaction URLs.
+func detectProvider(entries []transactionEntry) string {
+	for _, e := range entries {
+		if strings.Contains(e.url, "api.openai.com") {
+			return "openai"
+		}
+		if strings.Contains(e.url, "api.anthropic.com") {
+			return "anthropic"
+		}
+	}
+	return "unknown"
+}
+
 func assembleConversation(sessionID string, entries []transactionEntry) assembledConversation {
 	sort.Slice(entries, func(i, j int) bool {
 		if entries[i].timestamp == entries[j].timestamp {
@@ -813,9 +961,11 @@ func assembleConversation(sessionID string, entries []transactionEntry) assemble
 		return entries[i].timestamp < entries[j].timestamp
 	})
 
+	provider := detectProvider(entries)
+
 	conv := assembledConversation{
 		conversationID: "session_" + sessionID,
-		provider:       "anthropic",
+		provider:       provider,
 		containerName:  entries[0].containerName,
 		startedAt:      entries[0].timestamp,
 		endedAt:        entries[len(entries)-1].timestamp,
@@ -1100,7 +1250,7 @@ func linkSubagentConversations(allConvs []assembledConversation) {
 				tcs, _ := step["tool_calls"].([]map[string]any)
 				for _, tc := range tcs {
 					toolName, _ := tc["tool"].(string)
-					if toolName == "Agent" && subIdx < len(subs) {
+					if (toolName == "Agent" || toolName == "task") && subIdx < len(subs) {
 						tc["linked_conversation_id"] = subs[subIdx].conversationID
 						subIdx++
 					}

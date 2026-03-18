@@ -161,7 +161,7 @@ func TestAnthropicExtractSystemPrompt(t *testing.T) {
 		t.Errorf("expected system prompt >10K chars (main conversation), got %d", sysLen)
 	}
 
-	threadType := ClassifyThread(result.SystemBlocks, len(result.Tools))
+	threadType := ClassifyThread("anthropic", result.SystemBlocks, result.Tools)
 	if threadType != "main" {
 		t.Errorf("expected thread type 'main', got %q", threadType)
 	}

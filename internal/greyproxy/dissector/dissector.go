@@ -33,6 +33,7 @@ type ExtractionInput struct {
 
 // ExtractionResult contains structured data extracted from an HTTP transaction.
 type ExtractionResult struct {
+	Provider     string // dissector name that produced this result (e.g. "anthropic", "openai")
 	SessionID    string
 	Model        string
 	Messages     []Message
@@ -115,4 +116,5 @@ func FindDissector(url, method, host string) Dissector {
 
 func init() {
 	Register(&AnthropicDissector{})
+	Register(&OpenAIDissector{})
 }

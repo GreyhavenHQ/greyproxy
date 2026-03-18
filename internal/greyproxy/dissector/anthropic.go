@@ -58,7 +58,7 @@ func (d *AnthropicDissector) CanHandle(url, method, host string) bool {
 }
 
 func (d *AnthropicDissector) Extract(input ExtractionInput) (*ExtractionResult, error) {
-	result := &ExtractionResult{}
+	result := &ExtractionResult{Provider: d.Name()}
 
 	// Parse request body
 	var body struct {
@@ -268,17 +268,51 @@ func SystemPromptLength(blocks []SystemBlock) int {
 }
 
 // ClassifyThread determines if a request represents a main conversation,
-// subagent, MCP utility, or plain utility based on system prompt size and tool count.
-func ClassifyThread(systemBlocks []SystemBlock, toolCount int) string {
+// subagent, MCP utility, or plain utility based on provider, system prompt
+// size, and tool list.
+func ClassifyThread(provider string, systemBlocks []SystemBlock, tools []Tool) string {
 	sysLen := SystemPromptLength(systemBlocks)
-	if sysLen > 10000 {
-		return "main"
+	toolCount := len(tools)
+
+	switch provider {
+	case "openai":
+		return classifyOpenAIThread(sysLen, tools)
+	default:
+		// Anthropic / generic heuristic
+		if sysLen > 10000 {
+			return "main"
+		}
+		if sysLen > 1000 {
+			return "subagent"
+		}
+		if sysLen > 100 && toolCount <= 2 {
+			return "mcp"
+		}
+		return "utility"
 	}
-	if sysLen > 1000 {
+}
+
+// classifyOpenAIThread uses OpenCode-specific heuristics.
+// OpenCode main conversations and subagents share the same system prompt length
+// (~7700 chars), so we distinguish by tool list: the main conversation has
+// management tools (task, question, todowrite) that subagents lack.
+func classifyOpenAIThread(sysLen int, tools []Tool) string {
+	toolCount := len(tools)
+
+	if toolCount == 0 {
+		return "utility"
+	}
+
+	// Check for management tools that only the main conversation has
+	for _, t := range tools {
+		switch t.Name {
+		case "task", "question", "todowrite":
+			return "main"
+		}
+	}
+
+	if toolCount > 0 {
 		return "subagent"
-	}
-	if sysLen > 100 && toolCount <= 2 {
-		return "mcp"
 	}
 	return "utility"
 }
