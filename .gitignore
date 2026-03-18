@@ -50,3 +50,6 @@ dist/
 /conversation.db
 /greyproxy
 exported_logs/
+/buildrun.sh
+/greyproxy.log
+/greyproxy.reload
