@@ -689,6 +689,9 @@ func getAssistantSummary(msg dissector.Message) map[string]any {
 				"tool":          b.Name,
 				"input_preview": b.Input,
 			}
+			if b.ToolSummary != "" {
+				tc["tool_summary"] = b.ToolSummary
+			}
 			if b.ID != "" {
 				tc["tool_use_id"] = b.ID
 			}
@@ -944,10 +947,14 @@ func assembleConversation(sessionID string, entries []transactionEntry) assemble
 			if len(sse.ToolCalls) > 0 {
 				var tcs []map[string]any
 				for _, tc := range sse.ToolCalls {
-					tcs = append(tcs, map[string]any{
+					m := map[string]any{
 						"tool":          tc.Tool,
 						"input_preview": tc.InputPreview,
-					})
+					}
+					if tc.ToolSummary != "" {
+						m["tool_summary"] = tc.ToolSummary
+					}
+					tcs = append(tcs, m)
 				}
 				step["tool_calls"] = tcs
 			}

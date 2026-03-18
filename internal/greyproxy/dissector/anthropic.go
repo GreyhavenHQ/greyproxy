@@ -29,6 +29,8 @@ package dissector
 
 import (
 	"encoding/json"
+	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -150,6 +152,10 @@ func parseContentBlock(bmap map[string]any) ContentBlock {
 		cb.Name, _ = bmap["name"].(string)
 		cb.ID, _ = bmap["id"].(string)
 		if input, ok := bmap["input"]; ok {
+			// Extract summary from full input before truncation
+			if inputMap, ok := input.(map[string]any); ok {
+				cb.ToolSummary = extractToolSummary(cb.Name, inputMap)
+			}
 			if b, err := json.Marshal(input); err == nil {
 				s := string(b)
 				if len(s) > 300 {
@@ -229,4 +235,81 @@ func ClassifyThread(systemBlocks []SystemBlock, toolCount int) string {
 		return "mcp"
 	}
 	return "utility"
+}
+
+// extractToolSummary produces a short human-readable summary from the full
+// tool input map, before any truncation. This ensures the summary is always
+// valid even when input_preview gets cut mid-JSON.
+func extractToolSummary(toolName string, input map[string]any) string {
+	str := func(key string) string {
+		if v, ok := input[key].(string); ok {
+			return v
+		}
+		return ""
+	}
+	switch toolName {
+	case "Read", "Edit", "Write":
+		if fp := str("file_path"); fp != "" {
+			dir := filepath.Base(filepath.Dir(fp))
+			base := filepath.Base(fp)
+			if dir != "." && dir != "/" {
+				return dir + "/" + base
+			}
+			return base
+		}
+	case "Bash":
+		if desc := str("description"); desc != "" {
+			return desc
+		}
+		if cmd := str("command"); cmd != "" {
+			if len(cmd) > 80 {
+				return cmd[:80] + "..."
+			}
+			return cmd
+		}
+	case "Grep":
+		summary := ""
+		if pat := str("pattern"); pat != "" {
+			summary = "pattern: " + pat
+			if p := str("path"); p != "" {
+				summary += " in " + filepath.Base(p)
+			}
+			return summary
+		}
+	case "Glob":
+		if pat := str("pattern"); pat != "" {
+			return pat
+		}
+	case "Agent":
+		if desc := str("description"); desc != "" {
+			return desc
+		}
+	case "ToolSearch":
+		if q := str("query"); q != "" {
+			return q
+		}
+	case "WebFetch":
+		if u := str("url"); u != "" {
+			return u
+		}
+	case "WebSearch":
+		if q := str("query"); q != "" {
+			return q
+		}
+	}
+	// Fallback: list top-level keys with short values
+	var parts []string
+	for k, v := range input {
+		if s, ok := v.(string); ok && len(s) <= 40 {
+			parts = append(parts, fmt.Sprintf("%s=%s", k, s))
+		}
+	}
+	if len(parts) > 0 {
+		s := strings.Join(parts, " ")
+		if len(s) > 80 {
+			return s[:80] + "..."
+		}
+		return s
+	}
+	return ""
 }

@@ -57,6 +57,7 @@ type ContentBlock struct {
 	Name         string `json:"name,omitempty"`         // tool_use: tool name
 	ID           string `json:"id,omitempty"`            // tool_use: tool_use_id
 	Input        string `json:"input,omitempty"`         // tool_use: JSON input (stringified)
+	ToolSummary  string `json:"tool_summary,omitempty"`  // tool_use: short human-readable summary
 	ToolUseID    string `json:"tool_use_id,omitempty"`   // tool_result
 	Content      string `json:"content,omitempty"`       // tool_result content preview
 	IsError      bool   `json:"is_error,omitempty"`      // tool_result
@@ -86,6 +87,7 @@ type SSEResponseData struct {
 type ToolCall struct {
 	Tool                 string `json:"tool"`
 	InputPreview         string `json:"input_preview,omitempty"`
+	ToolSummary          string `json:"tool_summary,omitempty"`
 	ToolUseID            string `json:"tool_use_id,omitempty"`
 	ResultPreview        string `json:"result_preview,omitempty"`
 	IsError              bool   `json:"is_error,omitempty"`

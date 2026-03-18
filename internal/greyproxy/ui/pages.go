@@ -2,10 +2,12 @@ package ui
 
 import (
 	"embed"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"math"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -246,6 +248,151 @@ var funcMap = template.FuncMap{
 			}
 		}
 		return fmt.Sprintf("%p", step)
+	},
+	// toolSummary returns a compact one-line summary for a tool call.
+	// It parses the input_preview JSON and extracts the most relevant field.
+	"toolSummary": func(tc map[string]any) string {
+		// Prefer pre-computed summary (available for new data)
+		if summary, ok := tc["tool_summary"].(string); ok && summary != "" {
+			return summary
+		}
+		// Fallback: parse input_preview JSON (may fail on truncated data)
+		toolName, _ := tc["tool"].(string)
+		inputRaw, _ := tc["input_preview"].(string)
+		if inputRaw == "" {
+			return ""
+		}
+		var input map[string]any
+		if err := json.Unmarshal([]byte(inputRaw), &input); err != nil {
+			// Not valid JSON, return truncated raw
+			if len(inputRaw) > 80 {
+				return inputRaw[:80] + "..."
+			}
+			return inputRaw
+		}
+		switch toolName {
+		case "Read", "Edit", "Write":
+			if fp, ok := input["file_path"].(string); ok {
+				short := filepath.Base(fp)
+				dir := filepath.Dir(fp)
+				// Show last 2 path components for context
+				parent := filepath.Base(dir)
+				if parent != "." && parent != "/" {
+					short = parent + "/" + short
+				}
+				return short
+			}
+		case "Bash":
+			if desc, ok := input["description"].(string); ok && desc != "" {
+				return desc
+			}
+			if cmd, ok := input["command"].(string); ok {
+				if len(cmd) > 80 {
+					return cmd[:80] + "..."
+				}
+				return cmd
+			}
+		case "Grep":
+			if pat, ok := input["pattern"].(string); ok {
+				summary := "pattern: " + pat
+				if p, ok := input["path"].(string); ok {
+					summary += " in " + filepath.Base(p)
+				}
+				return summary
+			}
+		case "Glob":
+			if pat, ok := input["pattern"].(string); ok {
+				return pat
+			}
+		case "Agent":
+			if desc, ok := input["description"].(string); ok && desc != "" {
+				return desc
+			}
+		case "ToolSearch":
+			if q, ok := input["query"].(string); ok {
+				return q
+			}
+		case "WebFetch", "WebSearch":
+			if u, ok := input["url"].(string); ok {
+				return u
+			}
+			if q, ok := input["query"].(string); ok {
+				return q
+			}
+		}
+		// Fallback: show truncated JSON
+		if len(inputRaw) > 80 {
+			return inputRaw[:80] + "..."
+		}
+		return inputRaw
+	},
+	// toolIcon returns an SVG icon name hint for a tool (used as CSS class).
+	"toolIcon": func(toolName string) string {
+		switch toolName {
+		case "Read":
+			return "tool-icon-read"
+		case "Edit":
+			return "tool-icon-edit"
+		case "Write":
+			return "tool-icon-write"
+		case "Bash":
+			return "tool-icon-bash"
+		case "Grep", "Glob":
+			return "tool-icon-search"
+		case "Agent":
+			return "tool-icon-agent"
+		default:
+			return "tool-icon-default"
+		}
+	},
+	// toolResultSummary returns a short result summary for collapsed view.
+	"toolResultSummary": func(tc map[string]any) string {
+		result, _ := tc["result_preview"].(string)
+		if result == "" {
+			return ""
+		}
+		// Clean tool output (strip line number prefixes)
+		lines := strings.Split(result, "\n")
+		for i, line := range lines {
+			for j := 0; j < len(line); j++ {
+				if line[j] == '\xe2' && j+2 < len(line) && line[j+1] == '\x86' && line[j+2] == '\x92' {
+					lines[i] = line[j+3:]
+					break
+				}
+				if line[j] != ' ' && (line[j] < '0' || line[j] > '9') {
+					break
+				}
+			}
+		}
+		cleaned := strings.Join(lines, "\n")
+		isError, _ := tc["is_error"].(bool)
+		if isError {
+			first := strings.SplitN(cleaned, "\n", 2)[0]
+			if len(first) > 60 {
+				first = first[:60] + "..."
+			}
+			return "Error: " + first
+		}
+		first := strings.SplitN(cleaned, "\n", 2)[0]
+		if len(first) > 60 {
+			first = first[:60] + "..."
+		}
+		return first
+	},
+	// truncateLines returns the first N lines of a string.
+	"truncateLines": func(s string, n int) string {
+		lines := strings.SplitN(s, "\n", n+1)
+		if len(lines) <= n {
+			return s
+		}
+		return strings.Join(lines[:n], "\n") + "\n..."
+	},
+	// countToolResultLines counts the lines in a tool result.
+	"countToolResultLines": func(s string) int {
+		if s == "" {
+			return 0
+		}
+		return strings.Count(s, "\n") + 1
 	},
 }
 

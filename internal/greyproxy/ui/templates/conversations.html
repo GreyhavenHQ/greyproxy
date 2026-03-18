@@ -43,6 +43,11 @@
     .conv-markdown th, .conv-markdown td { border: 1px solid rgb(var(--color-border)); padding: 0.25em 0.5em; font-size: 0.9em; }
     .conv-markdown > *:first-child { margin-top: 0; }
     .conv-markdown > *:last-child { margin-bottom: 0; }
+    /* Tool call cards */
+    .tool-call-card { transition: border-color 0.15s; }
+    .tool-call-card[data-tool-expanded="true"] { border-color: rgb(var(--color-border)); }
+    .tool-call-header:hover { background: rgb(var(--color-muted) / 0.5); }
+    .tool-call-chevron { transition: transform 0.15s; }
 </style>
 {{end}}
 
@@ -51,12 +56,13 @@
     <div class="flex justify-between items-center">
         <h1 class="text-2xl font-bold text-foreground">Conversations</h1>
         <button id="conv-live-btn" onclick="toggleConvLive()" type="button"
-            class="inline-flex items-center px-4 py-2 border text-sm font-medium rounded-md transition-colors">
-            <span id="conv-live-icon" class="mr-2">
-                <svg class="h-3 w-3" viewBox="0 0 12 12" fill="currentColor"><circle cx="6" cy="6" r="6"/></svg>
+            class="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-md transition-colors">
+            <span id="conv-live-dot" class="relative flex h-2.5 w-2.5 overflow-hidden">
+                <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-500 opacity-75"></span>
+                <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span>
             </span>
             <span id="conv-live-text">Live</span>
-            <span id="conv-pending-badge" class="hidden ml-2 inline-flex items-center justify-center px-1.5 py-0.5 text-xs font-bold leading-none rounded-full min-w-[1.25rem]"></span>
+            <span id="conv-pending-badge" class="hidden ml-0.5 inline-flex items-center justify-center px-1.5 py-0.5 text-xs font-bold leading-none rounded-full min-w-[1.25rem]"></span>
         </button>
     </div>
 
@@ -109,16 +115,20 @@ function applyConvLiveStyle() {
     var btn = document.getElementById('conv-live-btn');
     var text = document.getElementById('conv-live-text');
     var badge = document.getElementById('conv-pending-badge');
+    var dot = document.getElementById('conv-live-dot');
     if (convLive) {
-        btn.className = 'inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-primary-foreground bg-primary hover:bg-primary/90 transition-colors';
+        btn.className = 'inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-md text-foreground hover:bg-muted transition-colors';
         text.textContent = 'Live';
         badge.classList.add('hidden');
+        dot.innerHTML = '<span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-500 opacity-75"></span>'
+                      + '<span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span>';
     } else {
-        btn.className = 'inline-flex items-center px-4 py-2 border border-border text-sm font-medium rounded-md text-secondary-foreground bg-background hover:bg-muted transition-colors';
+        btn.className = 'inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-md text-muted-foreground hover:bg-muted transition-colors';
+        dot.innerHTML = '<span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-muted-foreground/50"></span>';
         if (convPendingCount > 0) {
             text.textContent = 'Paused';
             badge.textContent = convPendingCount;
-            badge.className = 'ml-2 inline-flex items-center justify-center px-1.5 py-0.5 text-xs font-bold leading-none text-primary-foreground bg-primary rounded-full min-w-[1.25rem]';
+            badge.className = 'ml-0.5 inline-flex items-center justify-center px-1.5 py-0.5 text-xs font-bold leading-none text-primary-foreground bg-primary rounded-full min-w-[1.25rem]';
         } else {
             text.textContent = 'Paused';
             badge.classList.add('hidden');
@@ -191,17 +201,80 @@ function toggleSection(sectionId) {
     }
 }
 
-function toggleToolContent(btn) {
-    var expanded = btn.nextElementSibling;
-    var preview = btn.previousElementSibling;
-    if (expanded && expanded.classList.contains('hidden')) {
-        expanded.classList.remove('hidden');
-        if (preview) preview.classList.add('hidden');
+// Toggle a single tool call card between collapsed and expanded
+function toggleToolCall(card) {
+    var body = card.querySelector('.tool-call-body');
+    var chevron = card.querySelector('.tool-call-chevron');
+    var isExpanded = card.dataset.toolExpanded === 'true';
+    if (isExpanded) {
+        body.classList.add('hidden');
+        chevron.style.transform = 'rotate(0deg)';
+        card.dataset.toolExpanded = 'false';
+    } else {
+        body.classList.remove('hidden');
+        chevron.style.transform = 'rotate(180deg)';
+        card.dataset.toolExpanded = 'true';
+    }
+    updateToggleAllButton();
+}
+
+// Toggle all tool calls expanded/collapsed
+function toggleAllTools() {
+    var cards = document.querySelectorAll('#conv-detail .tool-call-card');
+    if (cards.length === 0) return;
+    // If any are collapsed, expand all; if all expanded, collapse all
+    var anyCollapsed = false;
+    cards.forEach(function(card) {
+        if (card.dataset.toolExpanded !== 'true') anyCollapsed = true;
+    });
+    cards.forEach(function(card) {
+        var body = card.querySelector('.tool-call-body');
+        var chevron = card.querySelector('.tool-call-chevron');
+        if (anyCollapsed) {
+            body.classList.remove('hidden');
+            chevron.style.transform = 'rotate(180deg)';
+            card.dataset.toolExpanded = 'true';
+        } else {
+            body.classList.add('hidden');
+            chevron.style.transform = 'rotate(0deg)';
+            card.dataset.toolExpanded = 'false';
+        }
+    });
+    updateToggleAllButton();
+}
+
+function updateToggleAllButton() {
+    var btn = document.getElementById('toggle-all-tools-text');
+    if (!btn) return;
+    var cards = document.querySelectorAll('#conv-detail .tool-call-card');
+    var allExpanded = true;
+    cards.forEach(function(card) {
+        if (card.dataset.toolExpanded !== 'true') allExpanded = false;
+    });
+    btn.textContent = allExpanded ? 'Collapse tools' : 'Expand tools';
+}
+
+// Toggle result expand (show all lines vs truncated)
+function toggleResultExpand(btn) {
+    var pre = btn.closest('div').nextElementSibling || btn.closest('div').querySelector('pre');
+    if (!pre) {
+        // Try sibling pre
+        pre = btn.parentElement.querySelector('pre');
+    }
+    if (!pre) return;
+    var isTruncated = pre.dataset.truncated === 'true';
+    if (isTruncated) {
+        pre.textContent = pre.dataset.fullContent;
+        pre.style.maxHeight = '40rem';
+        pre.dataset.truncated = 'false';
         btn.textContent = 'Show less';
-    } else if (expanded) {
-        expanded.classList.add('hidden');
-        if (preview) preview.classList.remove('hidden');
-        btn.textContent = 'Show more';
+    } else {
+        // Re-truncate to 10 lines
+        var lines = pre.dataset.fullContent.split('\n');
+        pre.textContent = lines.slice(0, 10).join('\n') + '\n...';
+        pre.style.maxHeight = '12rem';
+        pre.dataset.truncated = 'true';
+        btn.textContent = 'Show all';
     }
 }
 
