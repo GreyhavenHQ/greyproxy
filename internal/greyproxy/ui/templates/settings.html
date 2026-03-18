@@ -143,22 +143,6 @@
                     </div>
                 </div>
 
-                <!-- Environment variable hints (collapsible) -->
-                <div id="cert-env-section" class="mb-4">
-                    <button onclick="toggleEnvHints()" class="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors">
-                        <svg id="env-hints-icon" class="h-4 w-4 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
-                        </svg>
-                        Environment variable hints for CLI tools
-                    </button>
-                    <div id="env-hints-content" class="hidden mt-3">
-                        <div class="p-4 bg-muted rounded-lg border border-border">
-                            <p class="text-xs text-muted-foreground mb-3">Some tools require explicit CA bundle configuration. Add these to your shell profile if needed:</p>
-                            <div id="env-hints-list" class="space-y-2"></div>
-                        </div>
-                    </div>
-                </div>
-
                 <!-- Actions -->
                 <div class="flex items-center gap-3">
                     <a id="cert-download-link" class="inline-flex items-center px-3 py-1.5 border border-border text-sm font-medium rounded-md hover:bg-muted transition-colors" download>
@@ -456,20 +440,6 @@
         // Download link
         document.getElementById('cert-download-link').href = prefix + '/api/cert/download';
 
-        // Env hints
-        if (data.envHints) {
-            var list = document.getElementById('env-hints-list');
-            list.innerHTML = '';
-            var keys = Object.keys(data.envHints);
-            for (var i = 0; i < keys.length; i++) {
-                var div = document.createElement('div');
-                div.className = 'flex items-center justify-between gap-2';
-                div.innerHTML = '<code class="text-xs font-mono bg-background rounded px-2 py-1 border border-border flex-1 overflow-x-auto">' +
-                    escapeHtml(data.envHints[keys[i]]) + '</code>' +
-                    '<span class="text-xs text-muted-foreground flex-shrink-0">' + keys[i] + '</span>';
-                list.appendChild(div);
-            }
-        }
     }
 
     function escapeHtml(text) {
@@ -546,13 +516,6 @@
                 }, 1500);
             }
         });
-    };
-
-    window.toggleEnvHints = function() {
-        var content = document.getElementById('env-hints-content');
-        var icon = document.getElementById('env-hints-icon');
-        content.classList.toggle('hidden');
-        icon.style.transform = content.classList.contains('hidden') ? '' : 'rotate(90deg)';
     };
 
     loadCertStatus();

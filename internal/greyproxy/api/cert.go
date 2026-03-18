@@ -27,7 +27,6 @@ type certStatusResponse struct {
 	ExpiresAt       *time.Time        `json:"expiresAt,omitempty"`
 	Installed       bool              `json:"installed"`
 	InstallCommands map[string]string `json:"installCommands"`
-	EnvHints        map[string]string `json:"envHints"`
 }
 
 func buildCertStatus(dataHome string) certStatusResponse {
@@ -38,7 +37,6 @@ func buildCertStatus(dataHome string) certStatusResponse {
 		CertPath:        certPath,
 		KeyPath:         keyPath,
 		InstallCommands: buildInstallCommands(certPath),
-		EnvHints:        buildEnvHints(certPath),
 	}
 
 	// Check if cert exists and parse it
@@ -78,16 +76,6 @@ func buildInstallCommands(certPath string) map[string]string {
 		cmds["linux"] = fmt.Sprintf("sudo cp \"%s\" %s && sudo %s", certPath, destPath, updateCmd)
 	}
 	return cmds
-}
-
-func buildEnvHints(certPath string) map[string]string {
-	return map[string]string{
-		"node":   fmt.Sprintf("export NODE_EXTRA_CA_CERTS=\"%s\"", certPath),
-		"python": fmt.Sprintf("export REQUESTS_CA_BUNDLE=\"%s\"", certPath),
-		"pip":    fmt.Sprintf("export PIP_CERT=\"%s\"", certPath),
-		"cargo":  fmt.Sprintf("export CARGO_HTTP_CAINFO=\"%s\"", certPath),
-		"git":    fmt.Sprintf("git config --global http.sslCAInfo \"%s\"", certPath),
-	}
 }
 
 // linuxCertInstallInfo returns the destination path and update command
