@@ -36,11 +36,8 @@ type ActivityFilter struct {
 	Result      string // "", "allowed", "blocked"
 	FromDate    *time.Time
 	ToDate      *time.Time
-	Limit       int
-	Offset      int
-	// ShowRedundantConns keeps connection rows even when HTTP transactions exist
-	// for the same container+destination. Defaults to false (deduplicate).
-	ShowRedundantConns bool
+	Limit  int
+	Offset int
 }
 
 // QueryActivity returns a unified, time-ordered list from request_logs and http_transactions.
@@ -63,10 +60,7 @@ func QueryActivity(db *DB, f ActivityFilter) ([]ActivityItem, int, error) {
 	var countArgs []any
 
 	if includeConn {
-		// Deduplicate: when showing both kinds, hide connection rows that
-		// already have corresponding HTTP transactions for that destination.
-		dedup := includeHTTP && !f.ShowRedundantConns
-		where, args := buildActivityConnWhere(f, dedup)
+		where, args := buildActivityConnWhere(f)
 		q := fmt.Sprintf(`SELECT 'connection' as kind, l.id, l.timestamp, l.container_name,
 			l.destination_host, COALESCE(l.destination_port, 0) as destination_port, l.result,
 			l.resolved_hostname, l.rule_id, r.destination_pattern as rule_summary,
@@ -166,7 +160,7 @@ func QueryActivity(db *DB, f ActivityFilter) ([]ActivityItem, int, error) {
 	return items, total, nil
 }
 
-func buildActivityConnWhere(f ActivityFilter, dedup bool) (string, []any) {
+func buildActivityConnWhere(f ActivityFilter) (string, []any) {
 	var conds []string
 	var args []any
 
@@ -189,18 +183,6 @@ func buildActivityConnWhere(f ActivityFilter, dedup bool) (string, []any) {
 	if f.ToDate != nil {
 		conds = append(conds, "l.timestamp <= ?")
 		args = append(args, f.ToDate.UTC().Format("2006-01-02 15:04:05"))
-	}
-
-	// When showing both kinds, hide connection rows that have HTTP traffic.
-	// A connection to api.anthropic.com:443 is redundant if we already have
-	// POST https://api.anthropic.com/v1/messages in the same view.
-	if dedup {
-		conds = append(conds, `NOT EXISTS (
-			SELECT 1 FROM http_transactions t
-			WHERE t.container_name = l.container_name
-			AND (t.destination_host = l.destination_host OR t.destination_host = l.resolved_hostname)
-			AND t.destination_port = COALESCE(l.destination_port, 0)
-		)`)
 	}
 
 	if len(conds) == 0 {

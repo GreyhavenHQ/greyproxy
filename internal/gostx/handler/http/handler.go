@@ -429,6 +429,15 @@ func (h *httpHandler) handleRequest(ctx context.Context, conn net.Conn, req *htt
 			MitmBypass:          h.md.mitmBypass,
 			ReadTimeout:         h.md.readTimeout,
 			OnHTTPRoundTrip:     mitmLogHook(log),
+			OnMitmSkip: func() {
+				if hook := gostx.GlobalConnectionFinishHook; hook != nil {
+					hook(gostx.ConnectionFinishInfo{
+						Host:           ro.Host,
+						MitmSkipReason: ro.MitmSkipReason,
+						ContainerName:  ro.ClientID,
+					})
+				}
+			},
 		}
 
 		conn = xnet.NewReadWriteConn(br, conn, conn)

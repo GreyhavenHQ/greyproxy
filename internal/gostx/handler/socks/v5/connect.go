@@ -14,6 +14,7 @@ import (
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/logger"
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/observer/stats"
 	"github.com/greyhavenhq/greyproxy/internal/gosocks5"
+	gostx "github.com/greyhavenhq/greyproxy/internal/gostx"
 	xctx "github.com/greyhavenhq/greyproxy/internal/gostx/ctx"
 	ictx "github.com/greyhavenhq/greyproxy/internal/gostx/internal/ctx"
 	xnet "github.com/greyhavenhq/greyproxy/internal/gostx/internal/net"
@@ -169,6 +170,15 @@ func (h *socks5Handler) handleConnect(ctx context.Context, conn net.Conn, networ
 			MitmBypass:          h.md.mitmBypass,
 			ReadTimeout:         h.md.readTimeout,
 			OnHTTPRoundTrip:     mitmLogHook(log),
+			OnMitmSkip: func() {
+				if hook := gostx.GlobalConnectionFinishHook; hook != nil {
+					hook(gostx.ConnectionFinishInfo{
+						Host:           ro.Host,
+						MitmSkipReason: ro.MitmSkipReason,
+						ContainerName:  ro.ClientID,
+					})
+				}
+			},
 		}
 
 		conn = xnet.NewReadWriteConn(br, conn, conn)

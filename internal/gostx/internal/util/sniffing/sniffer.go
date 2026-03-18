@@ -185,6 +185,9 @@ type Sniffer struct {
 
 	// OnHTTPRoundTrip is called after each decrypted HTTP round-trip with request/response details.
 	OnHTTPRoundTrip func(info HTTPRoundTripInfo)
+
+	// OnMitmSkip is called when MITM is skipped for a TLS connection, before piping starts.
+	OnMitmSkip func()
 }
 
 func (h *Sniffer) HandleHTTP(ctx context.Context, network string, conn net.Conn, opts ...HandleOption) error {
@@ -819,6 +822,10 @@ func (h *Sniffer) HandleTLS(ctx context.Context, network string, conn net.Conn, 
 
 	if _, err := buf.WriteTo(conn); err != nil {
 		return err
+	}
+
+	if h.OnMitmSkip != nil {
+		h.OnMitmSkip()
 	}
 
 	log.Infof("%s <-> %s", ro.RemoteAddr, ro.Host)

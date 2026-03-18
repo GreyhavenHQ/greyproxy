@@ -20,18 +20,17 @@ func TestQueryActivity(t *testing.T) {
 		StatusCode: 200, DurationMs: 150, Result: "auto",
 	})
 
-	t.Run("deduplicates connections with HTTP traffic", func(t *testing.T) {
+	t.Run("shows both connections and HTTP traffic", func(t *testing.T) {
 		items, total, err := QueryActivity(db, ActivityFilter{Limit: 50})
 		if err != nil {
 			t.Fatalf("QueryActivity: %v", err)
 		}
-		// api.example.com connection is hidden because HTTP transactions exist for it.
-		// Only evil.com (blocked, no HTTP) + the HTTP transaction remain.
-		if total != 2 {
-			t.Fatalf("total: got %d, want 2", total)
+		// 2 connection rows + 1 HTTP transaction
+		if total != 3 {
+			t.Fatalf("total: got %d, want 3", total)
 		}
-		if len(items) != 2 {
-			t.Fatalf("items: got %d, want 2", len(items))
+		if len(items) != 3 {
+			t.Fatalf("items: got %d, want 3", len(items))
 		}
 
 		var connCount, httpCount int
@@ -39,31 +38,15 @@ func TestQueryActivity(t *testing.T) {
 			switch item.Kind {
 			case "connection":
 				connCount++
-				if item.DestinationHost != "evil.com" {
-					t.Errorf("expected only evil.com connection, got %s", item.DestinationHost)
-				}
 			case "http":
 				httpCount++
 			}
 		}
-		if connCount != 1 {
-			t.Errorf("connection items: got %d, want 1", connCount)
+		if connCount != 2 {
+			t.Errorf("connection items: got %d, want 2", connCount)
 		}
 		if httpCount != 1 {
 			t.Errorf("http items: got %d, want 1", httpCount)
-		}
-	})
-
-	t.Run("ShowRedundantConns disables dedup", func(t *testing.T) {
-		items, total, err := QueryActivity(db, ActivityFilter{Limit: 50, ShowRedundantConns: true})
-		if err != nil {
-			t.Fatalf("QueryActivity: %v", err)
-		}
-		if total != 3 {
-			t.Fatalf("total: got %d, want 3", total)
-		}
-		if len(items) != 3 {
-			t.Fatalf("items: got %d, want 3", len(items))
 		}
 	})
 
@@ -118,9 +101,9 @@ func TestQueryActivity(t *testing.T) {
 		if err != nil {
 			t.Fatalf("QueryActivity: %v", err)
 		}
-		// evil.com (blocked conn) + api.example.com (HTTP only, conn deduped)
-		if total != 2 {
-			t.Fatalf("total: got %d, want 2", total)
+		// 2 connections + 1 HTTP transaction
+		if total != 3 {
+			t.Fatalf("total: got %d, want 3", total)
 		}
 		_ = items
 	})
@@ -137,8 +120,7 @@ func TestQueryActivity(t *testing.T) {
 	})
 
 	t.Run("pagination", func(t *testing.T) {
-		// Use ShowRedundantConns so we have 3 items to paginate
-		items, total, err := QueryActivity(db, ActivityFilter{Limit: 2, ShowRedundantConns: true})
+		items, total, err := QueryActivity(db, ActivityFilter{Limit: 2})
 		if err != nil {
 			t.Fatalf("QueryActivity: %v", err)
 		}
@@ -150,7 +132,7 @@ func TestQueryActivity(t *testing.T) {
 		}
 
 		// Page 2
-		items2, _, err := QueryActivity(db, ActivityFilter{Limit: 2, Offset: 2, ShowRedundantConns: true})
+		items2, _, err := QueryActivity(db, ActivityFilter{Limit: 2, Offset: 2})
 		if err != nil {
 			t.Fatalf("QueryActivity page 2: %v", err)
 		}
