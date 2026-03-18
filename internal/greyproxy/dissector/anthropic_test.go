@@ -184,6 +184,11 @@ func TestExtractSessionIDFromUserID(t *testing.T) {
 			"9d4a2584-4176-4653-be44-7d5f270feb21",
 		},
 		{
+			"string-encoded json object",
+			`"{\"device_id\":\"d8c2852a\",\"account_uuid\":\"5a3241c6-4cbe-47e2-a7d3-981f6bf69be8\",\"session_id\":\"9d4a2584-4176-4653-be44-7d5f270feb21\"}"`,
+			"9d4a2584-4176-4653-be44-7d5f270feb21",
+		},
+		{
 			"empty",
 			`""`,
 			"",

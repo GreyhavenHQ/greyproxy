@@ -19,7 +19,7 @@ import (
 // that requires reprocessing existing conversations (e.g. new fields, linking).
 // When the stored version differs from this constant, the settings page
 // offers a "Rebuild conversations" action.
-const AssemblerVersion = 3
+const AssemblerVersion = 4
 
 // ConversationAssembler subscribes to EventTransactionNew and reassembles
 // LLM conversations from HTTP transactions using registered dissectors.
@@ -327,8 +327,11 @@ func (a *ConversationAssembler) loadTransactionsForSessions(sessionIDs map[strin
 	var likeClauses []string
 	var args []any
 	for sid := range sessionIDs {
-		likeClauses = append(likeClauses, `CAST(request_body AS TEXT) LIKE ? ESCAPE '\'`)
+		// Match both legacy format (session_UUID) and new JSON format (session_id with UUID value)
+		clause := `(CAST(request_body AS TEXT) LIKE ? ESCAPE '\' OR CAST(request_body AS TEXT) LIKE ? ESCAPE '\')`
+		likeClauses = append(likeClauses, clause)
 		args = append(args, "%session_"+escapeLikePattern(sid)+"%")
+		args = append(args, "%session_id%"+escapeLikePattern(sid)+"%")
 	}
 
 	query := fmt.Sprintf(`

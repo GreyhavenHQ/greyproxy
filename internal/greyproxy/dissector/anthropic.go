@@ -37,6 +37,7 @@ import (
 
 var sessionIDPattern = regexp.MustCompile(`session_([a-f0-9-]{36})`)
 var sessionIDJSONPattern = regexp.MustCompile(`"session_id"\s*:\s*"([a-f0-9-]{36})"`)
+var sessionIDEscapedJSONPattern = regexp.MustCompile(`\\?"session_id\\?"\s*:\\?\s*\\?"([a-f0-9-]{36})\\?"`)
 
 
 // AnthropicDissector parses Anthropic Messages API transactions.
@@ -205,15 +206,24 @@ func extractSessionIDFromUserID(raw json.RawMessage) string {
 		return ""
 	}
 
-	// Try as string first (legacy format)
+	// Try as string first (legacy format or JSON-encoded object)
 	var s string
 	if json.Unmarshal(raw, &s) == nil && s != "" {
+		// Legacy format: "user_HASH_account_UUID_session_UUID"
 		if m := sessionIDPattern.FindStringSubmatch(s); len(m) > 1 {
 			return m[1]
 		}
+		// New format: user_id is a JSON string containing a JSON object
+		// e.g. "{\"session_id\":\"UUID\",\"device_id\":\"...\"}"
+		var inner struct {
+			SessionID string `json:"session_id"`
+		}
+		if json.Unmarshal([]byte(s), &inner) == nil && inner.SessionID != "" {
+			return inner.SessionID
+		}
 	}
 
-	// Try as object with session_id field
+	// Try as object with session_id field (direct JSON object, not string-encoded)
 	var obj struct {
 		SessionID string `json:"session_id"`
 	}
@@ -228,8 +238,12 @@ func extractSessionIDFromRaw(body string) string {
 	if m := sessionIDPattern.FindStringSubmatch(body); len(m) > 1 {
 		return m[1]
 	}
-	// Also try "session_id":"UUID" pattern (new metadata format in raw JSON)
+	// Try "session_id":"UUID" pattern (new metadata format in raw JSON)
 	if m := sessionIDJSONPattern.FindStringSubmatch(body); len(m) > 1 {
+		return m[1]
+	}
+	// Try escaped variant: \"session_id\":\"UUID\" (string-encoded JSON in body)
+	if m := sessionIDEscapedJSONPattern.FindStringSubmatch(body); len(m) > 1 {
 		return m[1]
 	}
 	return ""
