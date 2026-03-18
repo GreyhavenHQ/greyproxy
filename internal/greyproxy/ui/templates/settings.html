@@ -94,6 +94,9 @@
                     class="inline-block h-4 w-4 transform rounded-full bg-white transition-transform translate-x-5"></span>
             </button>
         </div>
+        <p id="mitm-notice" class="text-sm text-muted-foreground mb-6 hidden">
+            This only applies to new connections. Already established connections will not be affected until they reconnect.
+        </p>
 
         <div id="cert-section">
             <!-- Loading state -->
@@ -390,6 +393,7 @@
         .then(function(r) { return r.json(); })
         .then(function(data) {
             updateMitmToggle(data.mitm.enabled);
+            document.getElementById('mitm-notice').classList.remove('hidden');
         })
         .catch(function() {});
     };
