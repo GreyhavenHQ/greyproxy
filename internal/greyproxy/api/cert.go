@@ -70,7 +70,7 @@ func buildInstallCommands(certPath string) map[string]string {
 	cmds := make(map[string]string)
 	switch runtime.GOOS {
 	case "darwin":
-		cmds["macos"] = fmt.Sprintf("sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain \"%s\"", certPath)
+		cmds["macos"] = fmt.Sprintf("sudo security add-trusted-cert -d -p ssl -p basic -k /Library/Keychains/System.keychain \"%s\"", certPath)
 	case "linux":
 		destPath, updateCmd := linuxCertInstallInfo()
 		cmds["linux"] = fmt.Sprintf("sudo cp \"%s\" %s && sudo %s", certPath, destPath, updateCmd)

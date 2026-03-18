@@ -928,7 +928,7 @@ func (h *Sniffer) terminateTLS(ctx context.Context, network string, conn, cc net
 			}
 
 			return &tls.Certificate{
-				Certificate: [][]byte{cert.Raw},
+				Certificate: [][]byte{cert.Raw, h.Certificate.Raw},
 				PrivateKey:  h.PrivateKey,
 			}, nil
 		},
@@ -1025,7 +1025,7 @@ func (h *Sniffer) terminateTLSDeferred(ctx context.Context, network string, conn
 				return nil, err
 			}
 			return &tls.Certificate{
-				Certificate: [][]byte{cert.Raw},
+				Certificate: [][]byte{cert.Raw, h.Certificate.Raw},
 				PrivateKey:  h.PrivateKey,
 			}, nil
 		},

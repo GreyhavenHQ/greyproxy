@@ -196,7 +196,7 @@ func handleCertInstall(force bool) {
 
 		fmt.Println("Installing CA certificate into system trust store (requires sudo)...")
 		cmd := exec.Command("sudo", "security", "add-trusted-cert",
-			"-d", "-r", "trustRoot",
+			"-d", "-p", "ssl", "-p", "basic",
 			"-k", "/Library/Keychains/System.keychain",
 			certFile,
 		)
@@ -205,7 +205,7 @@ func handleCertInstall(force bool) {
 		cmd.Stdin = os.Stdin
 		if err := cmd.Run(); err != nil {
 			fmt.Fprintf(os.Stderr, "\nAutomatic install failed. Please run manually:\n\n")
-			fmt.Fprintf(os.Stderr, "  sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain \"%s\"\n\n", certFile)
+			fmt.Fprintf(os.Stderr, "  sudo security add-trusted-cert -d -p ssl -p basic -k /Library/Keychains/System.keychain \"%s\"\n\n", certFile)
 			os.Exit(1)
 		}
 		fmt.Printf("CA certificate installed and trusted in %s\n", certInstallLocation())
