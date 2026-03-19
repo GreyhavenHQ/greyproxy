@@ -19,7 +19,7 @@ import (
 // that requires reprocessing existing conversations (e.g. new fields, linking).
 // When the stored version differs from this constant, the settings page
 // offers a "Rebuild conversations" action.
-const AssemblerVersion = 4
+const AssemblerVersion = 5
 
 // ConversationAssembler subscribes to EventTransactionNew and reassembles
 // LLM conversations from HTTP transactions using registered dissectors.
@@ -168,6 +168,18 @@ func (a *ConversationAssembler) processNewTransactionsLocked() {
 	if err != nil {
 		slog.Warn("assembler: failed to reload sessions", "error", err)
 		return
+	}
+
+	// For OpenAI: main sessions may reference subagent sessions via task_id
+	// in tool results. Load those referenced sessions too so that
+	// remapOpenAISubagents can remap them under their parent.
+	if extraSessions := extractReferencedSubagentSessions(allTxns, affectedSessions); len(extraSessions) > 0 {
+		extraTxns, err := a.loadTransactionsForSessions(extraSessions)
+		if err != nil {
+			slog.Warn("assembler: failed to load referenced subagent sessions", "error", err)
+		} else {
+			allTxns = append(allTxns, extraTxns...)
+		}
 	}
 
 	// Group by session and assemble
@@ -661,6 +673,37 @@ func remapOpenAISubagents(sessions map[string][]transactionEntry) {
 			}
 		}
 	}
+}
+
+// extractReferencedSubagentSessions scans dissected transaction entries for
+// task_id references (OpenAI subagent session IDs) and returns any that are
+// not already in the known set.
+func extractReferencedSubagentSessions(entries []transactionEntry, known map[string]bool) map[string]bool {
+	extra := map[string]bool{}
+	for _, e := range entries {
+		if e.result == nil || e.result.Provider != "openai" {
+			continue
+		}
+		for _, msg := range e.result.Messages {
+			for _, cb := range msg.Content {
+				if cb.Type == "tool_result" && cb.Content != "" {
+					if tid := extractTaskID(cb.Content); tid != "" && !known[tid] {
+						extra[tid] = true
+					}
+				}
+			}
+		}
+		if e.result.SSEResponse != nil {
+			for _, tc := range e.result.SSEResponse.ToolCalls {
+				if tc.ResultPreview != "" {
+					if tid := extractTaskID(tc.ResultPreview); tid != "" && !known[tid] {
+						extra[tid] = true
+					}
+				}
+			}
+		}
+	}
+	return extra
 }
 
 var taskIDPattern = regexp.MustCompile(`task_id:\s*(ses_[A-Za-z0-9_]+)`)
