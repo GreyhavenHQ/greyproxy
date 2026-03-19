@@ -129,7 +129,6 @@ func CertGenerateHandler(s *Shared) gin.HandlerFunc {
 			return
 		}
 
-		// Generate ECDSA P-256 key
 		privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to generate key: %v", err)})
@@ -162,7 +161,6 @@ func CertGenerateHandler(s *Shared) gin.HandlerFunc {
 			return
 		}
 
-		// Write certificate
 		certOut, err := os.OpenFile(certFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to write cert: %v", err)})
@@ -175,7 +173,6 @@ func CertGenerateHandler(s *Shared) gin.HandlerFunc {
 		}
 		certOut.Close()
 
-		// Write private key
 		keyBytes, err := x509.MarshalECPrivateKey(privateKey)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to marshal key: %v", err)})
@@ -210,5 +207,23 @@ func CertDownloadHandler(s *Shared) gin.HandlerFunc {
 		}
 		c.Header("Content-Disposition", "attachment; filename=greyproxy-ca.pem")
 		c.File(certPath)
+	}
+}
+
+// CertReloadHandler triggers a live reload of the MITM CA certificate.
+func CertReloadHandler(s *Shared) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if s.ReloadCertFn == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "cert reload not available"})
+			return
+		}
+		if err := s.ReloadCertFn(); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("reload failed: %v", err)})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"message":    "MITM cert reloaded",
+			"certStatus": buildCertStatus(s.DataHome),
+		})
 	}
 }

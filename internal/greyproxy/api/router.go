@@ -20,7 +20,8 @@ type Shared struct {
 	Assembler   *greyproxy.ConversationAssembler
 	Version     string
 	Ports       map[string]int
-	DataHome    string // Path to greyproxy data directory (contains CA cert/key)
+	DataHome    string        // Path to greyproxy data directory (contains CA cert/key)
+	ReloadCertFn func() error // Triggers a live MITM cert reload (set by the running service)
 }
 
 // NewRouter creates the Gin router with all routes.
@@ -89,6 +90,7 @@ func NewRouter(s *Shared, pathPrefix string) (*gin.Engine, *gin.RouterGroup) {
 		api.GET("/cert/status", CertStatusHandler(s))
 		api.POST("/cert/generate", CertGenerateHandler(s))
 		api.GET("/cert/download", CertDownloadHandler(s))
+		api.POST("/cert/reload", CertReloadHandler(s))
 
 		// Maintenance
 		api.POST("/maintenance/rebuild-conversations", RebuildConversationsHandler(s))
