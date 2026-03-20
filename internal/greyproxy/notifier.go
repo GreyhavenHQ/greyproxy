@@ -101,11 +101,29 @@ func detectBackend() notifyBackend {
 			return backendNotifySend
 		}
 	case "darwin":
-		if _, err := exec.LookPath("terminal-notifier"); err == nil {
+		if findTerminalNotifier() != "" {
 			return backendTerminalNotifier
 		}
 	}
 	return backendNone
+}
+
+// findTerminalNotifier returns the path to terminal-notifier, checking both
+// PATH and common Homebrew install locations (launchd agents run with a
+// minimal PATH that excludes /opt/homebrew/bin and /usr/local/bin).
+func findTerminalNotifier() string {
+	if p, err := exec.LookPath("terminal-notifier"); err == nil {
+		return p
+	}
+	for _, candidate := range []string{
+		"/opt/homebrew/bin/terminal-notifier", // Apple Silicon Homebrew
+		"/usr/local/bin/terminal-notifier",    // Intel Homebrew
+	} {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	return ""
 }
 
 // BackendInfo returns information about the notification backend,
@@ -486,8 +504,12 @@ func (n *Notifier) sendLinuxBasic(title, body string, pendingID int64) {
 }
 
 func (n *Notifier) sendDarwinTerminalNotifier(title, body, url string, pendingID int64) {
+	bin := findTerminalNotifier()
+	if bin == "" {
+		return
+	}
 	go func() {
-		cmd := exec.Command("terminal-notifier",
+		cmd := exec.Command(bin, //nolint:gosec // path resolved from known locations
 			"-title", title,
 			"-message", body,
 			"-open", url,
