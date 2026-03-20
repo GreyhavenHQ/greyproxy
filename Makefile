@@ -120,3 +120,12 @@ all-arch: $(PLATFORM_LIST) $(WINDOWS_ARCH_LIST)
 releases: $(gz_releases) $(zip_releases)
 clean:
 	rm $(BINDIR)/*
+
+release:
+	@./scripts/release.sh patch
+
+release-minor:
+	@./scripts/release.sh minor
+
+release-beta:
+	@./scripts/release.sh beta
