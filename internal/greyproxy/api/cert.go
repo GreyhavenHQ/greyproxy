@@ -191,8 +191,13 @@ func CertGenerateHandler(s *Shared) gin.HandlerFunc {
 		}
 		keyOut.Close()
 
+		// Trigger live reload so the new cert takes effect immediately.
+		if s.ReloadCertFn != nil {
+			_ = s.ReloadCertFn()
+		}
+
 		c.JSON(http.StatusOK, gin.H{
-			"message":    "Certificate generated. Restart greyproxy to use the new certificate.",
+			"message":    "Certificate generated and reloaded.",
 			"certStatus": buildCertStatus(dataHome),
 		})
 	}
@@ -211,12 +216,28 @@ func CertDownloadHandler(s *Shared) gin.HandlerFunc {
 }
 
 // CertReloadHandler triggers a live reload of the MITM CA certificate.
+// It is a no-op if the cert file has not changed since the last reload.
 func CertReloadHandler(s *Shared) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if s.ReloadCertFn == nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "cert reload not available"})
 			return
 		}
+
+		// Skip reload if the cert file has not changed since last load.
+		if s.CertMtimeFn != nil {
+			certFile := filepath.Join(s.DataHome, "ca-cert.pem")
+			if info, err := os.Stat(certFile); err == nil {
+				if !info.ModTime().After(s.CertMtimeFn()) {
+					c.JSON(http.StatusOK, gin.H{
+						"message":    "cert unchanged, no reload needed",
+						"certStatus": buildCertStatus(s.DataHome),
+					})
+					return
+				}
+			}
+		}
+
 		if err := s.ReloadCertFn(); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("reload failed: %v", err)})
 			return

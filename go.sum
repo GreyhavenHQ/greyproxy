@@ -175,6 +175,8 @@ github.com/vulcand/predicate v1.2.0 h1:uFsW1gcnnR7R+QTID+FVcs0sSYlIGntoGOTb3rQJt
 github.com/vulcand/predicate v1.2.0/go.mod h1:VipoNYXny6c8N381zGUWkjuuNHiRbeAZhE7Qm9c+2GA=
 github.com/xtaci/smux v1.5.31 h1:3ha7sHtH46h85Iv7MfQogxasuRt1KPRhoFB3S4rmHgU=
 github.com/xtaci/smux v1.5.31/go.mod h1:OMlQbT5vcgl2gb49mFkYo6SMf+zP3rcjcwQz7ZU7IGY=
+github.com/xyproto/randomstring v1.0.5 h1:YtlWPoRdgMu3NZtP45drfy1GKoojuR7hmRcnhZqKjWU=
+github.com/xyproto/randomstring v1.0.5/go.mod h1:rgmS5DeNXLivK7YprL0pY+lTuhNQW3iGxZ18UQApw/E=
 github.com/yl2chen/cidranger v1.0.2 h1:lbOWZVCG1tCRX4u24kuM1Tb4nHqWkDxwLdoS+SevawU=
 github.com/yl2chen/cidranger v1.0.2/go.mod h1:9U1yz7WPYDwf0vpNWFaeRh0bjwz5RVgRy/9UEQfHl0g=
 go.uber.org/multierr v1.11.0 h1:blXXJkSxSSfBVBlC76pxqeO+LN3aDfLQo+309xJstO0=

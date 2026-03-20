@@ -15,11 +15,12 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"time"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/andybalholm/brotli"
+	"github.com/fsnotify/fsnotify"
 	"github.com/klauspost/compress/zstd"
 	defaults "github.com/greyhavenhq/greyproxy"
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/logger"
@@ -48,6 +49,9 @@ type program struct {
 	cancel           context.CancelFunc
 	assemblerCancel  context.CancelFunc
 	credStoreCancel  context.CancelFunc
+
+	certMtimeMu sync.Mutex
+	certMtime   time.Time // mtime of ca-cert.pem at last successful reload
 }
 
 func (p *program) initParser() {
@@ -127,49 +131,59 @@ func injectCertPaths(cfg *config.Config, dataDir string) {
 	}
 }
 
-// watchCertFiles polls ca-cert.pem and ca-key.pem for changes and
-// triggers a config reload (which re-reads the cert files) when they change.
+// watchCertFiles watches ca-cert.pem and ca-key.pem using inotify (fsnotify) and
+// triggers a config reload when either file is written or created.
 func (p *program) watchCertFiles(ctx context.Context, dataDir string) {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		logger.Default().Errorf("cert watcher: failed to create watcher: %v", err)
+		return
+	}
+	defer watcher.Close()
+
+	if err := watcher.Add(dataDir); err != nil {
+		logger.Default().Errorf("cert watcher: failed to watch %s: %v", dataDir, err)
+		return
+	}
+
 	certFile := filepath.Join(dataDir, "ca-cert.pem")
 	keyFile := filepath.Join(dataDir, "ca-key.pem")
 
-	// Record initial modification times
-	mtimes := map[string]time.Time{}
-	for _, f := range []string{certFile, keyFile} {
-		if info, err := os.Stat(f); err == nil {
-			mtimes[f] = info.ModTime()
-		}
-	}
-
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-
+	var debounce *time.Timer
 	for {
 		select {
 		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			changed := false
-			for _, f := range []string{certFile, keyFile} {
-				info, err := os.Stat(f)
-				if err != nil {
-					continue
-				}
-				if !info.ModTime().Equal(mtimes[f]) {
-					mtimes[f] = info.ModTime()
-					changed = true
-				}
+			if debounce != nil {
+				debounce.Stop()
 			}
-			if changed {
-				// Brief pause so both cert and key are fully written before reload
-				time.Sleep(500 * time.Millisecond)
+			return
+		case event, ok := <-watcher.Events:
+			if !ok {
+				return
+			}
+			if event.Name != certFile && event.Name != keyFile {
+				continue
+			}
+			if !event.Has(fsnotify.Write) && !event.Has(fsnotify.Create) {
+				continue
+			}
+			// Debounce: wait briefly so both cert and key finish writing before reloading
+			if debounce != nil {
+				debounce.Stop()
+			}
+			debounce = time.AfterFunc(100*time.Millisecond, func() {
 				logger.Default().Info("cert files changed, reloading MITM cert...")
 				if err := p.reloadConfig(); err != nil {
 					logger.Default().Errorf("cert reload failed: %v", err)
 				} else {
 					logger.Default().Info("MITM cert reloaded")
 				}
+			})
+		case err, ok := <-watcher.Errors:
+			if !ok {
+				return
 			}
+			logger.Default().Errorf("cert watcher error: %v", err)
 		}
 	}
 }
@@ -311,6 +325,14 @@ func (p *program) reloadConfig() error {
 		return err
 	}
 
+	// Record mtime of ca-cert.pem so CertReloadHandler can detect no-op calls.
+	certFile := filepath.Join(greyproxyDataHome(), "ca-cert.pem")
+	if info, err := os.Stat(certFile); err == nil {
+		p.certMtimeMu.Lock()
+		p.certMtime = info.ModTime()
+		p.certMtimeMu.Unlock()
+	}
+
 	return nil
 }
 
@@ -423,6 +445,11 @@ func (p *program) buildGreyproxyService() error {
 	}
 
 	shared.ReloadCertFn = p.reloadConfig
+	shared.CertMtimeFn = func() time.Time {
+		p.certMtimeMu.Lock()
+		defer p.certMtimeMu.Unlock()
+		return p.certMtime
+	}
 	shared.Version = version
 
 	// Collect listening ports for the health endpoint
