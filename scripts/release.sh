@@ -17,23 +17,15 @@ warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
 DRY_RUN="${DRY_RUN:-0}"
-SKIP_PREFLIGHT="${SKIP_PREFLIGHT:-0}"
 
-# Validate bump type
-if [[ "$BUMP_TYPE" != "patch" && "$BUMP_TYPE" != "minor" && "$BUMP_TYPE" != "beta" ]]; then
-    error "Invalid bump type: $BUMP_TYPE. Use 'patch', 'minor', or 'beta'."
-fi
+# shellcheck source=scripts/bump_version.sh
+source "$(dirname "$0")/bump_version.sh"
 
 info "Bump type: $BUMP_TYPE"
 
 # =============================================================================
 # Preflight checks
 # =============================================================================
-
-# Resolve last tag (local git operation — always runs)
-LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-
-if [[ "$SKIP_PREFLIGHT" != "1" ]]; then
 
 info "Running preflight checks..."
 
@@ -73,6 +65,7 @@ if [[ "$LOCAL_COMMIT" != "$REMOTE_COMMIT" ]]; then
 fi
 
 # Check if there are commits since last tag
+LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
 if [[ -n "$LAST_TAG" ]]; then
     COMMITS_SINCE_TAG=$(git rev-list "$LAST_TAG"..HEAD --count)
     if [[ "$COMMITS_SINCE_TAG" -eq 0 ]]; then
@@ -83,66 +76,11 @@ fi
 
 info "✓ All preflight checks passed"
 
-fi # end SKIP_PREFLIGHT
-
 # =============================================================================
 # Calculate new version
 # =============================================================================
 
-if [[ -z "$LAST_TAG" ]]; then
-    # No existing tags, start at v0.1.0
-    NEW_VERSION="v0.1.0"
-    if [[ "$BUMP_TYPE" == "beta" ]]; then
-        NEW_VERSION="v0.1.0-beta.1"
-    fi
-    info "No existing tags found. Starting at $NEW_VERSION"
-else
-    if [[ "$BUMP_TYPE" == "beta" ]]; then
-        # Find the last stable tag (ignore -beta.* tags) as the base
-        LAST_STABLE_TAG=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | grep -v '\-' | sort -V | tail -1 || true)
-        if [[ -z "$LAST_STABLE_TAG" ]]; then
-            LAST_STABLE_TAG="v0.0.0"
-        fi
-        VERSION="${LAST_STABLE_TAG#v}"
-        IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
-        PATCH=$((PATCH + 1))
-        BASE_VERSION="${MAJOR}.${MINOR}.${PATCH}"
-        # Find highest existing beta number for this base version
-        LATEST_BETA=$(git tag -l "v${BASE_VERSION}-beta.*" | sort -V | tail -1 || true)
-        if [[ -z "$LATEST_BETA" ]]; then
-            BETA_NUM=1
-        else
-            BETA_NUM=$(echo "$LATEST_BETA" | sed 's/.*-beta\.\([0-9]*\)$/\1/')
-            BETA_NUM=$((BETA_NUM + 1))
-        fi
-        NEW_VERSION="v${BASE_VERSION}-beta.${BETA_NUM}"
-        info "Beta tag: $LAST_STABLE_TAG → $NEW_VERSION"
-    else
-        # Parse current version (strip 'v' prefix and any pre-release suffix)
-        VERSION="${LAST_TAG#v}"
-        VERSION="${VERSION%%-*}"  # strip pre-release suffix if present
-        IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
-
-        # Validate parsed version
-        if [[ -z "$MAJOR" || -z "$MINOR" || -z "$PATCH" ]]; then
-            error "Failed to parse version from tag: $LAST_TAG"
-        fi
-
-        # Increment based on bump type
-        case "$BUMP_TYPE" in
-            patch)
-                PATCH=$((PATCH + 1))
-                ;;
-            minor)
-                MINOR=$((MINOR + 1))
-                PATCH=0
-                ;;
-        esac
-
-        NEW_VERSION="v${MAJOR}.${MINOR}.${PATCH}"
-        info "Version bump: $LAST_TAG → $NEW_VERSION"
-    fi
-fi
+NEW_VERSION=$(bump_version "$LAST_TAG" "$BUMP_TYPE")
 
 if [[ "$DRY_RUN" == "1" ]]; then
     info "Dry run: would release $NEW_VERSION"
