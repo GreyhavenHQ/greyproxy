@@ -45,6 +45,29 @@ cd greyproxy
 go build ./cmd/greyproxy
 ```
 
+**macOS only:** after building, codesign the binary to avoid Gatekeeper quarantine:
+
+```bash
+codesign --sign - --force ./greyproxy
+```
+
+Install the binary and register it as a service:
+
+```bash
+./greyproxy install
+```
+
+This copies the binary to `~/.local/bin/`, registers a launchd user agent (macOS) or systemd user service (Linux), and starts it automatically. The dashboard will be available at `http://localhost:43080`.
+
+Generate and install the CA certificate for HTTPS inspection:
+
+```bash
+greyproxy cert generate
+greyproxy cert install
+```
+
+Alternatively, use [`greywall setup`](https://github.com/GreyhavenHQ/greywall) to handle the full build and install automatically.
+
 ### Install
 
 Install the binary to `~/.local/bin/` and register it as a systemd user service:
