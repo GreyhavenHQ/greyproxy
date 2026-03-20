@@ -16,6 +16,9 @@ info() { echo -e "${GREEN}[INFO]${NC} $1"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
+DRY_RUN="${DRY_RUN:-0}"
+SKIP_PREFLIGHT="${SKIP_PREFLIGHT:-0}"
+
 # Validate bump type
 if [[ "$BUMP_TYPE" != "patch" && "$BUMP_TYPE" != "minor" && "$BUMP_TYPE" != "beta" ]]; then
     error "Invalid bump type: $BUMP_TYPE. Use 'patch', 'minor', or 'beta'."
@@ -26,6 +29,11 @@ info "Bump type: $BUMP_TYPE"
 # =============================================================================
 # Preflight checks
 # =============================================================================
+
+# Resolve last tag (local git operation — always runs)
+LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+
+if [[ "$SKIP_PREFLIGHT" != "1" ]]; then
 
 info "Running preflight checks..."
 
@@ -65,7 +73,6 @@ if [[ "$LOCAL_COMMIT" != "$REMOTE_COMMIT" ]]; then
 fi
 
 # Check if there are commits since last tag
-LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
 if [[ -n "$LAST_TAG" ]]; then
     COMMITS_SINCE_TAG=$(git rev-list "$LAST_TAG"..HEAD --count)
     if [[ "$COMMITS_SINCE_TAG" -eq 0 ]]; then
@@ -75,6 +82,8 @@ if [[ -n "$LAST_TAG" ]]; then
 fi
 
 info "✓ All preflight checks passed"
+
+fi # end SKIP_PREFLIGHT
 
 # =============================================================================
 # Calculate new version
@@ -133,6 +142,11 @@ else
         NEW_VERSION="v${MAJOR}.${MINOR}.${PATCH}"
         info "Version bump: $LAST_TAG → $NEW_VERSION"
     fi
+fi
+
+if [[ "$DRY_RUN" == "1" ]]; then
+    info "Dry run: would release $NEW_VERSION"
+    exit 0
 fi
 
 # =============================================================================
