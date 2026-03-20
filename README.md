@@ -119,6 +119,20 @@ services:
 | SOCKS5 Proxy  | `43052` |
 | DNS Proxy     | `43053` |
 
+## Documentation
+
+Full documentation is available at [docs.greywall.io/greyproxy](https://docs.greywall.io/greyproxy):
+
+- [Quick Start](https://docs.greywall.io/greyproxy/quickstart)
+- [Configuration Reference](https://docs.greywall.io/greyproxy/configuration)
+- [Rule Engine](https://docs.greywall.io/greyproxy/rules)
+- [REST API](https://docs.greywall.io/greyproxy/api)
+- [Dashboard](https://docs.greywall.io/greyproxy/dashboard)
+- [Multi-Protocol Proxy](https://docs.greywall.io/greyproxy/proxy)
+- [Service Management](https://docs.greywall.io/greyproxy/service)
+- [Architecture](https://docs.greywall.io/greyproxy/architecture)
+- [Troubleshooting](https://docs.greywall.io/greyproxy/troubleshooting)
+
 ## Acknowledgments
 
 Greyproxy is a fork of [**GOST** (GO Simple Tunnel)](https://github.com/go-gost/gost) by [ginuerzh](https://github.com/ginuerzh). GOST is an excellent and feature-rich tunnel and proxy toolkit written in Go, and its solid foundation made this project possible. We are grateful to ginuerzh and all GOST contributors for their work and for releasing it under the MIT license.
