@@ -58,7 +58,7 @@ type notifyBackend int
 const (
 	backendNone notifyBackend = iota
 	backendNotifySend
-	backendTerminalNotifier
+	backendOsascript
 )
 
 // notifySendCaps tracks which features the installed notify-send supports.
@@ -101,29 +101,9 @@ func detectBackend() notifyBackend {
 			return backendNotifySend
 		}
 	case "darwin":
-		if findTerminalNotifier() != "" {
-			return backendTerminalNotifier
-		}
+		return backendOsascript
 	}
 	return backendNone
-}
-
-// findTerminalNotifier returns the path to terminal-notifier, checking both
-// PATH and common Homebrew install locations (launchd agents run with a
-// minimal PATH that excludes /opt/homebrew/bin and /usr/local/bin).
-func findTerminalNotifier() string {
-	if p, err := exec.LookPath("terminal-notifier"); err == nil {
-		return p
-	}
-	for _, candidate := range []string{
-		"/opt/homebrew/bin/terminal-notifier", // Apple Silicon Homebrew
-		"/usr/local/bin/terminal-notifier",    // Intel Homebrew
-	} {
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate
-		}
-	}
-	return ""
 }
 
 // BackendInfo returns information about the notification backend,
@@ -136,8 +116,7 @@ func (n *Notifier) BackendInfo() NotificationBackendInfo {
 	if !info.Available {
 		info.InstallHint = installHint()
 	}
-	// terminal-notifier on macOS always supports actions.
-	info.SupportsActions = n.backend == backendTerminalNotifier || n.linuxCaps.actions
+	info.SupportsActions = n.backend == backendOsascript || n.linuxCaps.actions
 	return info
 }
 
@@ -179,10 +158,7 @@ func parseVersion(v string) (major, minor int) {
 }
 
 func installHint() string {
-	switch runtime.GOOS {
-	case "darwin":
-		return "Install terminal-notifier with: brew install terminal-notifier"
-	case "linux":
+	if runtime.GOOS == "linux" {
 		return "Install libnotify with: sudo apt install libnotify-bin (Debian/Ubuntu) or sudo dnf install libnotify-utils (Fedora)"
 	}
 	return "Desktop notifications are not supported on this platform."
@@ -236,15 +212,15 @@ func (n *Notifier) Start() {
 	if n.backend == backendNotifySend && !n.linuxCaps.actions {
 		n.log.Warn("notify-send < 0.8 detected; running in basic mode (no click actions or auto-dismiss)")
 	}
-	n.log.Infof("notifier started (enabled=%v, backend=%v, actions=%v)", n.enabled.Load(), n.backendName(), n.linuxCaps.actions || n.backend == backendTerminalNotifier)
+	n.log.Infof("notifier started (enabled=%v, backend=%v, actions=%v)", n.enabled.Load(), n.backendName(), n.linuxCaps.actions || n.backend == backendOsascript)
 }
 
 func (n *Notifier) backendName() string {
 	switch n.backend {
 	case backendNotifySend:
 		return "notify-send"
-	case backendTerminalNotifier:
-		return "terminal-notifier"
+	case backendOsascript:
+		return "osascript"
 	default:
 		return "none"
 	}
@@ -428,8 +404,8 @@ func (n *Notifier) sendNotification(title, body, url string, pendingID int64) {
 	switch n.backend {
 	case backendNotifySend:
 		n.sendLinux(title, body, url, pendingID)
-	case backendTerminalNotifier:
-		n.sendDarwinTerminalNotifier(title, body, url, pendingID)
+	case backendOsascript:
+		n.sendDarwinOsascript(title, body, pendingID)
 	}
 }
 
@@ -503,28 +479,46 @@ func (n *Notifier) sendLinuxBasic(title, body string, pendingID int64) {
 	}()
 }
 
-func (n *Notifier) sendDarwinTerminalNotifier(title, body, url string, pendingID int64) {
-	bin := findTerminalNotifier()
-	if bin == "" {
-		return
-	}
+// sendDarwinOsascript shows a modal Allow/Deny dialog using osascript.
+// osascript is always available on macOS and supports action buttons natively.
+func (n *Notifier) sendDarwinOsascript(title, body string, pendingID int64) {
 	go func() {
-		cmd := exec.Command(bin, //nolint:gosec // path resolved from known locations
-			"-title", title,
-			"-message", body,
-			"-open", url,
-			"-group", fmt.Sprintf("greyproxy-%d", pendingID),
-			"-sender", "com.apple.Safari",
-			"-timeout", "30",
+		script := fmt.Sprintf(
+			`display dialog %q buttons {"Deny", "Allow"} default button "Allow" with title %q giving up after 30`,
+			body, title,
 		)
-
-		if err := cmd.Start(); err != nil {
-			n.log.Debugf("terminal-notifier start: %v", err)
+		out, err := exec.Command("osascript", "-e", script).Output() //nolint:gosec
+		if err != nil {
+			// User cancelled (Esc / Cmd-.) or osascript error — no action.
+			n.log.Debugf("osascript dialog for pending %d: %v", pendingID, err)
 			return
 		}
 
-		n.trackNotification(pendingID, cmd.Process)
-		cmd.Wait()
-		n.untrackNotification(pendingID)
+		result := strings.TrimSpace(string(out))
+		if strings.Contains(result, "gave up:true") {
+			return
+		}
+		switch {
+		case strings.Contains(result, "button returned:Allow"):
+			rule, err := AllowPending(n.db, pendingID, "exact", "permanent", nil)
+			if err != nil {
+				n.log.Warnf("allow pending %d from dialog: %v", pendingID, err)
+			} else {
+				n.bus.Publish(Event{
+					Type: EventPendingAllowed,
+					Data: map[string]any{"pending_id": pendingID, "rule": rule.ToJSON()},
+				})
+			}
+		case strings.Contains(result, "button returned:Deny"):
+			rule, err := DenyPending(n.db, pendingID, "exact", "permanent", nil)
+			if err != nil {
+				n.log.Warnf("deny pending %d from dialog: %v", pendingID, err)
+			} else {
+				n.bus.Publish(Event{
+					Type: EventPendingDismissed,
+					Data: map[string]any{"pending_id": pendingID, "rule": rule.ToJSON()},
+				})
+			}
+		}
 	}()
 }
