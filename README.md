@@ -23,6 +23,7 @@ This software is meant to be used with [**greywall**](https://github.com/Greyhav
 - **Pending Requests**: Review and approve/deny network requests awaiting a policy decision
 - **Multi-Protocol Proxy**: HTTP, SOCKS5, and DNS proxies with forwarding chain support
 - **DNS Caching**: Built-in DNS resolution and caching with hostname enrichment on requests
+- **Sensitive Header Redaction**: Automatically strips Authorization, Cookie, API keys, and tokens from stored HTTP transactions. Configurable patterns via the API.
 - **REST API**: Full HTTP API for automation and integration
 - **Real-Time Updates**: WebSocket-based live updates on the dashboard
 - **Single Binary**: Web UI, fonts, icons, and assets are all embedded, no separate frontend to deploy
