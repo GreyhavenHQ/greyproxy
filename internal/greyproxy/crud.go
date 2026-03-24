@@ -1243,3 +1243,98 @@ func QueryHttpTransactions(db *DB, f TransactionFilter) ([]HttpTransaction, int,
 	}
 	return txns, total, nil
 }
+
+// RedactExistingTransactionHeaders applies the given HeaderRedactor to
+// all stored HTTP transactions. It processes rows in batches, unmarshals
+// headers from JSON, redacts sensitive values, and writes them back.
+// Returns the number of rows updated.
+func RedactExistingTransactionHeaders(db *DB, redactor *HeaderRedactor) (int, error) {
+	const batchSize = 500
+
+	db.Lock()
+	defer db.Unlock()
+
+	var total int
+	for {
+		rows, err := db.WriteDB().Query(
+			`SELECT id, request_headers, response_headers
+			 FROM http_transactions
+			 WHERE request_headers IS NOT NULL OR response_headers IS NOT NULL
+			 LIMIT ? OFFSET ?`, batchSize, total)
+		if err != nil {
+			return total, fmt.Errorf("query transactions: %w", err)
+		}
+
+		type row struct {
+			id          int64
+			reqHeaders  sql.NullString
+			respHeaders sql.NullString
+		}
+		var batch []row
+		for rows.Next() {
+			var r row
+			if err := rows.Scan(&r.id, &r.reqHeaders, &r.respHeaders); err != nil {
+				rows.Close()
+				return total, fmt.Errorf("scan: %w", err)
+			}
+			batch = append(batch, r)
+		}
+		rows.Close()
+
+		if len(batch) == 0 {
+			break
+		}
+
+		for _, r := range batch {
+			newReq, reqChanged := redactHeaderJSON(r.reqHeaders, redactor)
+			newResp, respChanged := redactHeaderJSON(r.respHeaders, redactor)
+			if !reqChanged && !respChanged {
+				total++
+				continue
+			}
+			_, err := db.WriteDB().Exec(
+				`UPDATE http_transactions SET request_headers = ?, response_headers = ? WHERE id = ?`,
+				newReq, newResp, r.id)
+			if err != nil {
+				return total, fmt.Errorf("update id %d: %w", r.id, err)
+			}
+			total++
+		}
+
+		if len(batch) < batchSize {
+			break
+		}
+	}
+	return total, nil
+}
+
+// redactHeaderJSON unmarshals a JSON header string, applies redaction,
+// and re-marshals. Returns the new NullString and whether any value changed.
+func redactHeaderJSON(h sql.NullString, redactor *HeaderRedactor) (sql.NullString, bool) {
+	if !h.Valid || h.String == "" {
+		return h, false
+	}
+	var headers map[string][]string
+	if err := json.Unmarshal([]byte(h.String), &headers); err != nil {
+		return h, false
+	}
+
+	changed := false
+	for key, vals := range headers {
+		if redactor.isSensitive(key) {
+			if len(vals) != 1 || vals[0] != RedactedValue {
+				headers[key] = []string{RedactedValue}
+				changed = true
+			}
+		}
+	}
+	if !changed {
+		return h, false
+	}
+
+	b, err := json.Marshal(headers)
+	if err != nil {
+		return h, false
+	}
+	return sql.NullString{String: string(b), Valid: true}, true
+}

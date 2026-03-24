@@ -289,6 +289,107 @@ func TestCreateHttpTransactionRedactsHeaders(t *testing.T) {
 	}
 }
 
+func TestRedactExistingTransactionHeaders(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Insert transactions with plaintext sensitive headers (simulating old data)
+	for _, input := range []HttpTransactionCreateInput{
+		{
+			ContainerName:   "app1",
+			DestinationHost: "api.example.com",
+			DestinationPort: 443,
+			Method:          "POST",
+			URL:             "https://api.example.com/v1/data",
+			RequestHeaders: http.Header{
+				"Authorization": {"Bearer sk-secret-key"},
+				"Content-Type":  {"application/json"},
+				"X-Api-Key":     {"key-123"},
+			},
+			StatusCode: 200,
+			ResponseHeaders: http.Header{
+				"Content-Type": {"application/json"},
+				"Set-Cookie":   {"session=abc123"},
+			},
+			Result: "auto",
+		},
+		{
+			ContainerName:   "app2",
+			DestinationHost: "other.example.com",
+			DestinationPort: 443,
+			Method:          "GET",
+			URL:             "https://other.example.com/health",
+			RequestHeaders: http.Header{
+				"Accept": {"*/*"},
+			},
+			StatusCode: 200,
+			Result:     "auto",
+		},
+	} {
+		if _, err := CreateHttpTransaction(db, input); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Run batch redaction
+	redactor := NewHeaderRedactor(nil)
+	count, err := RedactExistingTransactionHeaders(db, redactor)
+	if err != nil {
+		t.Fatalf("RedactExistingTransactionHeaders: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("processed %d rows, want 2", count)
+	}
+
+	// Verify first transaction's headers are redacted
+	txn, err := GetHttpTransaction(db, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reqHeaders map[string][]string
+	if err := json.Unmarshal([]byte(txn.RequestHeaders.String), &reqHeaders); err != nil {
+		t.Fatal(err)
+	}
+	if v := reqHeaders["Authorization"]; len(v) != 1 || v[0] != RedactedValue {
+		t.Errorf("Authorization = %v, want [%q]", v, RedactedValue)
+	}
+	if v := reqHeaders["X-Api-Key"]; len(v) != 1 || v[0] != RedactedValue {
+		t.Errorf("X-Api-Key = %v, want [%q]", v, RedactedValue)
+	}
+	if v := reqHeaders["Content-Type"]; len(v) != 1 || v[0] != "application/json" {
+		t.Errorf("Content-Type = %v, want [application/json]", v)
+	}
+
+	var respHeaders map[string][]string
+	if err := json.Unmarshal([]byte(txn.ResponseHeaders.String), &respHeaders); err != nil {
+		t.Fatal(err)
+	}
+	if v := respHeaders["Set-Cookie"]; len(v) != 1 || v[0] != RedactedValue {
+		t.Errorf("Set-Cookie = %v, want [%q]", v, RedactedValue)
+	}
+
+	// Verify second transaction is untouched (no sensitive headers)
+	txn2, err := GetHttpTransaction(db, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reqHeaders2 map[string][]string
+	if err := json.Unmarshal([]byte(txn2.RequestHeaders.String), &reqHeaders2); err != nil {
+		t.Fatal(err)
+	}
+	if v := reqHeaders2["Accept"]; len(v) != 1 || v[0] != "*/*" {
+		t.Errorf("Accept = %v, want [*/*]", v)
+	}
+
+	// Running again should be idempotent
+	count2, err := RedactExistingTransactionHeaders(db, redactor)
+	if err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+	if count2 != 2 {
+		t.Errorf("second run processed %d rows, want 2", count2)
+	}
+}
+
 func TestSettingsFileContainsRedactedHeaders(t *testing.T) {
 	tmp := filepath.Join(t.TempDir(), "settings.json")
 	m := NewSettingsManager(tmp, true)

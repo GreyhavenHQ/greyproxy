@@ -1,7 +1,9 @@
 package api
 
 import (
+	"log/slog"
 	"net/http"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 	greyproxy "github.com/greyhavenhq/greyproxy/internal/greyproxy"
@@ -26,5 +28,42 @@ func RebuildConversationsHandler(s *Shared) gin.HandlerFunc {
 		}
 		go s.Assembler.RebuildAllConversations()
 		c.JSON(http.StatusOK, gin.H{"status": "rebuild started"})
+	}
+}
+
+// redactHeadersState tracks the background redaction job.
+var redactHeadersState struct {
+	mu      sync.Mutex
+	running bool
+}
+
+func RedactHeadersHandler(s *Shared) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		redactHeadersState.mu.Lock()
+		if redactHeadersState.running {
+			redactHeadersState.mu.Unlock()
+			c.JSON(http.StatusConflict, gin.H{"error": "redaction already in progress"})
+			return
+		}
+		redactHeadersState.running = true
+		redactHeadersState.mu.Unlock()
+
+		redactor := s.Settings.HeaderRedactor()
+		go func() {
+			defer func() {
+				redactHeadersState.mu.Lock()
+				redactHeadersState.running = false
+				redactHeadersState.mu.Unlock()
+			}()
+
+			count, err := greyproxy.RedactExistingTransactionHeaders(s.DB, redactor)
+			if err != nil {
+				slog.Error("maintenance: redact headers failed", "error", err, "processed", count)
+				return
+			}
+			slog.Info("maintenance: redact headers completed", "processed", count)
+		}()
+
+		c.JSON(http.StatusOK, gin.H{"status": "redaction started"})
 	}
 }

@@ -92,6 +92,7 @@ func NewRouter(s *Shared, pathPrefix string) (*gin.Engine, *gin.RouterGroup) {
 
 		// Maintenance
 		api.POST("/maintenance/rebuild-conversations", RebuildConversationsHandler(s))
+		api.POST("/maintenance/redact-headers", RedactHeadersHandler(s))
 		api.GET("/maintenance/status", MaintenanceStatusHandler(s))
 	}
 
