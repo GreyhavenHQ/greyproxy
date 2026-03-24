@@ -2,6 +2,7 @@ package greyproxy
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -291,7 +292,7 @@ func (a *ConversationAssembler) loadNewTransactions(sinceID int64) ([]transactio
 			id            int64
 			ts, container, url, method, host string
 			reqBody, respBody []byte
-			respCT        string
+			respCT        sql.NullString
 			durationMs    int64
 		)
 		if err := rows.Scan(&id, &ts, &container, &url, &method, &host,
@@ -315,7 +316,7 @@ func (a *ConversationAssembler) loadNewTransactions(sinceID int64) ([]transactio
 			Host:          host,
 			RequestBody:   reqBody,
 			ResponseBody:  respBody,
-			ResponseCT:    respCT,
+			ResponseCT:    respCT.String,
 			ContainerName: container,
 			DurationMs:    durationMs,
 		})
@@ -379,7 +380,7 @@ func (a *ConversationAssembler) loadTransactionsForSessions(sessionIDs map[strin
 			id            int64
 			ts, container, url, method, host string
 			reqBody, respBody []byte
-			respCT        string
+			respCT        sql.NullString
 			durationMs    int64
 		)
 		if err := rows.Scan(&id, &ts, &container, &url, &method, &host,
@@ -400,7 +401,7 @@ func (a *ConversationAssembler) loadTransactionsForSessions(sessionIDs map[strin
 			Host:          host,
 			RequestBody:   reqBody,
 			ResponseBody:  respBody,
-			ResponseCT:    respCT,
+			ResponseCT:    respCT.String,
 			ContainerName: container,
 			DurationMs:    durationMs,
 		})
