@@ -26,7 +26,12 @@ func RebuildConversationsHandler(s *Shared) gin.HandlerFunc {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "assembler not available"})
 			return
 		}
-		go s.Assembler.RebuildAllConversations()
+		go s.Assembler.RebuildAllConversationsWithProgress(func(p greyproxy.MaintenanceProgress) {
+			s.Bus.Publish(greyproxy.Event{
+				Type: greyproxy.EventMaintenanceProgress,
+				Data: p,
+			})
+		})
 		c.JSON(http.StatusOK, gin.H{"status": "rebuild started"})
 	}
 }
@@ -56,7 +61,7 @@ func RedactHeadersHandler(s *Shared) gin.HandlerFunc {
 				redactHeadersState.mu.Unlock()
 			}()
 
-			count, err := greyproxy.RedactExistingTransactionHeaders(s.DB, redactor, func(p greyproxy.RedactProgress) {
+			count, err := greyproxy.RedactExistingTransactionHeaders(s.DB, redactor, func(p greyproxy.MaintenanceProgress) {
 				s.Bus.Publish(greyproxy.Event{
 					Type: greyproxy.EventMaintenanceProgress,
 					Data: p,
@@ -66,7 +71,7 @@ func RedactHeadersHandler(s *Shared) gin.HandlerFunc {
 				slog.Error("maintenance: redact headers failed", "error", err, "processed", count)
 				s.Bus.Publish(greyproxy.Event{
 					Type: greyproxy.EventMaintenanceProgress,
-					Data: greyproxy.RedactProgress{
+					Data: greyproxy.MaintenanceProgress{
 						Task:      "redact_headers",
 						Processed: count,
 						Done:      true,

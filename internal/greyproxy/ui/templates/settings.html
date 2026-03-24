@@ -183,12 +183,19 @@
                         <p class="text-sm text-muted-foreground">Reprocess all HTTP transactions through the conversation assembler. Useful after upgrading when the analysis logic has improved.</p>
                         <p id="assembler-version-info" class="text-xs text-muted-foreground mt-1"></p>
                     </div>
-                    <button id="rebuild-btn" onclick="rebuildConversations()"
+                    <button id="rebuild-btn" data-label="Rebuild" onclick="rebuildConversations()"
                         class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-primary-foreground bg-primary hover:bg-primary/90 flex-shrink-0 ml-4">
                         Rebuild
                     </button>
                 </div>
-                <div id="rebuild-status" class="hidden mt-3 text-sm"></div>
+                <div id="rebuild-status" class="hidden mt-3">
+                    <div class="flex items-center gap-3">
+                        <div class="flex-1 bg-muted rounded-full h-2 overflow-hidden">
+                            <div id="rebuild-bar" class="h-full bg-primary rounded-full transition-all duration-300" style="width: 0%"></div>
+                        </div>
+                        <span id="rebuild-status-text" class="text-sm text-muted-foreground whitespace-nowrap"></span>
+                    </div>
+                </div>
 
                 <hr class="my-6 border-border">
 
@@ -198,12 +205,19 @@
                         <p class="font-medium">Redact stored headers</p>
                         <p class="text-sm text-muted-foreground">Apply header redaction to all previously stored HTTP transactions. Replaces sensitive values (Authorization, Cookie, API keys, tokens) with [REDACTED].</p>
                     </div>
-                    <button id="redact-btn" onclick="redactHeaders()"
+                    <button id="redact-btn" data-label="Redact" onclick="redactHeaders()"
                         class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-primary-foreground bg-primary hover:bg-primary/90 flex-shrink-0 ml-4">
                         Redact
                     </button>
                 </div>
-                <div id="redact-status" class="hidden mt-3 text-sm"></div>
+                <div id="redact-status" class="hidden mt-3">
+                    <div class="flex items-center gap-3">
+                        <div class="flex-1 bg-muted rounded-full h-2 overflow-hidden">
+                            <div id="redact-bar" class="h-full bg-primary rounded-full transition-all duration-300" style="width: 0%"></div>
+                        </div>
+                        <span id="redact-status-text" class="text-sm text-muted-foreground whitespace-nowrap"></span>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -330,55 +344,20 @@
     };
 
     window.redactHeaders = function() {
-        var btn = document.getElementById('redact-btn');
-        var status = document.getElementById('redact-status');
-        btn.disabled = true;
-        btn.textContent = 'Redacting...';
-        btn.classList.add('opacity-50');
-        status.classList.remove('hidden');
-        status.innerHTML = '<span class="text-muted-foreground">Starting redaction...</span>';
-
-        fetch(prefix + '/api/maintenance/redact-headers', { method: 'POST' })
-            .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
-            .then(function(res) {
-                if (!res.ok) {
-                    status.innerHTML = '<span class="text-red-600">' + escapeHtml(res.data.error) + '</span>';
-                    btn.textContent = 'Redact';
-                    btn.disabled = false;
-                    btn.classList.remove('opacity-50');
-                }
-                // Progress updates arrive via WebSocket
-            })
-            .catch(function(err) {
-                status.innerHTML = '<span class="text-red-600">Error: ' + escapeHtml(err.message) + '</span>';
-                btn.textContent = 'Redact';
-                btn.disabled = false;
-                btn.classList.remove('opacity-50');
-            });
+        startMaintenanceTask('redact', '/api/maintenance/redact-headers');
     };
 
-    // Listen for redaction progress events from the WebSocket
+    // Listen for maintenance progress events from the WebSocket
+    var taskPrefixMap = { 'redact_headers': 'redact', 'rebuild_conversations': 'rebuild' };
     window.addEventListener('proxy:maintenance-event', function(e) {
         var data = e.detail.data;
-        if (!data || data.task !== 'redact_headers') return;
-
-        var btn = document.getElementById('redact-btn');
-        var status = document.getElementById('redact-status');
-        status.classList.remove('hidden');
-
-        if (data.error) {
-            status.innerHTML = '<span class="text-red-600">Error: ' + escapeHtml(data.error) + '</span>';
-            btn.textContent = 'Redact';
-            btn.disabled = false;
-            btn.classList.remove('opacity-50');
-        } else if (data.done) {
-            status.innerHTML = '<span class="text-green-600">Done. Redacted ' + data.processed + ' transaction' + (data.processed !== 1 ? 's' : '') + '.</span>';
-            btn.textContent = 'Redact';
-            btn.disabled = false;
-            btn.classList.remove('opacity-50');
-        } else if (data.total > 0) {
-            var pct = Math.round(data.processed / data.total * 100);
-            status.innerHTML = '<span class="text-muted-foreground">Processing ' + data.processed + ' / ' + data.total + ' transactions (' + pct + '%)...</span>';
+        if (!data || !data.task) return;
+        var uiPrefix = taskPrefixMap[data.task];
+        if (uiPrefix) {
+            updateProgressUI(uiPrefix, data);
+            if (data.task === 'rebuild_conversations' && data.done && !data.error) {
+                loadMaintenanceStatus();
+            }
         }
     });
 
@@ -389,30 +368,71 @@
         icon.style.transform = section.classList.contains('hidden') ? '' : 'rotate(90deg)';
     };
 
-    window.rebuildConversations = function() {
-        var btn = document.getElementById('rebuild-btn');
-        var status = document.getElementById('rebuild-status');
+    // Shared progress bar helper
+    function updateProgressUI(prefix_id, data) {
+        var status = document.getElementById(prefix_id + '-status');
+        var bar = document.getElementById(prefix_id + '-bar');
+        var text = document.getElementById(prefix_id + '-status-text');
+        var btn = document.getElementById(prefix_id + '-btn');
+        status.classList.remove('hidden');
+
+        if (data.error) {
+            bar.style.width = '100%';
+            bar.classList.remove('bg-primary');
+            bar.classList.add('bg-red-500');
+            text.innerHTML = '<span class="text-red-600">Error: ' + escapeHtml(data.error) + '</span>';
+            btn.textContent = btn.getAttribute('data-label');
+            btn.disabled = false;
+            btn.classList.remove('opacity-50');
+        } else if (data.done) {
+            bar.style.width = '100%';
+            bar.classList.remove('bg-red-500');
+            bar.classList.add('bg-primary');
+            text.innerHTML = '<span class="text-green-600">Done (' + data.processed + ' processed)</span>';
+            btn.textContent = btn.getAttribute('data-label');
+            btn.disabled = false;
+            btn.classList.remove('opacity-50');
+        } else if (data.total > 0) {
+            var pct = Math.round(data.processed / data.total * 100);
+            bar.style.width = pct + '%';
+            bar.classList.remove('bg-red-500');
+            bar.classList.add('bg-primary');
+            text.textContent = data.processed + ' / ' + data.total + ' (' + pct + '%)';
+        } else {
+            bar.style.width = '0%';
+            text.textContent = 'Starting...';
+        }
+    }
+
+    function startMaintenanceTask(prefix_id, apiPath) {
+        var btn = document.getElementById(prefix_id + '-btn');
+        var status = document.getElementById(prefix_id + '-status');
+        var bar = document.getElementById(prefix_id + '-bar');
+        var text = document.getElementById(prefix_id + '-status-text');
+
         btn.disabled = true;
-        btn.textContent = 'Rebuilding...';
         btn.classList.add('opacity-50');
         status.classList.remove('hidden');
-        status.innerHTML = '<span class="text-muted-foreground">Rebuild in progress...</span>';
+        bar.style.width = '0%';
+        bar.classList.remove('bg-red-500');
+        bar.classList.add('bg-primary');
+        text.textContent = 'Starting...';
 
-        fetch(prefix + '/api/maintenance/rebuild-conversations', { method: 'POST' })
-            .then(function(r) { return r.json(); })
-            .then(function() {
-                status.innerHTML = '<span class="text-green-600">Rebuild started. Conversations will update shortly.</span>';
-                btn.textContent = 'Rebuild';
-                btn.disabled = false;
-                btn.classList.remove('opacity-50');
-                loadMaintenanceStatus();
+        fetch(prefix + apiPath, { method: 'POST' })
+            .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
+            .then(function(res) {
+                if (!res.ok) {
+                    updateProgressUI(prefix_id, { error: res.data.error, done: true });
+                }
+                // Progress updates arrive via WebSocket
             })
             .catch(function(err) {
-                status.innerHTML = '<span class="text-red-600">Error: ' + err.message + '</span>';
-                btn.textContent = 'Rebuild';
-                btn.disabled = false;
-                btn.classList.remove('opacity-50');
+                updateProgressUI(prefix_id, { error: err.message, done: true });
             });
+    }
+
+    window.rebuildConversations = function() {
+        startMaintenanceTask('rebuild', '/api/maintenance/rebuild-conversations');
     };
 
     function loadMaintenanceStatus() {

@@ -1244,8 +1244,8 @@ func QueryHttpTransactions(db *DB, f TransactionFilter) ([]HttpTransaction, int,
 	return txns, total, nil
 }
 
-// RedactProgress reports the progress of a batch redaction operation.
-type RedactProgress struct {
+// MaintenanceProgress reports the progress of a batch redaction operation.
+type MaintenanceProgress struct {
 	Task      string `json:"task"`
 	Processed int    `json:"processed"`
 	Total     int    `json:"total"`
@@ -1258,11 +1258,11 @@ type RedactProgress struct {
 // headers from JSON, redacts sensitive values, and writes them back.
 // The optional onProgress callback is invoked after each batch.
 // Returns the number of rows processed.
-func RedactExistingTransactionHeaders(db *DB, redactor *HeaderRedactor, onProgress func(RedactProgress)) (int, error) {
+func RedactExistingTransactionHeaders(db *DB, redactor *HeaderRedactor, onProgress func(MaintenanceProgress)) (int, error) {
 	const batchSize = 500
 
 	if onProgress == nil {
-		onProgress = func(RedactProgress) {}
+		onProgress = func(MaintenanceProgress) {}
 	}
 
 	db.Lock()
@@ -1276,7 +1276,7 @@ func RedactExistingTransactionHeaders(db *DB, redactor *HeaderRedactor, onProgre
 		return 0, fmt.Errorf("count transactions: %w", err)
 	}
 
-	onProgress(RedactProgress{Task: "redact_headers", Total: totalRows})
+	onProgress(MaintenanceProgress{Task: "redact_headers", Total: totalRows})
 
 	var processed int
 	for {
@@ -1325,14 +1325,14 @@ func RedactExistingTransactionHeaders(db *DB, redactor *HeaderRedactor, onProgre
 			processed++
 		}
 
-		onProgress(RedactProgress{Task: "redact_headers", Processed: processed, Total: totalRows})
+		onProgress(MaintenanceProgress{Task: "redact_headers", Processed: processed, Total: totalRows})
 
 		if len(batch) < batchSize {
 			break
 		}
 	}
 
-	onProgress(RedactProgress{Task: "redact_headers", Processed: processed, Total: totalRows, Done: true})
+	onProgress(MaintenanceProgress{Task: "redact_headers", Processed: processed, Total: totalRows, Done: true})
 	return processed, nil
 }
 
