@@ -189,6 +189,21 @@
                     </button>
                 </div>
                 <div id="rebuild-status" class="hidden mt-3 text-sm"></div>
+
+                <hr class="my-6 border-border">
+
+                <!-- Redact existing headers -->
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="font-medium">Redact stored headers</p>
+                        <p class="text-sm text-muted-foreground">Apply header redaction to all previously stored HTTP transactions. Replaces sensitive values (Authorization, Cookie, API keys, tokens) with [REDACTED].</p>
+                    </div>
+                    <button id="redact-btn" onclick="redactHeaders()"
+                        class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-primary-foreground bg-primary hover:bg-primary/90 flex-shrink-0 ml-4">
+                        Redact
+                    </button>
+                </div>
+                <div id="redact-status" class="hidden mt-3 text-sm"></div>
             </div>
         </div>
     </div>
@@ -312,6 +327,35 @@
             updateNotifStatus(data.notifications);
         })
         .catch(function() {});
+    };
+
+    window.redactHeaders = function() {
+        var btn = document.getElementById('redact-btn');
+        var status = document.getElementById('redact-status');
+        btn.disabled = true;
+        btn.textContent = 'Redacting...';
+        btn.classList.add('opacity-50');
+        status.classList.remove('hidden');
+        status.innerHTML = '<span class="text-muted-foreground">Redaction in progress...</span>';
+
+        fetch(prefix + '/api/maintenance/redact-headers', { method: 'POST' })
+            .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
+            .then(function(res) {
+                if (res.ok) {
+                    status.innerHTML = '<span class="text-green-600">Redaction started. Sensitive headers in stored transactions will be cleaned up shortly.</span>';
+                } else {
+                    status.innerHTML = '<span class="text-red-600">' + escapeHtml(res.data.error) + '</span>';
+                }
+                btn.textContent = 'Redact';
+                btn.disabled = false;
+                btn.classList.remove('opacity-50');
+            })
+            .catch(function(err) {
+                status.innerHTML = '<span class="text-red-600">Error: ' + escapeHtml(err.message) + '</span>';
+                btn.textContent = 'Redact';
+                btn.disabled = false;
+                btn.classList.remove('opacity-50');
+            });
     };
 
     window.toggleAdvanced = function() {
