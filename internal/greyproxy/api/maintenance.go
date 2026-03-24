@@ -26,12 +26,7 @@ func RebuildConversationsHandler(s *Shared) gin.HandlerFunc {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "assembler not available"})
 			return
 		}
-		go s.Assembler.RebuildAllConversationsWithProgress(func(p greyproxy.MaintenanceProgress) {
-			s.Bus.Publish(greyproxy.Event{
-				Type: greyproxy.EventMaintenanceProgress,
-				Data: p,
-			})
-		})
+		go s.Assembler.RebuildAllConversations()
 		c.JSON(http.StatusOK, gin.H{"status": "rebuild started"})
 	}
 }

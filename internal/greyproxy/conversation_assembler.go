@@ -2,7 +2,6 @@ package greyproxy
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -56,21 +55,11 @@ func StoredAssemblerVersion(db *DB) int {
 // RebuildAllConversations resets the processing cursor so the assembler
 // reprocesses every transaction from scratch on its next cycle.
 func (a *ConversationAssembler) RebuildAllConversations() {
-	a.RebuildAllConversationsWithProgress(nil)
-}
-
-// RebuildAllConversationsWithProgress is like RebuildAllConversations but
-// reports progress via the optional callback.
-func (a *ConversationAssembler) RebuildAllConversationsWithProgress(onProgress func(MaintenanceProgress)) {
-	if onProgress == nil {
-		onProgress = func(MaintenanceProgress) {}
-	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	slog.Info("assembler: rebuild requested, resetting processing cursor")
-	onProgress(MaintenanceProgress{Task: "rebuild_conversations"})
 	SetConversationProcessingState(a.db, "last_processed_id", "0")
-	a.processNewTransactionsLockedWithProgress(onProgress)
+	a.processNewTransactionsLocked()
 	SetConversationProcessingState(a.db, "assembler_version", strconv.Itoa(AssemblerVersion))
 	slog.Info("assembler: rebuild complete")
 }
@@ -133,14 +122,6 @@ func (a *ConversationAssembler) processNewTransactions() {
 
 // processNewTransactionsLocked runs incremental assembly. Caller must hold a.mu.
 func (a *ConversationAssembler) processNewTransactionsLocked() {
-	a.processNewTransactionsLockedWithProgress(nil)
-}
-
-// processNewTransactionsLockedWithProgress runs incremental assembly with optional progress.
-func (a *ConversationAssembler) processNewTransactionsLockedWithProgress(onProgress func(MaintenanceProgress)) {
-	if onProgress == nil {
-		onProgress = func(MaintenanceProgress) {}
-	}
 	lastIDStr, err := GetConversationProcessingState(a.db, "last_processed_id")
 	if err != nil {
 		slog.Warn("assembler: failed to get last processed ID", "error", err)
@@ -200,11 +181,8 @@ func (a *ConversationAssembler) processNewTransactionsLockedWithProgress(onProgr
 
 	linkSubagentConversations(allConversations)
 
-	total := len(allConversations)
-	onProgress(MaintenanceProgress{Task: "rebuild_conversations", Total: total})
-
 	// Upsert into database
-	for i, conv := range allConversations {
+	for _, conv := range allConversations {
 		if err := a.upsertConversation(conv); err != nil {
 			slog.Warn("assembler: failed to upsert conversation", "id", conv.conversationID, "error", err)
 			continue
@@ -213,12 +191,8 @@ func (a *ConversationAssembler) processNewTransactionsLockedWithProgress(onProgr
 			Type: EventConversationUpdated,
 			Data: map[string]any{"conversation_id": conv.conversationID},
 		})
-		if (i+1)%10 == 0 || i+1 == total {
-			onProgress(MaintenanceProgress{Task: "rebuild_conversations", Processed: i + 1, Total: total})
-		}
 	}
 
-	onProgress(MaintenanceProgress{Task: "rebuild_conversations", Processed: total, Total: total, Done: true})
 	SetConversationProcessingState(a.db, "last_processed_id", strconv.FormatInt(maxID, 10))
 	slog.Info("assembler: processed conversations", "count", len(allConversations), "max_id", maxID)
 }
@@ -292,7 +266,7 @@ func (a *ConversationAssembler) loadNewTransactions(sinceID int64) ([]transactio
 			id            int64
 			ts, container, url, method, host string
 			reqBody, respBody []byte
-			respCT        sql.NullString
+			respCT        string
 			durationMs    int64
 		)
 		if err := rows.Scan(&id, &ts, &container, &url, &method, &host,
@@ -316,7 +290,7 @@ func (a *ConversationAssembler) loadNewTransactions(sinceID int64) ([]transactio
 			Host:          host,
 			RequestBody:   reqBody,
 			ResponseBody:  respBody,
-			ResponseCT:    respCT.String,
+			ResponseCT:    respCT,
 			ContainerName: container,
 			DurationMs:    durationMs,
 		})
@@ -380,7 +354,7 @@ func (a *ConversationAssembler) loadTransactionsForSessions(sessionIDs map[strin
 			id            int64
 			ts, container, url, method, host string
 			reqBody, respBody []byte
-			respCT        sql.NullString
+			respCT        string
 			durationMs    int64
 		)
 		if err := rows.Scan(&id, &ts, &container, &url, &method, &host,
@@ -401,7 +375,7 @@ func (a *ConversationAssembler) loadTransactionsForSessions(sessionIDs map[strin
 			Host:          host,
 			RequestBody:   reqBody,
 			ResponseBody:  respBody,
-			ResponseCT:    respCT.String,
+			ResponseCT:    respCT,
 			ContainerName: container,
 			DurationMs:    durationMs,
 		})
