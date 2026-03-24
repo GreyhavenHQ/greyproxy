@@ -369,17 +369,22 @@ func (p *program) buildGreyproxyService() error {
 				respBody = decompressBody(info.ResponseBody, info.ResponseHeaders.Get("Content-Encoding"))
 			}
 
+			// Redact sensitive headers before storing in the database
+			redactor := shared.Settings.HeaderRedactor()
+			redactedReqHeaders := redactor.Redact(info.RequestHeaders)
+			redactedRespHeaders := redactor.Redact(info.ResponseHeaders)
+
 			txn, err := greyproxy.CreateHttpTransaction(shared.DB, greyproxy.HttpTransactionCreateInput{
 				ContainerName:       containerName,
 				DestinationHost:     host,
 				DestinationPort:     port,
 				Method:              info.Method,
 				URL:                 "https://" + info.Host + info.URI,
-				RequestHeaders:      info.RequestHeaders,
+				RequestHeaders:      redactedReqHeaders,
 				RequestBody:         reqBody,
 				RequestContentType:  reqCT,
 				StatusCode:          info.StatusCode,
-				ResponseHeaders:     info.ResponseHeaders,
+				ResponseHeaders:     redactedRespHeaders,
 				ResponseBody:        respBody,
 				ResponseContentType: respCT,
 				DurationMs:          info.DurationMs,

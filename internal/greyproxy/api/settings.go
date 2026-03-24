@@ -8,9 +8,10 @@ import (
 )
 
 type settingsResponse struct {
-	Theme         string                   `json:"theme"`
-	Notifications notificationSettingsResp `json:"notifications"`
-	Mitm          mitmSettingsResp         `json:"mitm"`
+	Theme           string                   `json:"theme"`
+	Notifications   notificationSettingsResp `json:"notifications"`
+	Mitm            mitmSettingsResp         `json:"mitm"`
+	RedactedHeaders []string                 `json:"redactedHeaders"`
 }
 
 type mitmSettingsResp struct {
@@ -49,7 +50,8 @@ func buildSettingsResponse(s *Shared) settingsResponse {
 	}
 
 	return settingsResponse{
-		Theme: resolved.Theme,
+		Theme:           resolved.Theme,
+		RedactedHeaders: resolved.RedactedHeaders,
 		Notifications: notificationSettingsResp{
 			Enabled:         resolved.NotificationsEnabled,
 			Available:       info.Available,
@@ -77,6 +79,7 @@ func SettingsUpdateHandler(s *Shared) gin.HandlerFunc {
 			Mitm *struct {
 				Enabled *bool `json:"enabled"`
 			} `json:"mitm"`
+			RedactedHeaders []string `json:"redactedHeaders"`
 		}
 		if err := c.ShouldBindJSON(&body); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -97,6 +100,9 @@ func SettingsUpdateHandler(s *Shared) gin.HandlerFunc {
 		}
 		if body.Mitm != nil && body.Mitm.Enabled != nil {
 			patch.MitmEnabled = body.Mitm.Enabled
+		}
+		if body.RedactedHeaders != nil {
+			patch.RedactedHeaders = body.RedactedHeaders
 		}
 
 		if _, err := s.Settings.Update(patch); err != nil {
