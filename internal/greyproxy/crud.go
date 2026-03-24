@@ -1244,25 +1244,49 @@ func QueryHttpTransactions(db *DB, f TransactionFilter) ([]HttpTransaction, int,
 	return txns, total, nil
 }
 
+// RedactProgress reports the progress of a batch redaction operation.
+type RedactProgress struct {
+	Task      string `json:"task"`
+	Processed int    `json:"processed"`
+	Total     int    `json:"total"`
+	Done      bool   `json:"done"`
+	Error     string `json:"error,omitempty"`
+}
+
 // RedactExistingTransactionHeaders applies the given HeaderRedactor to
 // all stored HTTP transactions. It processes rows in batches, unmarshals
 // headers from JSON, redacts sensitive values, and writes them back.
-// Returns the number of rows updated.
-func RedactExistingTransactionHeaders(db *DB, redactor *HeaderRedactor) (int, error) {
+// The optional onProgress callback is invoked after each batch.
+// Returns the number of rows processed.
+func RedactExistingTransactionHeaders(db *DB, redactor *HeaderRedactor, onProgress func(RedactProgress)) (int, error) {
 	const batchSize = 500
+
+	if onProgress == nil {
+		onProgress = func(RedactProgress) {}
+	}
 
 	db.Lock()
 	defer db.Unlock()
 
-	var total int
+	// Count total rows to report progress
+	var totalRows int
+	if err := db.WriteDB().QueryRow(
+		`SELECT COUNT(*) FROM http_transactions
+		 WHERE request_headers IS NOT NULL OR response_headers IS NOT NULL`).Scan(&totalRows); err != nil {
+		return 0, fmt.Errorf("count transactions: %w", err)
+	}
+
+	onProgress(RedactProgress{Task: "redact_headers", Total: totalRows})
+
+	var processed int
 	for {
 		rows, err := db.WriteDB().Query(
 			`SELECT id, request_headers, response_headers
 			 FROM http_transactions
 			 WHERE request_headers IS NOT NULL OR response_headers IS NOT NULL
-			 LIMIT ? OFFSET ?`, batchSize, total)
+			 LIMIT ? OFFSET ?`, batchSize, processed)
 		if err != nil {
-			return total, fmt.Errorf("query transactions: %w", err)
+			return processed, fmt.Errorf("query transactions: %w", err)
 		}
 
 		type row struct {
@@ -1275,7 +1299,7 @@ func RedactExistingTransactionHeaders(db *DB, redactor *HeaderRedactor) (int, er
 			var r row
 			if err := rows.Scan(&r.id, &r.reqHeaders, &r.respHeaders); err != nil {
 				rows.Close()
-				return total, fmt.Errorf("scan: %w", err)
+				return processed, fmt.Errorf("scan: %w", err)
 			}
 			batch = append(batch, r)
 		}
@@ -1289,23 +1313,27 @@ func RedactExistingTransactionHeaders(db *DB, redactor *HeaderRedactor) (int, er
 			newReq, reqChanged := redactHeaderJSON(r.reqHeaders, redactor)
 			newResp, respChanged := redactHeaderJSON(r.respHeaders, redactor)
 			if !reqChanged && !respChanged {
-				total++
+				processed++
 				continue
 			}
 			_, err := db.WriteDB().Exec(
 				`UPDATE http_transactions SET request_headers = ?, response_headers = ? WHERE id = ?`,
 				newReq, newResp, r.id)
 			if err != nil {
-				return total, fmt.Errorf("update id %d: %w", r.id, err)
+				return processed, fmt.Errorf("update id %d: %w", r.id, err)
 			}
-			total++
+			processed++
 		}
+
+		onProgress(RedactProgress{Task: "redact_headers", Processed: processed, Total: totalRows})
 
 		if len(batch) < batchSize {
 			break
 		}
 	}
-	return total, nil
+
+	onProgress(RedactProgress{Task: "redact_headers", Processed: processed, Total: totalRows, Done: true})
+	return processed, nil
 }
 
 // redactHeaderJSON unmarshals a JSON header string, applies redaction,

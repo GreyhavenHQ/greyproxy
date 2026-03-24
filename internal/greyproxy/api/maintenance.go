@@ -56,9 +56,23 @@ func RedactHeadersHandler(s *Shared) gin.HandlerFunc {
 				redactHeadersState.mu.Unlock()
 			}()
 
-			count, err := greyproxy.RedactExistingTransactionHeaders(s.DB, redactor)
+			count, err := greyproxy.RedactExistingTransactionHeaders(s.DB, redactor, func(p greyproxy.RedactProgress) {
+				s.Bus.Publish(greyproxy.Event{
+					Type: greyproxy.EventMaintenanceProgress,
+					Data: p,
+				})
+			})
 			if err != nil {
 				slog.Error("maintenance: redact headers failed", "error", err, "processed", count)
+				s.Bus.Publish(greyproxy.Event{
+					Type: greyproxy.EventMaintenanceProgress,
+					Data: greyproxy.RedactProgress{
+						Task:      "redact_headers",
+						Processed: count,
+						Done:      true,
+						Error:     err.Error(),
+					},
+				})
 				return
 			}
 			slog.Info("maintenance: redact headers completed", "processed", count)

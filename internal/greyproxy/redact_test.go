@@ -332,7 +332,7 @@ func TestRedactExistingTransactionHeaders(t *testing.T) {
 
 	// Run batch redaction
 	redactor := NewHeaderRedactor(nil)
-	count, err := RedactExistingTransactionHeaders(db, redactor)
+	count, err := RedactExistingTransactionHeaders(db, redactor, nil)
 	if err != nil {
 		t.Fatalf("RedactExistingTransactionHeaders: %v", err)
 	}
@@ -381,7 +381,7 @@ func TestRedactExistingTransactionHeaders(t *testing.T) {
 	}
 
 	// Running again should be idempotent
-	count2, err := RedactExistingTransactionHeaders(db, redactor)
+	count2, err := RedactExistingTransactionHeaders(db, redactor, nil)
 	if err != nil {
 		t.Fatalf("second run: %v", err)
 	}

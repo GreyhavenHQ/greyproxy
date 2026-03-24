@@ -306,6 +306,9 @@
                         if (msg.type === 'conversation.updated') {
                             window.dispatchEvent(new CustomEvent('proxy:conversation-event', { detail: msg }));
                         }
+                        if (msg.type === 'maintenance.progress') {
+                            window.dispatchEvent(new CustomEvent('proxy:maintenance-event', { detail: msg }));
+                        }
                     } catch (e) {}
                 };
 

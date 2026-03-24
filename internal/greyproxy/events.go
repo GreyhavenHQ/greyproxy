@@ -16,6 +16,9 @@ const (
 
 	// Conversation dissector events
 	EventConversationUpdated = "conversation.updated"
+
+	// Maintenance events
+	EventMaintenanceProgress = "maintenance.progress"
 )
 
 // Event represents a broadcast event.
