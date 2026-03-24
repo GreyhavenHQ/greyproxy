@@ -1,6 +1,6 @@
 # Sensitive Header Redaction
 
-> Available since v0.4.0
+> Available since v0.3.3
 
 Greyproxy intercepts HTTPS traffic (via MITM) and stores HTTP transactions in its SQLite database for inspection. By default, sensitive header values are replaced with `[REDACTED]` before storage, so credentials never hit the database.
 
