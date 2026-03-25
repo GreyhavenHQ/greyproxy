@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"time"
 	"strconv"
 	"strings"
 	"syscall"
@@ -43,8 +44,9 @@ type program struct {
 	srvGreyproxy *greyproxy.Service
 	srvProfiling *http.Server
 
-	cancel          context.CancelFunc
-	assemblerCancel context.CancelFunc
+	cancel           context.CancelFunc
+	assemblerCancel  context.CancelFunc
+	credStoreCancel  context.CancelFunc
 }
 
 func (p *program) initParser() {
@@ -204,6 +206,9 @@ func (p *program) Stop(s service.Service) error {
 		p.srvProfiling.Close()
 		logger.Default().Debug("service @profiling shutdown")
 	}
+	if p.credStoreCancel != nil {
+		p.credStoreCancel()
+	}
 	if p.assemblerCancel != nil {
 		p.assemblerCancel()
 	}
@@ -321,6 +326,33 @@ func (p *program) buildGreyproxyService() error {
 	shared.Settings.OnMitmChanged(func(enabled bool) {
 		gostx.SetGlobalMitmEnabled(enabled)
 	})
+
+	// Initialize credential substitution encryption key and store
+	encKey, newKey, err := greyproxy.LoadOrGenerateKey(greyproxyDataHome())
+	if err != nil {
+		log.Warnf("credential substitution disabled: %v", err)
+	} else {
+		shared.EncryptionKey = encKey
+		credStore, err := greyproxy.NewCredentialStore(shared.DB, encKey, shared.Bus)
+		if err != nil {
+			log.Warnf("credential store init failed: %v", err)
+		} else {
+			shared.CredentialStore = credStore
+			if newKey {
+				if purged, err := credStore.PurgeUnreadableSessions(); err == nil && purged > 0 {
+					log.Infof("purged %d unreadable sessions (new encryption key)", purged)
+				}
+			}
+			credStoreCtx, credStoreCancel := context.WithCancel(context.Background())
+			p.credStoreCancel = credStoreCancel
+			credStore.StartCleanupLoop(credStoreCtx, 60*time.Second)
+			// Wire credential substitution into the MITM pipeline
+			gostx.SetGlobalCredentialSubstituter(func(req *http.Request) {
+				credStore.SubstituteRequest(req)
+			})
+			log.Infof("credential store loaded: %d mappings from %d sessions", credStore.Size(), credStore.SessionCount())
+		}
+	}
 
 	shared.Version = version
 

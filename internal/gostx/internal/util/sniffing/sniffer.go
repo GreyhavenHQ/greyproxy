@@ -143,6 +143,11 @@ type HTTPRequestHoldInfo struct {
 // Return nil to allow, ErrRequestDenied to send 403, or block until approval.
 var GlobalHTTPRequestHoldHook func(ctx context.Context, info HTTPRequestHoldInfo) error
 
+// GlobalCredentialSubstituter is called (if set) just before forwarding a request upstream.
+// It modifies the request in-place, replacing credential placeholders with real values.
+// Headers should already be cloned for storage before this point.
+var GlobalCredentialSubstituter func(req *http.Request)
+
 // globalMitmEnabled controls whether MITM TLS interception is active. Default: enabled (1).
 var globalMitmEnabled atomic.Int32
 
@@ -465,6 +470,12 @@ func (h *Sniffer) httpRoundTrip(ctx context.Context, rw, cc io.ReadWriteCloser, 
 			close = true
 			return
 		}
+	}
+
+	// Credential substitution: swap placeholders with real credentials.
+	// Headers were already cloned for storage, so this only affects the upstream request.
+	if GlobalCredentialSubstituter != nil {
+		GlobalCredentialSubstituter(req)
 	}
 
 	err = req.Write(cc)
@@ -1174,6 +1185,12 @@ func (h *h2Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			reqBody = xhttp.NewBody(req.Body, bodySize)
 			req.Body = reqBody
 		}
+	}
+
+	// Credential substitution: swap placeholders with real credentials (HTTP/2 path).
+	// Headers were already cloned for storage, so this only affects the upstream request.
+	if GlobalCredentialSubstituter != nil {
+		GlobalCredentialSubstituter(req)
 	}
 
 	resp, err := h.transport.RoundTrip(req.WithContext(r.Context()))

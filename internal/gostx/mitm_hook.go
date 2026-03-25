@@ -84,6 +84,13 @@ func SetGlobalMitmHook(hook func(info MitmRoundTripInfo)) {
 	}
 }
 
+// SetGlobalCredentialSubstituter sets a callback that modifies HTTP requests in-place
+// just before they are forwarded upstream. Used to replace credential placeholders
+// with real values. Headers are already cloned for storage before this point.
+func SetGlobalCredentialSubstituter(hook func(req *http.Request)) {
+	sniffing.GlobalCredentialSubstituter = hook
+}
+
 // SetGlobalMitmHoldHook sets a global callback that fires BEFORE forwarding a MITM-intercepted
 // HTTP request upstream. Return nil to allow, ErrRequestDenied to deny with 403.
 // The hook may block (e.g., waiting for user approval).

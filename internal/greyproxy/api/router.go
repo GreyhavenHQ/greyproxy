@@ -10,17 +10,19 @@ import (
 
 // Shared holds shared state passed to all handlers.
 type Shared struct {
-	DB          *greyproxy.DB
-	Cache       *greyproxy.DNSCache
-	Bus         *greyproxy.EventBus
-	Waiters     *greyproxy.WaiterTracker
-	ConnTracker *greyproxy.ConnTracker
-	Notifier    *greyproxy.Notifier
-	Settings    *greyproxy.SettingsManager
-	Assembler   *greyproxy.ConversationAssembler
-	Version     string
-	Ports       map[string]int
-	DataHome    string // Path to greyproxy data directory (contains CA cert/key)
+	DB              *greyproxy.DB
+	Cache           *greyproxy.DNSCache
+	Bus             *greyproxy.EventBus
+	Waiters         *greyproxy.WaiterTracker
+	ConnTracker     *greyproxy.ConnTracker
+	Notifier        *greyproxy.Notifier
+	Settings        *greyproxy.SettingsManager
+	Assembler       *greyproxy.ConversationAssembler
+	CredentialStore *greyproxy.CredentialStore
+	EncryptionKey   []byte
+	Version         string
+	Ports           map[string]int
+	DataHome        string // Path to greyproxy data directory (contains CA cert/key)
 }
 
 // NewRouter creates the Gin router with all routes.
@@ -94,6 +96,17 @@ func NewRouter(s *Shared, pathPrefix string) (*gin.Engine, *gin.RouterGroup) {
 		api.POST("/maintenance/rebuild-conversations", RebuildConversationsHandler(s))
 		api.POST("/maintenance/redact-headers", RedactHeadersHandler(s))
 		api.GET("/maintenance/status", MaintenanceStatusHandler(s))
+
+		// Credential substitution sessions
+		api.GET("/sessions", SessionsListHandler(s))
+		api.POST("/sessions", SessionsCreateHandler(s))
+		api.POST("/sessions/:id/heartbeat", SessionsHeartbeatHandler(s))
+		api.DELETE("/sessions/:id", SessionsDeleteHandler(s))
+
+		// Global credentials
+		api.GET("/credentials", CredentialsListHandler(s))
+		api.POST("/credentials", CredentialsCreateHandler(s))
+		api.DELETE("/credentials/:id", CredentialsDeleteHandler(s))
 	}
 
 	// WebSocket
