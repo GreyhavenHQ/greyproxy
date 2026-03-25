@@ -343,3 +343,74 @@ type TimelinePoint struct {
 	Allowed   int    `json:"allowed"`
 	Blocked   int    `json:"blocked"`
 }
+
+// Session represents a credential substitution session registered by greywall.
+type Session struct {
+	SessionID         string    `json:"session_id"`
+	ContainerName     string    `json:"container_name"`
+	MappingsEnc       []byte    `json:"-"`
+	LabelsJSON        string    `json:"-"`
+	TTLSeconds        int       `json:"ttl_seconds"`
+	CreatedAt         time.Time `json:"created_at"`
+	ExpiresAt         time.Time `json:"expires_at"`
+	LastHeartbeat     time.Time `json:"last_heartbeat"`
+	SubstitutionCount int64     `json:"substitution_count"`
+}
+
+type SessionJSON struct {
+	SessionID         string   `json:"session_id"`
+	ContainerName     string   `json:"container_name"`
+	CredentialCount   int      `json:"credential_count"`
+	CredentialLabels  []string `json:"credential_labels"`
+	TTLSeconds        int      `json:"ttl_seconds"`
+	CreatedAt         string   `json:"created_at"`
+	ExpiresAt         string   `json:"expires_at"`
+	LastHeartbeat     string   `json:"last_heartbeat"`
+	SubstitutionCount int64    `json:"substitution_count"`
+}
+
+func (s *Session) ToJSON(labels map[string]string) SessionJSON {
+	labelList := make([]string, 0, len(labels))
+	for _, v := range labels {
+		labelList = append(labelList, v)
+	}
+	return SessionJSON{
+		SessionID:         s.SessionID,
+		ContainerName:     s.ContainerName,
+		CredentialCount:   len(labels),
+		CredentialLabels:  labelList,
+		TTLSeconds:        s.TTLSeconds,
+		CreatedAt:         s.CreatedAt.UTC().Format(time.RFC3339),
+		ExpiresAt:         s.ExpiresAt.UTC().Format(time.RFC3339),
+		LastHeartbeat:     s.LastHeartbeat.UTC().Format(time.RFC3339),
+		SubstitutionCount: s.SubstitutionCount,
+	}
+}
+
+// GlobalCredential represents a persistent credential configured via the dashboard.
+type GlobalCredential struct {
+	ID           string    `json:"id"`
+	Label        string    `json:"label"`
+	Placeholder  string    `json:"placeholder"`
+	ValueEnc     []byte    `json:"-"`
+	ValuePreview string    `json:"value_preview"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+type GlobalCredentialJSON struct {
+	ID           string `json:"id"`
+	Label        string `json:"label"`
+	Placeholder  string `json:"placeholder"`
+	ValuePreview string `json:"value_preview"`
+	CreatedAt    string `json:"created_at"`
+}
+
+func (g *GlobalCredential) ToJSON() GlobalCredentialJSON {
+	return GlobalCredentialJSON{
+		ID:           g.ID,
+		Label:        g.Label,
+		Placeholder:  g.Placeholder,
+		ValuePreview: g.ValuePreview,
+		CreatedAt:    g.CreatedAt.UTC().Format(time.RFC3339),
+	}
+}

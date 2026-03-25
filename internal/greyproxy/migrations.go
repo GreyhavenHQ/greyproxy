@@ -139,6 +139,30 @@ var migrations = []string{
 
 	// Migration 7: Add mitm_skip_reason column to request_logs for tracking why MITM was skipped
 	`ALTER TABLE request_logs ADD COLUMN mitm_skip_reason TEXT;`,
+
+	// Migration 8: Create sessions and global_credentials tables for credential substitution
+	`CREATE TABLE IF NOT EXISTS sessions (
+		session_id       TEXT PRIMARY KEY,
+		container_name   TEXT NOT NULL,
+		mappings_enc     BLOB NOT NULL,
+		labels_json      TEXT NOT NULL DEFAULT '{}',
+		ttl_seconds      INTEGER NOT NULL DEFAULT 900,
+		created_at       DATETIME NOT NULL DEFAULT (datetime('now')),
+		expires_at       DATETIME NOT NULL,
+		last_heartbeat   DATETIME NOT NULL DEFAULT (datetime('now')),
+		substitution_count INTEGER NOT NULL DEFAULT 0
+	);
+	CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
+	CREATE INDEX IF NOT EXISTS idx_sessions_container ON sessions(container_name);
+
+	CREATE TABLE IF NOT EXISTS global_credentials (
+		id              TEXT PRIMARY KEY,
+		label           TEXT NOT NULL UNIQUE,
+		placeholder     TEXT NOT NULL UNIQUE,
+		value_enc       BLOB NOT NULL,
+		value_preview   TEXT NOT NULL,
+		created_at      DATETIME NOT NULL DEFAULT (datetime('now'))
+	);`,
 }
 
 func runMigrations(db *sql.DB) error {
