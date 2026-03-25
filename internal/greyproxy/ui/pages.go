@@ -171,6 +171,11 @@ var funcMap = template.FuncMap{
 	"isExpired": func(t time.Time) bool {
 		return time.Now().After(t)
 	},
+	"credLabels": func(raw string) []string {
+		var labels []string
+		json.Unmarshal([]byte(raw), &labels)
+		return labels
+	},
 	"derefStr": func(s *string) string {
 		if s == nil {
 			return ""

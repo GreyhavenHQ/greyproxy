@@ -76,7 +76,7 @@
                         <span class="cursor-pointer hover:underline hover:text-primary" onclick="event.stopPropagation(); filterActivityByDestination('{{.DestinationHost}}')">{{.DestinationHost}}</span>{{if gt .DestinationPort 0}}<span class="text-muted-foreground">:{{.DestinationPort}}</span>{{end}}
                         {{end}}
                     {{else}}
-                        <span title="{{.URL.String}}">{{truncate .URL.String 80}}</span>
+                        {{if .SubstitutedCredentials.Valid}}<svg class="inline-block h-3.5 w-3.5 text-[var(--color-green)] mr-1 -mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" title="Credentials substituted"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" /></svg>{{end}}<span title="{{.URL.String}}">{{truncate .URL.String 80}}</span>
                     {{end}}
                 </td>
                 <td class="px-3 py-2 text-right whitespace-nowrap text-xs text-muted-foreground">
@@ -124,6 +124,12 @@
                                     <span class="text-muted-foreground">Allowed by rule:</span>
                                     <a href="{{$.Prefix}}/rules?highlight={{.RuleID.Int64}}" class="text-primary hover:underline">#{{.RuleID.Int64}}</a>
                                     {{if .RuleSummary.Valid}} <span class="text-muted-foreground">({{.RuleSummary.String}})</span>{{end}}
+                                </div>
+                                {{end}}
+                                {{if .SubstitutedCredentials.Valid}}
+                                <div class="col-span-2 flex items-center gap-2">
+                                    <span class="text-muted-foreground">Credentials substituted:</span>
+                                    {{range credLabels .SubstitutedCredentials.String}}<span class="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-300 border border-green-200 dark:border-green-800 rounded">{{.}}</span>{{end}}
                                 </div>
                                 {{end}}
                             </div>

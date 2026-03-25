@@ -10,12 +10,13 @@ import (
 // --- Sessions ---
 
 type SessionCreateInput struct {
-	SessionID     string            `json:"session_id"`
-	ContainerName string            `json:"container_name"`
-	Mappings      map[string]string `json:"mappings"`
-	Labels        map[string]string `json:"labels"`
-	Metadata      map[string]string `json:"metadata"`
-	TTLSeconds    int               `json:"ttl_seconds"`
+	SessionID         string            `json:"session_id"`
+	ContainerName     string            `json:"container_name"`
+	Mappings          map[string]string `json:"mappings"`
+	Labels            map[string]string `json:"labels"`
+	Metadata          map[string]string `json:"metadata"`
+	TTLSeconds        int               `json:"ttl_seconds"`
+	GlobalCredentials []string          `json:"global_credentials,omitempty"`
 }
 
 // CreateOrUpdateSession creates or upserts a credential substitution session.
@@ -329,6 +330,35 @@ func ListGlobalCredentials(db *DB) ([]GlobalCredential, error) {
 		creds = append(creds, c)
 	}
 	return creds, rows.Err()
+}
+
+// GetGlobalCredentialsByLabels retrieves global credentials matching the given labels.
+// Returns a map of label -> GlobalCredential for found credentials and a list of missing labels.
+func GetGlobalCredentialsByLabels(db *DB, labels []string) (map[string]*GlobalCredential, []string, error) {
+	if len(labels) == 0 {
+		return nil, nil, nil
+	}
+
+	creds, err := ListGlobalCredentials(db)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	byLabel := make(map[string]*GlobalCredential, len(creds))
+	for i := range creds {
+		byLabel[creds[i].Label] = &creds[i]
+	}
+
+	found := make(map[string]*GlobalCredential, len(labels))
+	var missing []string
+	for _, label := range labels {
+		if c, ok := byLabel[label]; ok {
+			found[label] = c
+		} else {
+			missing = append(missing, label)
+		}
+	}
+	return found, missing, nil
 }
 
 // GetGlobalCredential retrieves a single global credential by ID.

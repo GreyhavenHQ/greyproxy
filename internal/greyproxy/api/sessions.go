@@ -1,7 +1,9 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	greyproxy "github.com/greyhavenhq/greyproxy/internal/greyproxy"
@@ -27,6 +29,12 @@ func SessionsListHandler(s *Shared) gin.HandlerFunc {
 }
 
 // SessionsCreateHandler creates or upserts a credential substitution session.
+//
+// If `global_credentials` is provided (list of labels), the handler resolves
+// each label to its stored placeholder and includes it in the response.
+// Greywall uses the returned placeholders to set environment variables and
+// rewrite .env files in the sandbox. The placeholder-to-real-value mapping
+// is merged into the session so the proxy can substitute on the wire.
 func SessionsCreateHandler(s *Shared) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var input greyproxy.SessionCreateInput
@@ -43,8 +51,44 @@ func SessionsCreateHandler(s *Shared) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "container_name is required"})
 			return
 		}
+
+		// Resolve global credentials and merge into mappings
+		var resolvedGlobals map[string]string // label -> placeholder
+		if len(input.GlobalCredentials) > 0 {
+			found, missing, err := greyproxy.GetGlobalCredentialsByLabels(s.DB, input.GlobalCredentials)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			if len(missing) > 0 {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error": fmt.Sprintf("unknown global credentials: %s", strings.Join(missing, ", ")),
+				})
+				return
+			}
+
+			if input.Mappings == nil {
+				input.Mappings = make(map[string]string)
+			}
+			if input.Labels == nil {
+				input.Labels = make(map[string]string)
+			}
+			resolvedGlobals = make(map[string]string, len(found))
+
+			for label, cred := range found {
+				value, err := greyproxy.DecryptGlobalCredentialValue(cred, s.EncryptionKey)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to decrypt credential %s: %v", label, err)})
+					return
+				}
+				input.Mappings[cred.Placeholder] = value
+				input.Labels[cred.Placeholder] = label
+				resolvedGlobals[label] = cred.Placeholder
+			}
+		}
+
 		if len(input.Mappings) == 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "mappings is required and must not be empty"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "no credentials provided (mappings or global_credentials required)"})
 			return
 		}
 
@@ -65,11 +109,16 @@ func SessionsCreateHandler(s *Shared) gin.HandlerFunc {
 			s.CredentialStore.RegisterSession(session, input.Mappings)
 		}
 
-		c.JSON(http.StatusOK, gin.H{
+		resp := gin.H{
 			"session_id":       session.SessionID,
 			"expires_at":       session.ExpiresAt.UTC().Format("2006-01-02T15:04:05Z"),
 			"credential_count": len(input.Mappings),
-		})
+		}
+		if resolvedGlobals != nil {
+			resp["global_credentials"] = resolvedGlobals
+		}
+
+		c.JSON(http.StatusOK, resp)
 	}
 }
 

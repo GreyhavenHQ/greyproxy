@@ -12,7 +12,7 @@
         </button>
         <button type="button" onclick="switchTab('mitm')" data-tab="mitm"
             class="settings-tab flex-1 px-4 py-2 text-sm font-medium transition-colors border-l border-border text-muted-foreground hover:bg-muted">
-            MITM
+            TLS
         </button>
         <button type="button" onclick="switchTab('credentials')" data-tab="credentials"
             class="settings-tab flex-1 px-4 py-2 text-sm font-medium transition-colors border-l border-border text-muted-foreground hover:bg-muted">
@@ -152,10 +152,12 @@
     <!-- ==================== MITM Tab ==================== -->
     <div id="tab-mitm" class="hidden">
 
-    <!-- MITM explanation -->
-    <div class="bg-card border border-border rounded-lg p-6 mb-6">
-        <h2 class="text-lg font-semibold mb-3">What is TLS Interception?</h2>
-        <p class="text-sm text-muted-foreground">TLS interception (also known as MITM) allows GreyProxy to decrypt HTTPS traffic so it can inspect, log, and apply credential substitution to encrypted requests. Without it, GreyProxy can only see the destination hostname, not the request contents. When enabled, GreyProxy generates a local CA certificate that must be trusted by your system.</p>
+    <!-- Info block -->
+    <div class="flex gap-3 p-4 mb-6 rounded-lg border border-blue-200 dark:border-blue-800/50 bg-blue-50/50 dark:bg-blue-950/20">
+        <svg class="h-5 w-5 text-blue-500 dark:text-blue-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" />
+        </svg>
+        <p class="text-sm text-blue-900 dark:text-blue-200">TLS interception (sometimes called MITM, or man-in-the-middle) allows GreyProxy to decrypt HTTPS traffic so it can inspect, log, and apply credential substitution to encrypted requests. Without it, GreyProxy can only see the destination hostname, not the full request contents. When enabled, GreyProxy generates a local CA certificate that your system must trust.</p>
     </div>
 
     <!-- TLS Interception -->
@@ -250,26 +252,31 @@
     <!-- ==================== Credentials Tab ==================== -->
     <div id="tab-credentials" class="hidden">
 
-    <!-- Protection status banner -->
-    <div id="cred-status-banner" class="bg-card border border-border rounded-lg p-4 mb-6">
-        <div class="flex items-center gap-3">
-            <svg class="h-5 w-5 text-muted-foreground flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
-            </svg>
-            <div class="text-sm">
-                <span id="cred-http-status" class="font-medium">HTTP requests: protected</span>
-                <span class="text-muted-foreground mx-2">&middot;</span>
-                <span id="cred-https-status" class="font-medium">HTTPS requests: checking...</span>
-            </div>
-        </div>
+    <!-- Info block -->
+    <div class="flex gap-3 p-4 mb-6 rounded-lg border border-blue-200 dark:border-blue-800/50 bg-blue-50/50 dark:bg-blue-950/20">
+        <svg class="h-5 w-5 text-blue-500 dark:text-blue-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" />
+        </svg>
+        <p class="text-sm text-blue-900 dark:text-blue-200">Credential substitution replaces real API keys with opaque placeholders in sandboxed environments. Real credentials are injected transparently at the proxy layer, so your secrets never reach the sandboxed process.</p>
     </div>
 
-    <p class="text-sm text-muted-foreground mb-6">Credential substitution replaces real API keys with opaque placeholders in sandboxed environments. Real credentials are injected transparently at the proxy layer.</p>
+    <!-- Protection status -->
+    <div id="cred-status-banner" class="flex items-center gap-4 px-4 py-3 mb-6 rounded-lg border border-border bg-card text-sm">
+        <span id="cred-http-status"></span>
+        <span class="text-muted-foreground">&middot;</span>
+        <span id="cred-https-status"></span>
+    </div>
 
     <!-- Global Credentials -->
     <div class="bg-card border border-border rounded-lg p-6 mb-6">
-        <h3 class="text-sm font-semibold uppercase text-muted-foreground mb-3">Global Credentials</h3>
-        <p class="text-xs text-muted-foreground mb-4">Persistent credential substitution configured here. These apply to all proxy traffic, not just sandbox sessions.</p>
+        <h2 class="text-lg font-semibold mb-2">Global Credentials</h2>
+        <p class="text-sm text-muted-foreground mb-2">Store API keys here, then request them by label when launching a sandbox. Credentials are only injected when explicitly requested; they are never sent to processes automatically.</p>
+        <div class="p-3 mb-4 rounded-md bg-muted border border-border space-y-2">
+            <p class="text-xs font-medium text-foreground">Usage</p>
+            <code class="text-xs font-mono text-muted-foreground block">greywall --cred ANTHROPIC_API_KEY -- your-command</code>
+            <p class="text-xs text-muted-foreground">Use <code class="font-mono">--cred</code> multiple times to inject several credentials. Greywall sets the placeholder as an environment variable <em>and</em> rewrites <code class="font-mono">.env</code> / <code class="font-mono">.env.local</code> files so the real value never reaches the sandbox, regardless of where the application reads it from.</p>
+            <p class="text-xs text-muted-foreground">Once active, the proxy replaces <strong>every occurrence</strong> of the placeholder in HTTP headers and query parameters with the real credential value before forwarding upstream.</p>
+        </div>
 
         <!-- Add form -->
         <div class="flex gap-2 mb-4">
@@ -292,7 +299,7 @@
 
     <!-- Active Sessions -->
     <div class="bg-card border border-border rounded-lg p-6 mb-6">
-        <h3 class="text-sm font-semibold uppercase text-muted-foreground mb-3">Active Sessions</h3>
+        <h2 class="text-lg font-semibold mb-4">Active Sessions</h2>
         <div id="sessions-list">
             <p class="text-sm text-muted-foreground">Loading...</p>
         </div>
@@ -598,11 +605,11 @@
     function updateCredStatusBanner(mitmOn) {
         var httpEl = document.getElementById('cred-http-status');
         var httpsEl = document.getElementById('cred-https-status');
-        httpEl.innerHTML = '<span class="text-[var(--color-green)]">HTTP requests: protected</span>';
+        httpEl.innerHTML = 'HTTP: <span class="text-[var(--color-green)]">protected</span>';
         if (mitmOn) {
-            httpsEl.innerHTML = '<span class="text-[var(--color-green)]">HTTPS requests: protected</span>';
+            httpsEl.innerHTML = 'HTTPS: <span class="text-[var(--color-green)] cursor-help" title="TLS interception is enabled">protected</span>';
         } else {
-            httpsEl.innerHTML = '<span class="text-yellow-600 dark:text-yellow-500">HTTPS requests: requires TLS interception</span>';
+            httpsEl.innerHTML = 'HTTPS: <span class="text-yellow-600 dark:text-yellow-500 cursor-help" title="Enable TLS interception to protect HTTPS traffic">not protected</span>';
         }
     }
 
@@ -743,6 +750,31 @@
 
     loadCertStatus();
 
+    // --- Time helpers ---
+    function formatRelativeTime(date) {
+        var seconds = Math.floor((Date.now() - date.getTime()) / 1000);
+        if (seconds < 60) return 'just now';
+        var minutes = Math.floor(seconds / 60);
+        if (minutes < 60) return minutes + 'm ago';
+        var hours = Math.floor(minutes / 60);
+        if (hours < 24) return hours + 'h ago';
+        var days = Math.floor(hours / 24);
+        return days + 'd ago';
+    }
+
+    function formatDuration(from, to) {
+        var seconds = Math.floor((to.getTime() - from.getTime()) / 1000);
+        if (seconds < 60) return seconds + 's';
+        var minutes = Math.floor(seconds / 60);
+        if (minutes < 60) return minutes + 'm';
+        var hours = Math.floor(minutes / 60);
+        var remainMin = minutes % 60;
+        if (hours < 24) return hours + 'h ' + remainMin + 'm';
+        var days = Math.floor(hours / 24);
+        var remainHours = hours % 24;
+        return days + 'd ' + remainHours + 'h';
+    }
+
     // --- Credential Protection ---
     function loadSessions() {
         fetch(prefix + '/api/sessions')
@@ -759,6 +791,15 @@
                     html += '<div class="flex items-center justify-between mb-2">';
                     html += '<span class="text-sm font-medium">' + escapeHtml(s.container_name) + '</span>';
                     html += '<button onclick="deleteSession(\'' + escapeHtml(s.session_id) + '\')" class="text-xs text-muted-foreground hover:text-destructive">Expire</button>';
+                    html += '</div>';
+                    // Created / duration
+                    html += '<div class="flex items-center gap-3 text-xs text-muted-foreground mb-2">';
+                    if (s.created_at) {
+                        var created = new Date(s.created_at);
+                        html += '<span title="' + created.toISOString() + '">Created ' + formatRelativeTime(created) + '</span>';
+                        html += '<span>&middot;</span>';
+                        html += '<span>Active for ' + formatDuration(created, new Date()) + '</span>';
+                    }
                     html += '</div>';
                     // Credential labels
                     html += '<div class="flex flex-wrap gap-1.5 mb-2">';

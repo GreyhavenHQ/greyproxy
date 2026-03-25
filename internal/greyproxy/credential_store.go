@@ -350,6 +350,10 @@ func (cs *CredentialStore) flushSubstitutionCounts() {
 	for sid, delta := range toFlush {
 		if err := IncrementSubstitutionCount(cs.db, sid, delta); err != nil {
 			log.Printf("WARN credential_store: failed to flush substitution count for %s: %v", sid, err)
+			continue
+		}
+		if cs.bus != nil {
+			cs.bus.Publish(Event{Type: EventSessionSubstitution, Data: sid})
 		}
 	}
 }

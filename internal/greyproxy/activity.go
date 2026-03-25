@@ -21,11 +21,12 @@ type ActivityItem struct {
 	RuleSummary      sql.NullString
 	MitmSkipReason sql.NullString
 	// HTTP-specific fields
-	Method         sql.NullString
-	URL            sql.NullString
-	StatusCode     sql.NullInt64
-	DurationMs     sql.NullInt64
-	ConversationID sql.NullString
+	Method                 sql.NullString
+	URL                    sql.NullString
+	StatusCode             sql.NullInt64
+	DurationMs             sql.NullInt64
+	ConversationID         sql.NullString
+	SubstitutedCredentials sql.NullString
 }
 
 // ActivityFilter specifies filters for the unified activity query.
@@ -66,7 +67,7 @@ func QueryActivity(db *DB, f ActivityFilter) ([]ActivityItem, int, error) {
 			l.resolved_hostname, l.rule_id, r.destination_pattern as rule_summary,
 			l.mitm_skip_reason,
 			NULL as method, NULL as url, NULL as status_code, NULL as duration_ms,
-			NULL as conversation_id
+			NULL as conversation_id, NULL as substituted_credentials
 			FROM request_logs l LEFT JOIN rules r ON l.rule_id = r.id
 			WHERE %s`, where)
 		unionParts = append(unionParts, q)
@@ -103,7 +104,8 @@ func QueryActivity(db *DB, f ActivityFilter) ([]ActivityItem, int, error) {
 				ORDER BY cl2.timestamp DESC LIMIT 1
 			))) as rule_summary,
 			NULL as mitm_skip_reason,
-			t.method, t.url, t.status_code, t.duration_ms, t.conversation_id
+			t.method, t.url, t.status_code, t.duration_ms, t.conversation_id,
+			t.substituted_credentials
 			FROM http_transactions t
 			WHERE %s`, where)
 		unionParts = append(unionParts, q)
@@ -145,7 +147,7 @@ func QueryActivity(db *DB, f ActivityFilter) ([]ActivityItem, int, error) {
 			&item.ResolvedHostname, &item.RuleID, &item.RuleSummary,
 			&item.MitmSkipReason,
 			&item.Method, &item.URL, &item.StatusCode, &item.DurationMs,
-			&item.ConversationID,
+			&item.ConversationID, &item.SubstitutedCredentials,
 		)
 		if err != nil {
 			return nil, 0, fmt.Errorf("scan activity: %w", err)

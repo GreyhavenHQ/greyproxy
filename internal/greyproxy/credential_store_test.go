@@ -820,3 +820,144 @@ func TestCredentialStore_PurgeUnreadableSessions(t *testing.T) {
 		t.Errorf("sessions in DB = %d, want 0 after purge", len(sessions))
 	}
 }
+
+// --- GetGlobalCredentialsByLabels Tests ---
+
+func TestGetGlobalCredentialsByLabels(t *testing.T) {
+	db := setupTestDB(t)
+	key := testEncryptionKey()
+
+	// Create two global credentials
+	cred1, err := CreateGlobalCredential(db, GlobalCredentialCreateInput{
+		Label: "ANTHROPIC_API_KEY",
+		Value: "sk-ant-real-key",
+	}, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = CreateGlobalCredential(db, GlobalCredentialCreateInput{
+		Label: "OPENAI_API_KEY",
+		Value: "sk-oai-real-key",
+	}, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("all found", func(t *testing.T) {
+		found, missing, err := GetGlobalCredentialsByLabels(db, []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(missing) != 0 {
+			t.Errorf("unexpected missing labels: %v", missing)
+		}
+		if len(found) != 2 {
+			t.Fatalf("got %d found, want 2", len(found))
+		}
+		if found["ANTHROPIC_API_KEY"].Placeholder != cred1.Placeholder {
+			t.Errorf("placeholder mismatch for ANTHROPIC_API_KEY")
+		}
+	})
+
+	t.Run("some missing", func(t *testing.T) {
+		found, missing, err := GetGlobalCredentialsByLabels(db, []string{"ANTHROPIC_API_KEY", "NONEXISTENT"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(found) != 1 {
+			t.Errorf("got %d found, want 1", len(found))
+		}
+		if len(missing) != 1 || missing[0] != "NONEXISTENT" {
+			t.Errorf("missing = %v, want [NONEXISTENT]", missing)
+		}
+	})
+
+	t.Run("empty labels", func(t *testing.T) {
+		found, missing, err := GetGlobalCredentialsByLabels(db, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if found != nil || missing != nil {
+			t.Error("expected nil for empty labels")
+		}
+	})
+}
+
+func TestSessionWithGlobalCredentials_Substitution(t *testing.T) {
+	db := setupTestDB(t)
+	key := testEncryptionKey()
+	bus := NewEventBus()
+
+	// Create a global credential
+	globalCred, err := CreateGlobalCredential(db, GlobalCredentialCreateInput{
+		Label: "GLOBAL_KEY",
+		Value: "sk-global-secret",
+	}, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Decrypt the real value to build the session mapping (simulates what the API handler does)
+	globalValue, err := DecryptGlobalCredentialValue(globalCred, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a session with both a session-specific credential and the global one
+	sessionPlaceholder := "greyproxy:credential:v1:gw-mixed:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"
+	mappings := map[string]string{
+		sessionPlaceholder:     "sk-session-secret",
+		globalCred.Placeholder: globalValue,
+	}
+
+	session, err := CreateOrUpdateSession(db, SessionCreateInput{
+		SessionID:     "gw-mixed",
+		ContainerName: "sandbox",
+		Mappings:      mappings,
+		Labels: map[string]string{
+			sessionPlaceholder:     "SESSION_KEY",
+			globalCred.Placeholder: "GLOBAL_KEY",
+		},
+		TTLSeconds: 300,
+	}, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Build a credential store and register
+	store, err := NewCredentialStore(db, key, bus)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.RegisterSession(session, mappings)
+
+	// Test substitution of session credential
+	req1, _ := http.NewRequest("GET", "https://api.example.com", nil)
+	req1.Header.Set("Authorization", "Bearer "+sessionPlaceholder)
+	result1 := store.SubstituteRequest(req1)
+	if result1.Count != 1 {
+		t.Fatalf("session cred: count = %d, want 1", result1.Count)
+	}
+	if req1.Header.Get("Authorization") != "Bearer sk-session-secret" {
+		t.Errorf("session cred: got %q", req1.Header.Get("Authorization"))
+	}
+
+	// Test substitution of global credential
+	req2, _ := http.NewRequest("GET", "https://api.example.com", nil)
+	req2.Header.Set("Authorization", "Bearer "+globalCred.Placeholder)
+	result2 := store.SubstituteRequest(req2)
+	if result2.Count != 1 {
+		t.Fatalf("global cred: count = %d, want 1", result2.Count)
+	}
+	if req2.Header.Get("Authorization") != "Bearer sk-global-secret" {
+		t.Errorf("global cred: got %q", req2.Header.Get("Authorization"))
+	}
+
+	// Verify labels are tracked for both
+	if len(result1.Labels) != 1 || result1.Labels[0] != "SESSION_KEY" {
+		t.Errorf("session cred labels = %v, want [SESSION_KEY]", result1.Labels)
+	}
+	if len(result2.Labels) != 1 || result2.Labels[0] != "GLOBAL_KEY" {
+		t.Errorf("global cred labels = %v, want [GLOBAL_KEY]", result2.Labels)
+	}
+}
