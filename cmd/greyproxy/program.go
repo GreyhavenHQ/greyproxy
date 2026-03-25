@@ -347,8 +347,19 @@ func (p *program) buildGreyproxyService() error {
 			p.credStoreCancel = credStoreCancel
 			credStore.StartCleanupLoop(credStoreCtx, 60*time.Second)
 			// Wire credential substitution into the MITM pipeline
-			gostx.SetGlobalCredentialSubstituter(func(req *http.Request) {
-				credStore.SubstituteRequest(req)
+			gostx.SetGlobalCredentialSubstituter(func(req *http.Request) *gostx.CredentialSubstitutionInfo {
+				result := credStore.SubstituteRequest(req)
+				if result.Count == 0 {
+					return nil
+				}
+				var sessionID string
+				if len(result.SessionIDs) > 0 {
+					sessionID = result.SessionIDs[0]
+				}
+				return &gostx.CredentialSubstitutionInfo{
+					Labels:    result.Labels,
+					SessionID: sessionID,
+				}
 			})
 			log.Infof("credential store loaded: %d mappings from %d sessions", credStore.Size(), credStore.SessionCount())
 		}
@@ -407,20 +418,22 @@ func (p *program) buildGreyproxyService() error {
 			redactedRespHeaders := redactor.Redact(info.ResponseHeaders)
 
 			txn, err := greyproxy.CreateHttpTransaction(shared.DB, greyproxy.HttpTransactionCreateInput{
-				ContainerName:       containerName,
-				DestinationHost:     host,
-				DestinationPort:     port,
-				Method:              info.Method,
-				URL:                 "https://" + info.Host + info.URI,
-				RequestHeaders:      redactedReqHeaders,
-				RequestBody:         reqBody,
-				RequestContentType:  reqCT,
-				StatusCode:          info.StatusCode,
-				ResponseHeaders:     redactedRespHeaders,
-				ResponseBody:        respBody,
-				ResponseContentType: respCT,
-				DurationMs:          info.DurationMs,
-				Result:              "auto",
+				ContainerName:          containerName,
+				DestinationHost:        host,
+				DestinationPort:        port,
+				Method:                 info.Method,
+				URL:                    "https://" + info.Host + info.URI,
+				RequestHeaders:         redactedReqHeaders,
+				RequestBody:            reqBody,
+				RequestContentType:     reqCT,
+				StatusCode:             info.StatusCode,
+				ResponseHeaders:        redactedRespHeaders,
+				ResponseBody:           respBody,
+				ResponseContentType:    respCT,
+				DurationMs:             info.DurationMs,
+				Result:                 "auto",
+				SubstitutedCredentials: info.SubstitutedCredentials,
+				SessionID:              info.SessionID,
 			})
 			if err != nil {
 				log.Warnf("failed to store HTTP transaction: %v", err)

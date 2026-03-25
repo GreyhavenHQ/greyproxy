@@ -105,17 +105,19 @@ func WithLog(log logger.Logger) HandleOption {
 
 // HTTPRoundTripInfo contains decrypted HTTP request/response data from a MITM round-trip.
 type HTTPRoundTripInfo struct {
-	Host            string
-	Method          string
-	URI             string
-	Proto           string
-	StatusCode      int
-	RequestHeaders  http.Header
-	RequestBody     []byte
-	ResponseHeaders http.Header
-	ResponseBody    []byte
-	ContainerName   string
-	DurationMs      int64
+	Host                   string
+	Method                 string
+	URI                    string
+	Proto                  string
+	StatusCode             int
+	RequestHeaders         http.Header
+	RequestBody            []byte
+	ResponseHeaders        http.Header
+	ResponseBody           []byte
+	ContainerName          string
+	DurationMs             int64
+	SubstitutedCredentials []string
+	SessionID              string
 }
 
 // GlobalHTTPRoundTripHook is called (if set) after each MITM-intercepted HTTP round-trip.
@@ -143,10 +145,17 @@ type HTTPRequestHoldInfo struct {
 // Return nil to allow, ErrRequestDenied to send 403, or block until approval.
 var GlobalHTTPRequestHoldHook func(ctx context.Context, info HTTPRequestHoldInfo) error
 
+// CredentialSubstitutionInfo holds the result of a credential substitution pass.
+type CredentialSubstitutionInfo struct {
+	Labels    []string
+	SessionID string
+}
+
 // GlobalCredentialSubstituter is called (if set) just before forwarding a request upstream.
 // It modifies the request in-place, replacing credential placeholders with real values.
 // Headers should already be cloned for storage before this point.
-var GlobalCredentialSubstituter func(req *http.Request)
+// Returns substitution info (labels and session ID) or nil if nothing was substituted.
+var GlobalCredentialSubstituter func(req *http.Request) *CredentialSubstitutionInfo
 
 // globalMitmEnabled controls whether MITM TLS interception is active. Default: enabled (1).
 var globalMitmEnabled atomic.Int32
@@ -474,8 +483,9 @@ func (h *Sniffer) httpRoundTrip(ctx context.Context, rw, cc io.ReadWriteCloser, 
 
 	// Credential substitution: swap placeholders with real credentials.
 	// Headers were already cloned for storage, so this only affects the upstream request.
+	var subInfo *CredentialSubstitutionInfo
 	if GlobalCredentialSubstituter != nil {
-		GlobalCredentialSubstituter(req)
+		subInfo = GlobalCredentialSubstituter(req)
 	}
 
 	err = req.Write(cc)
@@ -572,6 +582,10 @@ func (h *Sniffer) httpRoundTrip(ctx context.Context, rw, cc io.ReadWriteCloser, 
 			ResponseHeaders: ro.HTTP.Response.Header,
 			ContainerName:   containerName,
 			DurationMs:      time.Since(ro.Time).Milliseconds(),
+		}
+		if subInfo != nil {
+			info.SubstitutedCredentials = subInfo.Labels
+			info.SessionID = subInfo.SessionID
 		}
 		if reqBody != nil {
 			info.RequestBody = reqBody.Content()
@@ -1189,8 +1203,9 @@ func (h *h2Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Credential substitution: swap placeholders with real credentials (HTTP/2 path).
 	// Headers were already cloned for storage, so this only affects the upstream request.
+	var subInfo *CredentialSubstitutionInfo
 	if GlobalCredentialSubstituter != nil {
-		GlobalCredentialSubstituter(req)
+		subInfo = GlobalCredentialSubstituter(req)
 	}
 
 	resp, err := h.transport.RoundTrip(req.WithContext(r.Context()))
@@ -1252,6 +1267,10 @@ func (h *h2Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			ResponseHeaders: ro.HTTP.Response.Header,
 			ContainerName:   containerName,
 			DurationMs:      time.Since(ro.Time).Milliseconds(),
+		}
+		if subInfo != nil {
+			info.SubstitutedCredentials = subInfo.Labels
+			info.SessionID = subInfo.SessionID
 		}
 		if reqBody != nil {
 			info.RequestBody = reqBody.Content()

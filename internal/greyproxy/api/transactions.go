@@ -19,6 +19,7 @@ func TransactionsListHandler(s *Shared) gin.HandlerFunc {
 			Container:   c.Query("container"),
 			Destination: c.Query("destination"),
 			Method:      c.Query("method"),
+			SessionID:   c.Query("session_id"),
 			Limit:       limit,
 			Offset:      offset,
 		}

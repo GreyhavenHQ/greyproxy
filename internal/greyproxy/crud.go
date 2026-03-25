@@ -1119,12 +1119,23 @@ func CreateHttpTransaction(db *DB, input HttpTransactionCreateInput) (*HttpTrans
 		respBody = respBody[:MaxBodyCapture]
 	}
 
+	var subCredsJSON sql.NullString
+	if len(input.SubstitutedCredentials) > 0 {
+		b, _ := json.Marshal(input.SubstitutedCredentials)
+		subCredsJSON = sql.NullString{String: string(b), Valid: true}
+	}
+
+	var sessionID sql.NullString
+	if input.SessionID != "" {
+		sessionID = sql.NullString{String: input.SessionID, Valid: true}
+	}
+
 	result, err := db.WriteDB().Exec(
 		`INSERT INTO http_transactions (container_name, destination_host, destination_port,
 		 method, url, request_headers, request_body, request_body_size, request_content_type,
 		 status_code, response_headers, response_body, response_body_size, response_content_type,
-		 duration_ms, rule_id, result)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 duration_ms, rule_id, result, substituted_credentials, session_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		input.ContainerName, input.DestinationHost, input.DestinationPort,
 		input.Method, input.URL,
 		reqHeadersJSON, reqBody, reqBodySize,
@@ -1135,6 +1146,7 @@ func CreateHttpTransaction(db *DB, input HttpTransactionCreateInput) (*HttpTrans
 		sql.NullInt64{Int64: input.DurationMs, Valid: input.DurationMs > 0},
 		sql.NullInt64{Int64: ptrInt64OrZero(input.RuleID), Valid: input.RuleID != nil},
 		input.Result,
+		subCredsJSON, sessionID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("insert http_transaction: %w", err)
@@ -1150,12 +1162,12 @@ func getHttpTransactionByID(conn *sql.DB, id int64) (*HttpTransaction, error) {
 		`SELECT id, timestamp, container_name, destination_host, destination_port,
 		        method, url, request_headers, request_body, request_body_size, request_content_type,
 		        status_code, response_headers, response_body, response_body_size, response_content_type,
-		        duration_ms, rule_id, result
+		        duration_ms, rule_id, result, substituted_credentials, session_id
 		 FROM http_transactions WHERE id = ?`, id,
 	).Scan(&t.ID, &t.Timestamp, &t.ContainerName, &t.DestinationHost, &t.DestinationPort,
 		&t.Method, &t.URL, &t.RequestHeaders, &t.RequestBody, &t.RequestBodySize, &t.RequestContentType,
 		&t.StatusCode, &t.ResponseHeaders, &t.ResponseBody, &t.ResponseBodySize, &t.ResponseContentType,
-		&t.DurationMs, &t.RuleID, &t.Result)
+		&t.DurationMs, &t.RuleID, &t.Result, &t.SubstitutedCredentials, &t.SessionID)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
@@ -1173,6 +1185,7 @@ type TransactionFilter struct {
 	Container   string
 	Destination string
 	Method      string
+	SessionID   string
 	FromDate    *time.Time
 	ToDate      *time.Time
 	Limit       int
@@ -1199,6 +1212,10 @@ func QueryHttpTransactions(db *DB, f TransactionFilter) ([]HttpTransaction, int,
 		where = append(where, "method = ?")
 		args = append(args, f.Method)
 	}
+	if f.SessionID != "" {
+		where = append(where, "session_id = ?")
+		args = append(args, f.SessionID)
+	}
 	if f.FromDate != nil {
 		where = append(where, "timestamp >= ?")
 		args = append(args, f.FromDate.UTC().Format("2006-01-02 15:04:05"))
@@ -1221,7 +1238,7 @@ func QueryHttpTransactions(db *DB, f TransactionFilter) ([]HttpTransaction, int,
 		`SELECT id, timestamp, container_name, destination_host, destination_port,
 		        method, url, request_headers, NULL, request_body_size, request_content_type,
 		        status_code, response_headers, NULL, response_body_size, response_content_type,
-		        duration_ms, rule_id, result
+		        duration_ms, rule_id, result, substituted_credentials, session_id
 		 FROM http_transactions WHERE `+whereClause+` ORDER BY timestamp DESC LIMIT ? OFFSET ?`,
 		append(args, f.Limit, f.Offset)...,
 	)
@@ -1236,7 +1253,7 @@ func QueryHttpTransactions(db *DB, f TransactionFilter) ([]HttpTransaction, int,
 		if err := rows.Scan(&t.ID, &t.Timestamp, &t.ContainerName, &t.DestinationHost, &t.DestinationPort,
 			&t.Method, &t.URL, &t.RequestHeaders, &t.RequestBody, &t.RequestBodySize, &t.RequestContentType,
 			&t.StatusCode, &t.ResponseHeaders, &t.ResponseBody, &t.ResponseBodySize, &t.ResponseContentType,
-			&t.DurationMs, &t.RuleID, &t.Result); err != nil {
+			&t.DurationMs, &t.RuleID, &t.Result, &t.SubstitutedCredentials, &t.SessionID); err != nil {
 			return nil, 0, err
 		}
 		txns = append(txns, t)

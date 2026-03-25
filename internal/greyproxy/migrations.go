@@ -163,6 +163,12 @@ var migrations = []string{
 		value_preview   TEXT NOT NULL,
 		created_at      DATETIME NOT NULL DEFAULT (datetime('now'))
 	);`,
+
+	// Migration 9: Add credential substitution tracking, session metadata, and transaction-session linking
+	`ALTER TABLE http_transactions ADD COLUMN substituted_credentials TEXT DEFAULT NULL;
+	ALTER TABLE http_transactions ADD COLUMN session_id TEXT DEFAULT NULL;
+	CREATE INDEX IF NOT EXISTS idx_http_transactions_session ON http_transactions(session_id);
+	ALTER TABLE sessions ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}';`,
 }
 
 func runMigrations(db *sql.DB) error {

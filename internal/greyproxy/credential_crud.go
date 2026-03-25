@@ -14,6 +14,7 @@ type SessionCreateInput struct {
 	ContainerName string            `json:"container_name"`
 	Mappings      map[string]string `json:"mappings"`
 	Labels        map[string]string `json:"labels"`
+	Metadata      map[string]string `json:"metadata"`
 	TTLSeconds    int               `json:"ttl_seconds"`
 }
 
@@ -42,17 +43,27 @@ func CreateOrUpdateSession(db *DB, input SessionCreateInput, encryptionKey []byt
 		return nil, fmt.Errorf("marshal labels: %w", err)
 	}
 
+	metadata := input.Metadata
+	if metadata == nil {
+		metadata = make(map[string]string)
+	}
+	metadataJSON, err := json.Marshal(metadata)
+	if err != nil {
+		return nil, fmt.Errorf("marshal metadata: %w", err)
+	}
+
 	_, err = db.WriteDB().Exec(
-		`INSERT INTO sessions (session_id, container_name, mappings_enc, labels_json, ttl_seconds, created_at, expires_at, last_heartbeat)
-		 VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now', '+' || ? || ' seconds'), datetime('now'))
+		`INSERT INTO sessions (session_id, container_name, mappings_enc, labels_json, metadata_json, ttl_seconds, created_at, expires_at, last_heartbeat)
+		 VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now', '+' || ? || ' seconds'), datetime('now'))
 		 ON CONFLICT(session_id) DO UPDATE SET
 		   container_name = excluded.container_name,
 		   mappings_enc = excluded.mappings_enc,
 		   labels_json = excluded.labels_json,
+		   metadata_json = excluded.metadata_json,
 		   ttl_seconds = excluded.ttl_seconds,
 		   expires_at = excluded.expires_at,
 		   last_heartbeat = excluded.last_heartbeat`,
-		input.SessionID, input.ContainerName, mappingsEnc, string(labelsJSON),
+		input.SessionID, input.ContainerName, mappingsEnc, string(labelsJSON), string(metadataJSON),
 		input.TTLSeconds, input.TTLSeconds,
 	)
 	if err != nil {
@@ -104,7 +115,7 @@ func DeleteSession(db *DB, sessionID string) (bool, error) {
 // GetSession retrieves a session by ID.
 func GetSession(db *DB, sessionID string) (*Session, error) {
 	return scanSession(db.ReadDB().QueryRow(
-		`SELECT session_id, container_name, mappings_enc, labels_json, ttl_seconds,
+		`SELECT session_id, container_name, mappings_enc, labels_json, metadata_json, ttl_seconds,
 		        created_at, expires_at, last_heartbeat, substitution_count
 		 FROM sessions WHERE session_id = ?`, sessionID,
 	))
@@ -113,7 +124,7 @@ func GetSession(db *DB, sessionID string) (*Session, error) {
 // ListSessions returns all active (non-expired) sessions.
 func ListSessions(db *DB) ([]Session, error) {
 	rows, err := db.ReadDB().Query(
-		`SELECT session_id, container_name, mappings_enc, labels_json, ttl_seconds,
+		`SELECT session_id, container_name, mappings_enc, labels_json, metadata_json, ttl_seconds,
 		        created_at, expires_at, last_heartbeat, substitution_count
 		 FROM sessions WHERE expires_at > datetime('now') ORDER BY created_at DESC`,
 	)
@@ -185,7 +196,7 @@ func IncrementSubstitutionCount(db *DB, sessionID string, delta int64) error {
 // LoadAllSessions returns all sessions (including expired, for startup reload).
 func LoadAllSessions(db *DB) ([]Session, error) {
 	rows, err := db.ReadDB().Query(
-		`SELECT session_id, container_name, mappings_enc, labels_json, ttl_seconds,
+		`SELECT session_id, container_name, mappings_enc, labels_json, metadata_json, ttl_seconds,
 		        created_at, expires_at, last_heartbeat, substitution_count
 		 FROM sessions ORDER BY created_at`,
 	)
@@ -208,7 +219,7 @@ func LoadAllSessions(db *DB) ([]Session, error) {
 // getSessionLocked retrieves a session (caller must hold write lock).
 func getSessionLocked(db *DB, sessionID string) (*Session, error) {
 	return scanSession(db.WriteDB().QueryRow(
-		`SELECT session_id, container_name, mappings_enc, labels_json, ttl_seconds,
+		`SELECT session_id, container_name, mappings_enc, labels_json, metadata_json, ttl_seconds,
 		        created_at, expires_at, last_heartbeat, substitution_count
 		 FROM sessions WHERE session_id = ?`, sessionID,
 	))
@@ -221,7 +232,7 @@ type scannable interface {
 func scanSession(row scannable) (*Session, error) {
 	var s Session
 	err := row.Scan(
-		&s.SessionID, &s.ContainerName, &s.MappingsEnc, &s.LabelsJSON,
+		&s.SessionID, &s.ContainerName, &s.MappingsEnc, &s.LabelsJSON, &s.MetadataJSON,
 		&s.TTLSeconds, &s.CreatedAt, &s.ExpiresAt, &s.LastHeartbeat, &s.SubstitutionCount,
 	)
 	if err != nil {

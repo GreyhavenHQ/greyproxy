@@ -49,9 +49,9 @@ func TestCredentialStore_SubstituteRequest_HeaderExactMatch(t *testing.T) {
 		URL: &url.URL{Path: "/v1/chat"},
 	}
 
-	count := cs.SubstituteRequest(req)
-	if count != 1 {
-		t.Errorf("substitution count = %d, want 1", count)
+	result := cs.SubstituteRequest(req)
+	if result.Count != 1 {
+		t.Errorf("substitution count = %d, want 1", result.Count)
 	}
 	if req.Header.Get("Authorization") != "Bearer "+realKey {
 		t.Errorf("got header %q, want %q", req.Header.Get("Authorization"), "Bearer "+realKey)
@@ -72,9 +72,9 @@ func TestCredentialStore_SubstituteRequest_NoMatch(t *testing.T) {
 		URL: &url.URL{Path: "/v1/chat"},
 	}
 
-	count := cs.SubstituteRequest(req)
-	if count != 0 {
-		t.Errorf("substitution count = %d, want 0", count)
+	result := cs.SubstituteRequest(req)
+	if result.Count != 0 {
+		t.Errorf("substitution count = %d, want 0", result.Count)
 	}
 	if req.Header.Get("Authorization") != "Bearer sk-regular-key" {
 		t.Error("header should not be modified")
@@ -99,9 +99,9 @@ func TestCredentialStore_SubstituteRequest_QueryParam(t *testing.T) {
 		},
 	}
 
-	count := cs.SubstituteRequest(req)
-	if count != 1 {
-		t.Errorf("substitution count = %d, want 1", count)
+	result := cs.SubstituteRequest(req)
+	if result.Count != 1 {
+		t.Errorf("substitution count = %d, want 1", result.Count)
 	}
 	if req.URL.Query().Get("api_key") != realKey {
 		t.Errorf("got query param %q, want %q", req.URL.Query().Get("api_key"), realKey)
@@ -130,9 +130,9 @@ func TestCredentialStore_SubstituteRequest_MultipleHeaders(t *testing.T) {
 		URL: &url.URL{Path: "/"},
 	}
 
-	count := cs.SubstituteRequest(req)
-	if count != 2 {
-		t.Errorf("substitution count = %d, want 2", count)
+	result := cs.SubstituteRequest(req)
+	if result.Count != 2 {
+		t.Errorf("substitution count = %d, want 2", result.Count)
 	}
 	if req.Header.Get("Authorization") != "real-key-1" {
 		t.Errorf("Authorization = %q, want %q", req.Header.Get("Authorization"), "real-key-1")
@@ -152,9 +152,9 @@ func TestCredentialStore_SubstituteRequest_EmptyStore(t *testing.T) {
 		URL: &url.URL{Path: "/"},
 	}
 
-	count := cs.SubstituteRequest(req)
-	if count != 0 {
-		t.Errorf("substitution count = %d, want 0", count)
+	result := cs.SubstituteRequest(req)
+	if result.Count != 0 {
+		t.Errorf("substitution count = %d, want 0", result.Count)
 	}
 }
 
@@ -181,9 +181,9 @@ func TestCredentialStore_RegisterUnregisterSession(t *testing.T) {
 		Header: http.Header{"Authorization": []string{p}},
 		URL:    &url.URL{Path: "/"},
 	}
-	count := cs.SubstituteRequest(req)
-	if count != 0 {
-		t.Errorf("substitution count = %d after unregister, want 0", count)
+	res := cs.SubstituteRequest(req)
+	if res.Count != 0 {
+		t.Errorf("substitution count = %d after unregister, want 0", res.Count)
 	}
 }
 
@@ -191,16 +191,16 @@ func TestCredentialStore_RegisterGlobalCredential(t *testing.T) {
 	cs, _ := setupCredentialStore(t)
 
 	p := "greyproxy:credential:v1:global:dddddddddddddddddddddddddddddddd"
-	cs.RegisterGlobalCredential(p, "global-secret")
+	cs.RegisterGlobalCredential(p, "global-secret", "GLOBAL_KEY")
 
 	req := &http.Request{
 		Header: http.Header{"X-Api-Key": []string{p}},
 		URL:    &url.URL{Path: "/"},
 	}
 
-	count := cs.SubstituteRequest(req)
-	if count != 1 {
-		t.Errorf("substitution count = %d, want 1", count)
+	result := cs.SubstituteRequest(req)
+	if result.Count != 1 {
+		t.Errorf("substitution count = %d, want 1", result.Count)
 	}
 	if req.Header.Get("X-Api-Key") != "global-secret" {
 		t.Errorf("got %q, want %q", req.Header.Get("X-Api-Key"), "global-secret")
@@ -229,8 +229,8 @@ func TestCredentialStore_SessionUpsert(t *testing.T) {
 		Header: http.Header{"Authorization": []string{p1}},
 		URL:    &url.URL{Path: "/"},
 	}
-	count := cs.SubstituteRequest(req)
-	if count != 0 {
+	res := cs.SubstituteRequest(req)
+	if res.Count != 0 {
 		t.Error("old placeholder should not be substituted after upsert")
 	}
 
@@ -239,8 +239,8 @@ func TestCredentialStore_SessionUpsert(t *testing.T) {
 		Header: http.Header{"Authorization": []string{p2}},
 		URL:    &url.URL{Path: "/"},
 	}
-	count = cs.SubstituteRequest(req)
-	if count != 1 {
+	res = cs.SubstituteRequest(req)
+	if res.Count != 1 {
 		t.Error("new placeholder should be substituted after upsert")
 	}
 }
@@ -725,8 +725,8 @@ func TestCredentialStore_LoadFromDB(t *testing.T) {
 		Header: http.Header{"Authorization": []string{placeholder}},
 		URL:    &url.URL{Path: "/"},
 	}
-	count := cs.SubstituteRequest(req)
-	if count != 1 {
+	res := cs.SubstituteRequest(req)
+	if res.Count != 1 {
 		t.Error("session placeholder should work after DB reload")
 	}
 	if req.Header.Get("Authorization") != "real-key" {

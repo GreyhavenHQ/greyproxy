@@ -4,6 +4,25 @@
 <div class="max-w-2xl mx-auto">
     <h1 class="text-2xl font-bold mb-6">Settings</h1>
 
+    <!-- Tab Bar -->
+    <div class="flex rounded-lg border border-border overflow-hidden mb-6">
+        <button type="button" onclick="switchTab('general')" data-tab="general"
+            class="settings-tab flex-1 px-4 py-2 text-sm font-medium transition-colors bg-primary text-primary-foreground">
+            General
+        </button>
+        <button type="button" onclick="switchTab('mitm')" data-tab="mitm"
+            class="settings-tab flex-1 px-4 py-2 text-sm font-medium transition-colors border-l border-border text-muted-foreground hover:bg-muted">
+            MITM
+        </button>
+        <button type="button" onclick="switchTab('credentials')" data-tab="credentials"
+            class="settings-tab flex-1 px-4 py-2 text-sm font-medium transition-colors border-l border-border text-muted-foreground hover:bg-muted">
+            Credentials
+        </button>
+    </div>
+
+    <!-- ==================== General Tab ==================== -->
+    <div id="tab-general">
+
     <!-- Appearance -->
     <div class="bg-card border border-border rounded-lg p-6 mb-6">
         <h2 class="text-lg font-semibold mb-4">Appearance</h2>
@@ -75,6 +94,68 @@
                 </div>
             </div>
         </div>
+    </div>
+
+    <!-- Advanced (collapsed by default) -->
+    <div class="mb-6">
+        <button onclick="toggleAdvanced()" class="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors">
+            <svg id="advanced-icon" class="h-4 w-4 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+            </svg>
+            Advanced
+        </button>
+        <div id="advanced-section" class="hidden mt-4">
+            <div class="bg-card border border-border rounded-lg p-6">
+                <h2 class="text-lg font-semibold mb-4">Maintenance</h2>
+
+                <!-- Conversation rebuild -->
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="font-medium">Rebuild conversations</p>
+                        <p class="text-sm text-muted-foreground">Reprocess all HTTP transactions through the conversation assembler. Useful after upgrading when the analysis logic has improved.</p>
+                        <p id="assembler-version-info" class="text-xs text-muted-foreground mt-1"></p>
+                    </div>
+                    <button id="rebuild-btn" onclick="rebuildConversations()"
+                        class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-primary-foreground bg-primary hover:bg-primary/90 flex-shrink-0 ml-4">
+                        Rebuild
+                    </button>
+                </div>
+                <div id="rebuild-status" class="hidden mt-3 text-sm"></div>
+
+                <hr class="my-6 border-border">
+
+                <!-- Redact existing headers -->
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="font-medium">Redact stored headers</p>
+                        <p class="text-sm text-muted-foreground">Apply header redaction to all previously stored HTTP transactions. Replaces sensitive values (Authorization, Cookie, API keys, tokens) with [REDACTED].</p>
+                    </div>
+                    <button id="redact-btn" data-label="Redact" onclick="redactHeaders()"
+                        class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-primary-foreground bg-primary hover:bg-primary/90 flex-shrink-0 ml-4">
+                        Redact
+                    </button>
+                </div>
+                <div id="redact-status" class="hidden mt-3">
+                    <div class="flex items-center gap-3">
+                        <div class="flex-1 bg-muted rounded-full h-2 overflow-hidden">
+                            <div id="redact-bar" class="h-full bg-primary rounded-full transition-all duration-300" style="width: 0%"></div>
+                        </div>
+                        <span id="redact-status-text" class="text-sm text-muted-foreground whitespace-nowrap"></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    </div><!-- end tab-general -->
+
+    <!-- ==================== MITM Tab ==================== -->
+    <div id="tab-mitm" class="hidden">
+
+    <!-- MITM explanation -->
+    <div class="bg-card border border-border rounded-lg p-6 mb-6">
+        <h2 class="text-lg font-semibold mb-3">What is TLS Interception?</h2>
+        <p class="text-sm text-muted-foreground">TLS interception (also known as MITM) allows GreyProxy to decrypt HTTPS traffic so it can inspect, log, and apply credential substitution to encrypted requests. Without it, GreyProxy can only see the destination hostname, not the request contents. When enabled, GreyProxy generates a local CA certificate that must be trusted by your system.</p>
     </div>
 
     <!-- TLS Interception -->
@@ -164,96 +245,61 @@
         </div>
     </div>
 
-    <!-- Credential Protection -->
-    <div class="bg-card border border-border rounded-lg p-6 mb-6">
-        <h2 class="text-lg font-semibold mb-4">Credential Protection</h2>
-        <p class="text-sm text-muted-foreground mb-6">Credential substitution replaces real API keys with opaque placeholders in sandboxed environments. Real credentials are injected transparently at the proxy layer.</p>
+    </div><!-- end tab-mitm -->
 
-        <!-- Active Sessions -->
-        <div class="mb-6">
-            <h3 class="text-sm font-semibold uppercase text-muted-foreground mb-3">Active Sessions</h3>
-            <div id="sessions-list">
-                <p class="text-sm text-muted-foreground">Loading...</p>
-            </div>
-        </div>
+    <!-- ==================== Credentials Tab ==================== -->
+    <div id="tab-credentials" class="hidden">
 
-        <hr class="my-6 border-border">
-
-        <!-- Global Credentials -->
-        <div>
-            <h3 class="text-sm font-semibold uppercase text-muted-foreground mb-3">Global Credentials</h3>
-            <p class="text-xs text-muted-foreground mb-4">Persistent credential substitution configured here. These apply to all proxy traffic, not just sandbox sessions.</p>
-
-            <!-- Add form -->
-            <div class="flex gap-2 mb-4">
-                <input id="cred-label" type="text" placeholder="Label (e.g. ANTHROPIC_API_KEY)"
-                    class="flex-1 px-3 py-1.5 text-sm bg-background border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary">
-                <input id="cred-value" type="password" placeholder="Credential value"
-                    class="flex-1 px-3 py-1.5 text-sm bg-background border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary">
-                <button id="cred-add-btn" onclick="addCredential()"
-                    class="px-4 py-1.5 text-sm font-medium text-primary-foreground bg-primary rounded-md hover:bg-primary/90">
-                    Add
-                </button>
-            </div>
-            <div id="cred-add-error" class="hidden text-sm text-red-600 mb-3"></div>
-
-            <!-- Credentials list -->
-            <div id="credentials-list">
-                <p class="text-sm text-muted-foreground">Loading...</p>
-            </div>
-        </div>
-    </div>
-
-    <!-- Advanced (collapsed by default) -->
-    <div class="mb-6">
-        <button onclick="toggleAdvanced()" class="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors">
-            <svg id="advanced-icon" class="h-4 w-4 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+    <!-- Protection status banner -->
+    <div id="cred-status-banner" class="bg-card border border-border rounded-lg p-4 mb-6">
+        <div class="flex items-center gap-3">
+            <svg class="h-5 w-5 text-muted-foreground flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
             </svg>
-            Advanced
-        </button>
-        <div id="advanced-section" class="hidden mt-4">
-            <div class="bg-card border border-border rounded-lg p-6">
-                <h2 class="text-lg font-semibold mb-4">Maintenance</h2>
-
-                <!-- Conversation rebuild -->
-                <div class="flex items-center justify-between">
-                    <div>
-                        <p class="font-medium">Rebuild conversations</p>
-                        <p class="text-sm text-muted-foreground">Reprocess all HTTP transactions through the conversation assembler. Useful after upgrading when the analysis logic has improved.</p>
-                        <p id="assembler-version-info" class="text-xs text-muted-foreground mt-1"></p>
-                    </div>
-                    <button id="rebuild-btn" onclick="rebuildConversations()"
-                        class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-primary-foreground bg-primary hover:bg-primary/90 flex-shrink-0 ml-4">
-                        Rebuild
-                    </button>
-                </div>
-                <div id="rebuild-status" class="hidden mt-3 text-sm"></div>
-
-                <hr class="my-6 border-border">
-
-                <!-- Redact existing headers -->
-                <div class="flex items-center justify-between">
-                    <div>
-                        <p class="font-medium">Redact stored headers</p>
-                        <p class="text-sm text-muted-foreground">Apply header redaction to all previously stored HTTP transactions. Replaces sensitive values (Authorization, Cookie, API keys, tokens) with [REDACTED].</p>
-                    </div>
-                    <button id="redact-btn" data-label="Redact" onclick="redactHeaders()"
-                        class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-primary-foreground bg-primary hover:bg-primary/90 flex-shrink-0 ml-4">
-                        Redact
-                    </button>
-                </div>
-                <div id="redact-status" class="hidden mt-3">
-                    <div class="flex items-center gap-3">
-                        <div class="flex-1 bg-muted rounded-full h-2 overflow-hidden">
-                            <div id="redact-bar" class="h-full bg-primary rounded-full transition-all duration-300" style="width: 0%"></div>
-                        </div>
-                        <span id="redact-status-text" class="text-sm text-muted-foreground whitespace-nowrap"></span>
-                    </div>
-                </div>
+            <div class="text-sm">
+                <span id="cred-http-status" class="font-medium">HTTP requests: protected</span>
+                <span class="text-muted-foreground mx-2">&middot;</span>
+                <span id="cred-https-status" class="font-medium">HTTPS requests: checking...</span>
             </div>
         </div>
     </div>
+
+    <p class="text-sm text-muted-foreground mb-6">Credential substitution replaces real API keys with opaque placeholders in sandboxed environments. Real credentials are injected transparently at the proxy layer.</p>
+
+    <!-- Global Credentials -->
+    <div class="bg-card border border-border rounded-lg p-6 mb-6">
+        <h3 class="text-sm font-semibold uppercase text-muted-foreground mb-3">Global Credentials</h3>
+        <p class="text-xs text-muted-foreground mb-4">Persistent credential substitution configured here. These apply to all proxy traffic, not just sandbox sessions.</p>
+
+        <!-- Add form -->
+        <div class="flex gap-2 mb-4">
+            <input id="cred-label" type="text" placeholder="Label (e.g. ANTHROPIC_API_KEY)"
+                class="flex-1 px-3 py-1.5 text-sm bg-background border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary">
+            <input id="cred-value" type="password" placeholder="Credential value"
+                class="flex-1 px-3 py-1.5 text-sm bg-background border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary">
+            <button id="cred-add-btn" onclick="addCredential()"
+                class="px-4 py-1.5 text-sm font-medium text-primary-foreground bg-primary rounded-md hover:bg-primary/90">
+                Add
+            </button>
+        </div>
+        <div id="cred-add-error" class="hidden text-sm text-red-600 mb-3"></div>
+
+        <!-- Credentials list -->
+        <div id="credentials-list">
+            <p class="text-sm text-muted-foreground">Loading...</p>
+        </div>
+    </div>
+
+    <!-- Active Sessions -->
+    <div class="bg-card border border-border rounded-lg p-6 mb-6">
+        <h3 class="text-sm font-semibold uppercase text-muted-foreground mb-3">Active Sessions</h3>
+        <div id="sessions-list">
+            <p class="text-sm text-muted-foreground">Loading...</p>
+        </div>
+    </div>
+
+    </div><!-- end tab-credentials -->
+
 </div>
 {{end}}
 
@@ -265,6 +311,35 @@
     var notifEnabled = false;
     var notifAvailable = false;
 
+    // --- Tab switching ---
+    window.switchTab = function(tab) {
+        document.querySelectorAll('.settings-tab').forEach(function(btn) {
+            if (btn.getAttribute('data-tab') === tab) {
+                btn.classList.add('bg-primary', 'text-primary-foreground');
+                btn.classList.remove('text-muted-foreground', 'hover:bg-muted');
+            } else {
+                btn.classList.remove('bg-primary', 'text-primary-foreground');
+                btn.classList.add('text-muted-foreground', 'hover:bg-muted');
+            }
+        });
+        ['general', 'mitm', 'credentials'].forEach(function(t) {
+            var panel = document.getElementById('tab-' + t);
+            if (t === tab) {
+                panel.classList.remove('hidden');
+            } else {
+                panel.classList.add('hidden');
+            }
+        });
+        history.replaceState(null, '', '#' + tab);
+    };
+
+    // Restore tab from URL hash
+    var hash = window.location.hash.replace('#', '');
+    if (['general', 'mitm', 'credentials'].indexOf(hash) !== -1) {
+        switchTab(hash);
+    }
+
+    // --- Theme ---
     function updateThemeButtons(theme) {
         currentTheme = theme;
         document.querySelectorAll('.theme-btn').forEach(function(btn) {
@@ -300,6 +375,7 @@
         }).catch(function() {});
     };
 
+    // --- Notifications ---
     function updateNotifToggle(enabled, available) {
         notifEnabled = enabled;
         notifAvailable = available;
@@ -376,6 +452,7 @@
         .catch(function() {});
     };
 
+    // --- Advanced / Maintenance ---
     window.redactHeaders = function() {
         var btn = document.getElementById('redact-btn');
         var status = document.getElementById('redact-status');
@@ -412,7 +489,6 @@
             });
     };
 
-    // Listen for redaction progress events from the WebSocket
     window.addEventListener('proxy:maintenance-event', function(e) {
         var data = e.detail.data;
         if (!data || data.task !== 'redact_headers') return;
@@ -515,6 +591,19 @@
             dot.classList.remove('translate-x-5');
             dot.classList.add('translate-x-1');
         }
+        // Update credential protection status banner
+        updateCredStatusBanner(enabled);
+    }
+
+    function updateCredStatusBanner(mitmOn) {
+        var httpEl = document.getElementById('cred-http-status');
+        var httpsEl = document.getElementById('cred-https-status');
+        httpEl.innerHTML = '<span class="text-[var(--color-green)]">HTTP requests: protected</span>';
+        if (mitmOn) {
+            httpsEl.innerHTML = '<span class="text-[var(--color-green)]">HTTPS requests: protected</span>';
+        } else {
+            httpsEl.innerHTML = '<span class="text-yellow-600 dark:text-yellow-500">HTTPS requests: requires TLS interception</span>';
+        }
     }
 
     window.toggleMitmSetting = function() {
@@ -570,14 +659,11 @@
                 text.innerHTML += ' <span class="text-muted-foreground">&middot; expires ' + data.expiresAt.split('T')[0] + '</span>';
             }
             document.getElementById('cert-install-section').classList.remove('hidden');
-            // Show install command for the current platform
             var cmd = data.installCommands.linux || data.installCommands.macos || '';
             document.getElementById('cert-install-cmd').textContent = cmd;
         }
 
-        // Download link
         document.getElementById('cert-download-link').href = prefix + '/api/cert/download';
-
     }
 
     function escapeHtml(text) {
@@ -645,7 +731,6 @@
     window.copyInstallCmd = function() {
         var cmd = document.getElementById('cert-install-cmd').textContent;
         navigator.clipboard.writeText(cmd).then(function() {
-            // Brief visual feedback
             var btn = document.querySelector('#cert-install-section button[onclick="copyInstallCmd()"]');
             if (btn) {
                 btn.innerHTML = '<svg class="h-4 w-4 text-[var(--color-green)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>';
@@ -675,15 +760,29 @@
                     html += '<span class="text-sm font-medium">' + escapeHtml(s.container_name) + '</span>';
                     html += '<button onclick="deleteSession(\'' + escapeHtml(s.session_id) + '\')" class="text-xs text-muted-foreground hover:text-destructive">Expire</button>';
                     html += '</div>';
+                    // Credential labels
                     html += '<div class="flex flex-wrap gap-1.5 mb-2">';
                     (s.credential_labels || []).forEach(function(label) {
                         html += '<span class="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-background border border-border rounded">' + escapeHtml(label) + '</span>';
                     });
                     html += '</div>';
+                    // Stats
                     html += '<div class="flex items-center gap-4 text-xs text-muted-foreground">';
                     html += '<span>' + s.credential_count + ' credential' + (s.credential_count !== 1 ? 's' : '') + '</span>';
                     html += '<span>' + s.substitution_count + ' substitution' + (s.substitution_count !== 1 ? 's' : '') + '</span>';
                     html += '</div>';
+                    // Metadata (if present)
+                    if (s.metadata && Object.keys(s.metadata).length > 0) {
+                        html += '<div class="mt-2 pt-2 border-t border-border/50">';
+                        html += '<div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs">';
+                        var metaKeys = Object.keys(s.metadata);
+                        metaKeys.forEach(function(key) {
+                            html += '<span class="text-muted-foreground">' + escapeHtml(key) + '</span>';
+                            html += '<span class="font-mono truncate" title="' + escapeHtml(s.metadata[key]) + '">' + escapeHtml(s.metadata[key]) + '</span>';
+                        });
+                        html += '</div>';
+                        html += '</div>';
+                    }
                     html += '</div>';
                 });
                 html += '</div>';

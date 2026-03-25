@@ -10,18 +10,24 @@ import (
 // MitmRoundTripInfo contains decrypted HTTP request/response data from a MITM round-trip.
 // This re-exports the internal sniffing type for use outside the gostx/internal package.
 type MitmRoundTripInfo struct {
-	Host            string
-	Method          string
-	URI             string
-	Proto           string
-	StatusCode      int
-	RequestHeaders  http.Header
-	RequestBody     []byte
-	ResponseHeaders http.Header
-	ResponseBody    []byte
-	ContainerName   string
-	DurationMs      int64
+	Host                   string
+	Method                 string
+	URI                    string
+	Proto                  string
+	StatusCode             int
+	RequestHeaders         http.Header
+	RequestBody            []byte
+	ResponseHeaders        http.Header
+	ResponseBody           []byte
+	ContainerName          string
+	DurationMs             int64
+	SubstitutedCredentials []string
+	SessionID              string
 }
+
+// CredentialSubstitutionInfo holds the result of a credential substitution pass.
+// Re-exports the internal sniffing type.
+type CredentialSubstitutionInfo = sniffing.CredentialSubstitutionInfo
 
 // MitmRequestHoldInfo contains request details for the hold hook to evaluate.
 type MitmRequestHoldInfo struct {
@@ -69,17 +75,19 @@ func SetGlobalMitmHook(hook func(info MitmRoundTripInfo)) {
 	}
 	sniffing.GlobalHTTPRoundTripHook = func(info sniffing.HTTPRoundTripInfo) {
 		hook(MitmRoundTripInfo{
-			Host:            info.Host,
-			Method:          info.Method,
-			URI:             info.URI,
-			Proto:           info.Proto,
-			StatusCode:      info.StatusCode,
-			RequestHeaders:  info.RequestHeaders,
-			RequestBody:     info.RequestBody,
-			ResponseHeaders: info.ResponseHeaders,
-			ResponseBody:    info.ResponseBody,
-			ContainerName:   info.ContainerName,
-			DurationMs:      info.DurationMs,
+			Host:                   info.Host,
+			Method:                 info.Method,
+			URI:                    info.URI,
+			Proto:                  info.Proto,
+			StatusCode:             info.StatusCode,
+			RequestHeaders:         info.RequestHeaders,
+			RequestBody:            info.RequestBody,
+			ResponseHeaders:        info.ResponseHeaders,
+			ResponseBody:           info.ResponseBody,
+			ContainerName:          info.ContainerName,
+			DurationMs:             info.DurationMs,
+			SubstitutedCredentials: info.SubstitutedCredentials,
+			SessionID:              info.SessionID,
 		})
 	}
 }
@@ -87,7 +95,8 @@ func SetGlobalMitmHook(hook func(info MitmRoundTripInfo)) {
 // SetGlobalCredentialSubstituter sets a callback that modifies HTTP requests in-place
 // just before they are forwarded upstream. Used to replace credential placeholders
 // with real values. Headers are already cloned for storage before this point.
-func SetGlobalCredentialSubstituter(hook func(req *http.Request)) {
+// The hook returns substitution info (labels and session ID).
+func SetGlobalCredentialSubstituter(hook func(req *http.Request) *CredentialSubstitutionInfo) {
 	sniffing.GlobalCredentialSubstituter = hook
 }
 

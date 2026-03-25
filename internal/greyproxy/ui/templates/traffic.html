@@ -111,6 +111,15 @@
                     .then(function(txn) {
                         var bodyEl = document.getElementById('txn-body-' + id);
                         var html = '';
+                        if (txn.substituted_credentials && txn.substituted_credentials.length > 0) {
+                            html += '<div class="mb-3 flex items-center gap-2 flex-wrap">';
+                            html += '<svg class="h-4 w-4 text-[var(--color-green)] flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" /></svg>';
+                            html += '<span class="text-xs font-medium text-[var(--color-green)]">Credentials substituted:</span>';
+                            txn.substituted_credentials.forEach(function(label) {
+                                html += '<span class="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-green-50 dark:bg-green-950/30 text-green-700 dark:text-green-400 border border-green-200 dark:border-green-800 rounded">' + escapeHtml(label) + '</span>';
+                            });
+                            html += '</div>';
+                        }
                         if (txn.request_headers) {
                             html += '<div class="mb-2"><span class="font-semibold text-xs text-muted-foreground">Request Headers</span><pre class="mt-1 text-xs bg-background p-2 rounded border border-border overflow-x-auto max-h-40">' + escapeHtml(JSON.stringify(txn.request_headers, null, 2)) + '</pre></div>';
                         }

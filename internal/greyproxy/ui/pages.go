@@ -856,11 +856,13 @@ func RegisterHTMXRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 		container := c.Query("container")
 		destination := c.Query("destination")
 		method := c.Query("method")
+		sessionID := c.Query("session_id")
 
 		f := greyproxy.TransactionFilter{
 			Container:   container,
 			Destination: destination,
 			Method:      method,
+			SessionID:   sessionID,
 			Limit:       limit,
 			Offset:      offset,
 		}

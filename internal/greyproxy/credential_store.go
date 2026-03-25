@@ -20,6 +20,13 @@ const (
 	EventSessionSubstitution = "session.substitution"
 )
 
+// SubstitutionResult holds the outcome of a credential substitution pass.
+type SubstitutionResult struct {
+	Count      int
+	Labels     []string
+	SessionIDs []string
+}
+
 // CredentialStore provides fast in-memory credential placeholder lookup
 // backed by encrypted DB persistence.
 type CredentialStore struct {
@@ -30,6 +37,9 @@ type CredentialStore struct {
 
 	// placeholder -> session_id (for substitution counting)
 	sessionMap map[string]string
+
+	// placeholder -> human-readable label (e.g. "OPENAI_API_KEY")
+	labelsMap map[string]string
 
 	// pending substitution counts per session (batched to reduce DB writes)
 	pendingCounts map[string]*atomic.Int64
@@ -44,6 +54,7 @@ func NewCredentialStore(db *DB, encryptionKey []byte, bus *EventBus) (*Credentia
 	cs := &CredentialStore{
 		lookup:        make(map[string]string),
 		sessionMap:    make(map[string]string),
+		labelsMap:     make(map[string]string),
 		pendingCounts: make(map[string]*atomic.Int64),
 		db:            db,
 		encryptionKey: encryptionKey,
@@ -75,9 +86,13 @@ func (cs *CredentialStore) loadFromDB() error {
 			log.Printf("WARN credential_store: failed to decrypt session %s (stale key?), skipping", s.SessionID)
 			continue
 		}
+		labels := GetSessionLabels(&s)
 		for placeholder, real := range mappings {
 			cs.lookup[placeholder] = real
 			cs.sessionMap[placeholder] = s.SessionID
+			if label, ok := labels[placeholder]; ok {
+				cs.labelsMap[placeholder] = label
+			}
 		}
 	}
 
@@ -93,6 +108,7 @@ func (cs *CredentialStore) loadFromDB() error {
 			continue
 		}
 		cs.lookup[c.Placeholder] = value
+		cs.labelsMap[c.Placeholder] = c.Label
 	}
 
 	return nil
@@ -106,9 +122,13 @@ func (cs *CredentialStore) RegisterSession(session *Session, mappings map[string
 	// Remove any old entries for this session first
 	cs.removeSessionLocked(session.SessionID)
 
+	labels := GetSessionLabels(session)
 	for placeholder, real := range mappings {
 		cs.lookup[placeholder] = real
 		cs.sessionMap[placeholder] = session.SessionID
+		if label, ok := labels[placeholder]; ok {
+			cs.labelsMap[placeholder] = label
+		}
 	}
 	cs.pendingCounts[session.SessionID] = &atomic.Int64{}
 
@@ -135,16 +155,18 @@ func (cs *CredentialStore) removeSessionLocked(sessionID string) {
 		if sid == sessionID {
 			delete(cs.lookup, placeholder)
 			delete(cs.sessionMap, placeholder)
+			delete(cs.labelsMap, placeholder)
 		}
 	}
 	delete(cs.pendingCounts, sessionID)
 }
 
 // RegisterGlobalCredential adds a global credential to the in-memory store.
-func (cs *CredentialStore) RegisterGlobalCredential(placeholder, value string) {
+func (cs *CredentialStore) RegisterGlobalCredential(placeholder, value, label string) {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 	cs.lookup[placeholder] = value
+	cs.labelsMap[placeholder] = label
 }
 
 // UnregisterGlobalCredential removes a global credential from the in-memory store.
@@ -152,21 +174,23 @@ func (cs *CredentialStore) UnregisterGlobalCredential(placeholder string) {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 	delete(cs.lookup, placeholder)
+	delete(cs.labelsMap, placeholder)
 }
 
 // SubstituteRequest scans HTTP request headers and URL query parameters
 // for credential placeholders and replaces them with real values.
-// Returns the number of substitutions made.
-func (cs *CredentialStore) SubstituteRequest(req *http.Request) int {
+// Returns a SubstitutionResult with the count, matched labels, and session IDs.
+func (cs *CredentialStore) SubstituteRequest(req *http.Request) SubstitutionResult {
 	cs.mu.RLock()
 	defer cs.mu.RUnlock()
 
 	if len(cs.lookup) == 0 {
-		return 0
+		return SubstitutionResult{}
 	}
 
 	count := 0
 	sessionsUsed := make(map[string]bool)
+	labelsUsed := make(map[string]bool)
 
 	// Scan headers
 	for key, values := range req.Header {
@@ -174,7 +198,7 @@ func (cs *CredentialStore) SubstituteRequest(req *http.Request) int {
 			if !strings.Contains(v, PlaceholderPrefix) {
 				continue
 			}
-			replaced := cs.replaceInString(v, sessionsUsed)
+			replaced := cs.replaceInString(v, sessionsUsed, labelsUsed)
 			if replaced != v {
 				req.Header[key][i] = replaced
 				count++
@@ -190,7 +214,7 @@ func (cs *CredentialStore) SubstituteRequest(req *http.Request) int {
 			if !strings.Contains(v, PlaceholderPrefix) {
 				continue
 			}
-			replaced := cs.replaceInString(v, sessionsUsed)
+			replaced := cs.replaceInString(v, sessionsUsed, labelsUsed)
 			if replaced != v {
 				q[key][i] = replaced
 				qChanged = true
@@ -207,18 +231,31 @@ func (cs *CredentialStore) SubstituteRequest(req *http.Request) int {
 		cs.trackSubstitutions(sessionsUsed)
 	}
 
-	return count
+	// Build result
+	labels := make([]string, 0, len(labelsUsed))
+	for l := range labelsUsed {
+		labels = append(labels, l)
+	}
+	sessionIDs := make([]string, 0, len(sessionsUsed))
+	for sid := range sessionsUsed {
+		sessionIDs = append(sessionIDs, sid)
+	}
+
+	return SubstitutionResult{Count: count, Labels: labels, SessionIDs: sessionIDs}
 }
 
 // replaceInString replaces all placeholder occurrences in a string
-// and records which sessions were involved.
+// and records which sessions and labels were involved.
 // Caller must hold at least a read lock.
-func (cs *CredentialStore) replaceInString(s string, sessionsUsed map[string]bool) string {
+func (cs *CredentialStore) replaceInString(s string, sessionsUsed, labelsUsed map[string]bool) string {
 	for placeholder, real := range cs.lookup {
 		if strings.Contains(s, placeholder) {
 			s = strings.ReplaceAll(s, placeholder, real)
-			if sid, ok := cs.sessionMap[placeholder]; ok && sessionsUsed != nil {
+			if sid, ok := cs.sessionMap[placeholder]; ok {
 				sessionsUsed[sid] = true
+			}
+			if label, ok := cs.labelsMap[placeholder]; ok {
+				labelsUsed[label] = true
 			}
 		}
 	}

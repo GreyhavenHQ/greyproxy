@@ -51,7 +51,7 @@ func CredentialsCreateHandler(s *Shared) gin.HandlerFunc {
 
 		// Update in-memory store
 		if s.CredentialStore != nil {
-			s.CredentialStore.RegisterGlobalCredential(cred.Placeholder, input.Value)
+			s.CredentialStore.RegisterGlobalCredential(cred.Placeholder, input.Value, input.Label)
 		}
 
 		c.JSON(http.StatusOK, gin.H{

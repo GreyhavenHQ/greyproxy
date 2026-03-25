@@ -185,47 +185,51 @@ func (l *RequestLog) DisplayHost() string {
 
 // HttpTransaction represents a MITM-captured HTTP request/response pair.
 type HttpTransaction struct {
-	ID                  int64          `json:"id"`
-	Timestamp           time.Time      `json:"timestamp"`
-	ContainerName       string         `json:"container_name"`
-	DestinationHost     string         `json:"destination_host"`
-	DestinationPort     int            `json:"destination_port"`
-	Method              string         `json:"method"`
-	URL                 string         `json:"url"`
-	RequestHeaders      sql.NullString `json:"-"`
-	RequestBody         []byte         `json:"-"`
-	RequestBodySize     sql.NullInt64  `json:"-"`
-	RequestContentType  sql.NullString `json:"-"`
-	StatusCode          sql.NullInt64  `json:"status_code"`
-	ResponseHeaders     sql.NullString `json:"-"`
-	ResponseBody        []byte         `json:"-"`
-	ResponseBodySize    sql.NullInt64  `json:"-"`
-	ResponseContentType sql.NullString `json:"-"`
-	DurationMs          sql.NullInt64  `json:"duration_ms"`
-	RuleID              sql.NullInt64  `json:"rule_id"`
-	Result              string         `json:"result"`
+	ID                     int64          `json:"id"`
+	Timestamp              time.Time      `json:"timestamp"`
+	ContainerName          string         `json:"container_name"`
+	DestinationHost        string         `json:"destination_host"`
+	DestinationPort        int            `json:"destination_port"`
+	Method                 string         `json:"method"`
+	URL                    string         `json:"url"`
+	RequestHeaders         sql.NullString `json:"-"`
+	RequestBody            []byte         `json:"-"`
+	RequestBodySize        sql.NullInt64  `json:"-"`
+	RequestContentType     sql.NullString `json:"-"`
+	StatusCode             sql.NullInt64  `json:"status_code"`
+	ResponseHeaders        sql.NullString `json:"-"`
+	ResponseBody           []byte         `json:"-"`
+	ResponseBodySize       sql.NullInt64  `json:"-"`
+	ResponseContentType    sql.NullString `json:"-"`
+	DurationMs             sql.NullInt64  `json:"duration_ms"`
+	RuleID                 sql.NullInt64  `json:"rule_id"`
+	Result                 string         `json:"result"`
+	SubstitutedCredentials sql.NullString `json:"-"`
+	SessionID              sql.NullString `json:"-"`
 }
 
 type HttpTransactionJSON struct {
-	ID                  int64   `json:"id"`
-	Timestamp           string  `json:"timestamp"`
-	ContainerName       string  `json:"container_name"`
-	DestinationHost     string  `json:"destination_host"`
-	DestinationPort     int     `json:"destination_port"`
-	Method              string  `json:"method"`
-	URL                 string  `json:"url"`
-	RequestHeaders      any     `json:"request_headers,omitempty"`
-	RequestBody         *string `json:"request_body,omitempty"`
-	RequestBodySize     *int64  `json:"request_body_size,omitempty"`
-	RequestContentType  *string `json:"request_content_type,omitempty"`
-	StatusCode          *int64  `json:"status_code,omitempty"`
-	ResponseHeaders     any     `json:"response_headers,omitempty"`
-	ResponseBody        *string `json:"response_body,omitempty"`
-	ResponseBodySize    *int64  `json:"response_body_size,omitempty"`
-	ResponseContentType *string `json:"response_content_type,omitempty"`
-	DurationMs          *int64  `json:"duration_ms,omitempty"`
-	RuleID              *int64  `json:"rule_id,omitempty"`
-	Result              string  `json:"result"`
+	ID                     int64    `json:"id"`
+	Timestamp              string   `json:"timestamp"`
+	ContainerName          string   `json:"container_name"`
+	DestinationHost        string   `json:"destination_host"`
+	DestinationPort        int      `json:"destination_port"`
+	Method                 string   `json:"method"`
+	URL                    string   `json:"url"`
+	RequestHeaders         any      `json:"request_headers,omitempty"`
+	RequestBody            *string  `json:"request_body,omitempty"`
+	RequestBodySize        *int64   `json:"request_body_size,omitempty"`
+	RequestContentType     *string  `json:"request_content_type,omitempty"`
+	StatusCode             *int64   `json:"status_code,omitempty"`
+	ResponseHeaders        any      `json:"response_headers,omitempty"`
+	ResponseBody           *string  `json:"response_body,omitempty"`
+	ResponseBodySize       *int64   `json:"response_body_size,omitempty"`
+	ResponseContentType    *string  `json:"response_content_type,omitempty"`
+	DurationMs             *int64   `json:"duration_ms,omitempty"`
+	RuleID                 *int64   `json:"rule_id,omitempty"`
+	Result                 string   `json:"result"`
+	SubstitutedCredentials []string `json:"substituted_credentials,omitempty"`
+	SessionID              *string  `json:"session_id,omitempty"`
 }
 
 func (t *HttpTransaction) ToJSON(includeBody bool) HttpTransactionJSON {
@@ -282,26 +286,37 @@ func (t *HttpTransaction) ToJSON(includeBody bool) HttpTransactionJSON {
 			j.ResponseBody = &s
 		}
 	}
+	if t.SubstitutedCredentials.Valid && t.SubstitutedCredentials.String != "" {
+		var creds []string
+		if json.Unmarshal([]byte(t.SubstitutedCredentials.String), &creds) == nil {
+			j.SubstitutedCredentials = creds
+		}
+	}
+	if t.SessionID.Valid {
+		j.SessionID = &t.SessionID.String
+	}
 	return j
 }
 
 // HttpTransactionCreateInput holds the data needed to create a transaction record.
 type HttpTransactionCreateInput struct {
-	ContainerName   string
-	DestinationHost string
-	DestinationPort int
-	Method          string
-	URL             string
-	RequestHeaders  http.Header
-	RequestBody     []byte
-	RequestContentType string
-	StatusCode      int
-	ResponseHeaders http.Header
-	ResponseBody    []byte
-	ResponseContentType string
-	DurationMs      int64
-	RuleID          *int64
-	Result          string
+	ContainerName          string
+	DestinationHost        string
+	DestinationPort        int
+	Method                 string
+	URL                    string
+	RequestHeaders         http.Header
+	RequestBody            []byte
+	RequestContentType     string
+	StatusCode             int
+	ResponseHeaders        http.Header
+	ResponseBody           []byte
+	ResponseContentType    string
+	DurationMs             int64
+	RuleID                 *int64
+	Result                 string
+	SubstitutedCredentials []string
+	SessionID              string
 }
 
 // DashboardStats holds aggregated data for the dashboard.
@@ -350,6 +365,7 @@ type Session struct {
 	ContainerName     string    `json:"container_name"`
 	MappingsEnc       []byte    `json:"-"`
 	LabelsJSON        string    `json:"-"`
+	MetadataJSON      string    `json:"-"`
 	TTLSeconds        int       `json:"ttl_seconds"`
 	CreatedAt         time.Time `json:"created_at"`
 	ExpiresAt         time.Time `json:"expires_at"`
@@ -358,15 +374,16 @@ type Session struct {
 }
 
 type SessionJSON struct {
-	SessionID         string   `json:"session_id"`
-	ContainerName     string   `json:"container_name"`
-	CredentialCount   int      `json:"credential_count"`
-	CredentialLabels  []string `json:"credential_labels"`
-	TTLSeconds        int      `json:"ttl_seconds"`
-	CreatedAt         string   `json:"created_at"`
-	ExpiresAt         string   `json:"expires_at"`
-	LastHeartbeat     string   `json:"last_heartbeat"`
-	SubstitutionCount int64    `json:"substitution_count"`
+	SessionID         string            `json:"session_id"`
+	ContainerName     string            `json:"container_name"`
+	CredentialCount   int               `json:"credential_count"`
+	CredentialLabels  []string          `json:"credential_labels"`
+	Metadata          map[string]string `json:"metadata,omitempty"`
+	TTLSeconds        int               `json:"ttl_seconds"`
+	CreatedAt         string            `json:"created_at"`
+	ExpiresAt         string            `json:"expires_at"`
+	LastHeartbeat     string            `json:"last_heartbeat"`
+	SubstitutionCount int64             `json:"substitution_count"`
 }
 
 func (s *Session) ToJSON(labels map[string]string) SessionJSON {
@@ -374,11 +391,16 @@ func (s *Session) ToJSON(labels map[string]string) SessionJSON {
 	for _, v := range labels {
 		labelList = append(labelList, v)
 	}
+	var metadata map[string]string
+	if s.MetadataJSON != "" && s.MetadataJSON != "{}" {
+		json.Unmarshal([]byte(s.MetadataJSON), &metadata)
+	}
 	return SessionJSON{
 		SessionID:         s.SessionID,
 		ContainerName:     s.ContainerName,
 		CredentialCount:   len(labels),
 		CredentialLabels:  labelList,
+		Metadata:          metadata,
 		TTLSeconds:        s.TTLSeconds,
 		CreatedAt:         s.CreatedAt.UTC().Format(time.RFC3339),
 		ExpiresAt:         s.ExpiresAt.UTC().Format(time.RFC3339),
