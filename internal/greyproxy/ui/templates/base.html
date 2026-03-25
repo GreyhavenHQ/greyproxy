@@ -309,6 +309,9 @@
                         if (msg.type === 'maintenance.progress') {
                             window.dispatchEvent(new CustomEvent('proxy:maintenance-event', { detail: msg }));
                         }
+                        if (msg.type && msg.type.indexOf('session.') === 0) {
+                            window.dispatchEvent(new CustomEvent('proxy:session-event', { detail: msg }));
+                        }
                     } catch (e) {}
                 };
 

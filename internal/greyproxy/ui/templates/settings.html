@@ -164,6 +164,46 @@
         </div>
     </div>
 
+    <!-- Credential Protection -->
+    <div class="bg-card border border-border rounded-lg p-6 mb-6">
+        <h2 class="text-lg font-semibold mb-4">Credential Protection</h2>
+        <p class="text-sm text-muted-foreground mb-6">Credential substitution replaces real API keys with opaque placeholders in sandboxed environments. Real credentials are injected transparently at the proxy layer.</p>
+
+        <!-- Active Sessions -->
+        <div class="mb-6">
+            <h3 class="text-sm font-semibold uppercase text-muted-foreground mb-3">Active Sessions</h3>
+            <div id="sessions-list">
+                <p class="text-sm text-muted-foreground">Loading...</p>
+            </div>
+        </div>
+
+        <hr class="my-6 border-border">
+
+        <!-- Global Credentials -->
+        <div>
+            <h3 class="text-sm font-semibold uppercase text-muted-foreground mb-3">Global Credentials</h3>
+            <p class="text-xs text-muted-foreground mb-4">Persistent credential substitution configured here. These apply to all proxy traffic, not just sandbox sessions.</p>
+
+            <!-- Add form -->
+            <div class="flex gap-2 mb-4">
+                <input id="cred-label" type="text" placeholder="Label (e.g. ANTHROPIC_API_KEY)"
+                    class="flex-1 px-3 py-1.5 text-sm bg-background border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary">
+                <input id="cred-value" type="password" placeholder="Credential value"
+                    class="flex-1 px-3 py-1.5 text-sm bg-background border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary">
+                <button id="cred-add-btn" onclick="addCredential()"
+                    class="px-4 py-1.5 text-sm font-medium text-primary-foreground bg-primary rounded-md hover:bg-primary/90">
+                    Add
+                </button>
+            </div>
+            <div id="cred-add-error" class="hidden text-sm text-red-600 mb-3"></div>
+
+            <!-- Credentials list -->
+            <div id="credentials-list">
+                <p class="text-sm text-muted-foreground">Loading...</p>
+            </div>
+        </div>
+    </div>
+
     <!-- Advanced (collapsed by default) -->
     <div class="mb-6">
         <button onclick="toggleAdvanced()" class="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors">
@@ -617,6 +657,132 @@
     };
 
     loadCertStatus();
+
+    // --- Credential Protection ---
+    function loadSessions() {
+        fetch(prefix + '/api/sessions')
+            .then(function(r) { return r.json(); })
+            .then(function(sessions) {
+                var el = document.getElementById('sessions-list');
+                if (!sessions || sessions.length === 0) {
+                    el.innerHTML = '<p class="text-sm text-muted-foreground">No active sessions. Sessions are created automatically when greywall launches a sandbox.</p>';
+                    return;
+                }
+                var html = '<div class="space-y-3">';
+                sessions.forEach(function(s) {
+                    html += '<div class="p-3 bg-muted rounded-lg border border-border">';
+                    html += '<div class="flex items-center justify-between mb-2">';
+                    html += '<span class="text-sm font-medium">' + escapeHtml(s.container_name) + '</span>';
+                    html += '<button onclick="deleteSession(\'' + escapeHtml(s.session_id) + '\')" class="text-xs text-muted-foreground hover:text-destructive">Expire</button>';
+                    html += '</div>';
+                    html += '<div class="flex flex-wrap gap-1.5 mb-2">';
+                    (s.credential_labels || []).forEach(function(label) {
+                        html += '<span class="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-background border border-border rounded">' + escapeHtml(label) + '</span>';
+                    });
+                    html += '</div>';
+                    html += '<div class="flex items-center gap-4 text-xs text-muted-foreground">';
+                    html += '<span>' + s.credential_count + ' credential' + (s.credential_count !== 1 ? 's' : '') + '</span>';
+                    html += '<span>' + s.substitution_count + ' substitution' + (s.substitution_count !== 1 ? 's' : '') + '</span>';
+                    html += '</div>';
+                    html += '</div>';
+                });
+                html += '</div>';
+                el.innerHTML = html;
+            })
+            .catch(function() {
+                document.getElementById('sessions-list').innerHTML = '<p class="text-sm text-red-600">Failed to load sessions.</p>';
+            });
+    }
+
+    function loadCredentials() {
+        fetch(prefix + '/api/credentials')
+            .then(function(r) { return r.json(); })
+            .then(function(creds) {
+                var el = document.getElementById('credentials-list');
+                if (!creds || creds.length === 0) {
+                    el.innerHTML = '<p class="text-sm text-muted-foreground">No global credentials configured.</p>';
+                    return;
+                }
+                var html = '<div class="space-y-2">';
+                creds.forEach(function(c) {
+                    html += '<div class="flex items-center justify-between p-2 bg-muted rounded border border-border">';
+                    html += '<div class="flex items-center gap-3">';
+                    html += '<span class="text-sm font-medium">' + escapeHtml(c.label) + '</span>';
+                    html += '<span class="text-xs text-muted-foreground font-mono">' + escapeHtml(c.value_preview) + '</span>';
+                    html += '</div>';
+                    html += '<button onclick="deleteCredential(\'' + escapeHtml(c.id) + '\')" class="text-xs text-muted-foreground hover:text-destructive px-2 py-1">Delete</button>';
+                    html += '</div>';
+                });
+                html += '</div>';
+                el.innerHTML = html;
+            })
+            .catch(function() {
+                document.getElementById('credentials-list').innerHTML = '<p class="text-sm text-red-600">Failed to load credentials.</p>';
+            });
+    }
+
+    window.addCredential = function() {
+        var label = document.getElementById('cred-label').value.trim();
+        var value = document.getElementById('cred-value').value;
+        var errorEl = document.getElementById('cred-add-error');
+        errorEl.classList.add('hidden');
+
+        if (!label || !value) {
+            errorEl.textContent = 'Both label and value are required.';
+            errorEl.classList.remove('hidden');
+            return;
+        }
+
+        var btn = document.getElementById('cred-add-btn');
+        btn.disabled = true;
+        btn.classList.add('opacity-50');
+
+        fetch(prefix + '/api/credentials', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ label: label, value: value })
+        })
+        .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
+        .then(function(res) {
+            btn.disabled = false;
+            btn.classList.remove('opacity-50');
+            if (!res.ok) {
+                errorEl.textContent = res.data.error || 'Failed to add credential.';
+                errorEl.classList.remove('hidden');
+            } else {
+                document.getElementById('cred-label').value = '';
+                document.getElementById('cred-value').value = '';
+                loadCredentials();
+                showToast('Credential added: ' + label);
+            }
+        })
+        .catch(function() {
+            btn.disabled = false;
+            btn.classList.remove('opacity-50');
+            errorEl.textContent = 'Network error.';
+            errorEl.classList.remove('hidden');
+        });
+    };
+
+    window.deleteCredential = function(id) {
+        fetch(prefix + '/api/credentials/' + id, { method: 'DELETE' })
+            .then(function() { loadCredentials(); })
+            .catch(function() {});
+    };
+
+    window.deleteSession = function(id) {
+        fetch(prefix + '/api/sessions/' + id, { method: 'DELETE' })
+            .then(function() { loadSessions(); })
+            .catch(function() {});
+    };
+
+    loadSessions();
+    loadCredentials();
+
+    // Listen for session events to refresh
+    window.addEventListener('proxy:session-event', function() {
+        loadSessions();
+    });
 
     // Load settings from server
     fetch(prefix + '/api/settings')
