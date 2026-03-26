@@ -52,7 +52,11 @@ func SessionsCreateHandler(s *Shared) gin.HandlerFunc {
 			return
 		}
 
-		// Resolve global credentials and merge into mappings
+		// Resolve global credentials: validate they exist and merge labels for dashboard display.
+		// Global credential values are NOT duplicated into session mappings; the proxy
+		// loads them separately from the global_credentials table at startup and when
+		// credentials are created/deleted. This ensures deleting a global credential
+		// immediately stops substitution for all sessions.
 		var resolvedGlobals map[string]string // label -> placeholder
 		if len(input.GlobalCredentials) > 0 {
 			found, missing, err := greyproxy.GetGlobalCredentialsByLabels(s.DB, input.GlobalCredentials)
@@ -67,27 +71,19 @@ func SessionsCreateHandler(s *Shared) gin.HandlerFunc {
 				return
 			}
 
-			if input.Mappings == nil {
-				input.Mappings = make(map[string]string)
-			}
 			if input.Labels == nil {
 				input.Labels = make(map[string]string)
 			}
 			resolvedGlobals = make(map[string]string, len(found))
 
 			for label, cred := range found {
-				value, err := greyproxy.DecryptGlobalCredentialValue(cred, s.EncryptionKey)
-				if err != nil {
-					c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to decrypt credential %s: %v", label, err)})
-					return
-				}
-				input.Mappings[cred.Placeholder] = value
+				// Only store the label mapping (for dashboard), not the real value
 				input.Labels[cred.Placeholder] = label
 				resolvedGlobals[label] = cred.Placeholder
 			}
 		}
 
-		if len(input.Mappings) == 0 {
+		if len(input.Mappings) == 0 && len(resolvedGlobals) == 0 {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "no credentials provided (mappings or global_credentials required)"})
 			return
 		}
@@ -112,7 +108,7 @@ func SessionsCreateHandler(s *Shared) gin.HandlerFunc {
 		resp := gin.H{
 			"session_id":       session.SessionID,
 			"expires_at":       session.ExpiresAt.UTC().Format("2006-01-02T15:04:05Z"),
-			"credential_count": len(input.Mappings),
+			"credential_count": len(input.Mappings) + len(resolvedGlobals),
 		}
 		if resolvedGlobals != nil {
 			resp["global_credentials"] = resolvedGlobals

@@ -917,23 +917,18 @@ func TestSessionWithGlobalCredentials_Substitution(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Decrypt the real value to build the session mapping (simulates what the API handler does)
-	globalValue, err := DecryptGlobalCredentialValue(globalCred, key)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Create a session with both a session-specific credential and the global one
+	// Create a session with only session-specific credentials.
+	// Global credentials are NOT stored in session mappings; the store
+	// loads them separately from the global_credentials table.
 	sessionPlaceholder := "greyproxy:credential:v1:gw-mixed:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"
-	mappings := map[string]string{
-		sessionPlaceholder:     "sk-session-secret",
-		globalCred.Placeholder: globalValue,
+	sessionMappings := map[string]string{
+		sessionPlaceholder: "sk-session-secret",
 	}
 
 	session, err := CreateOrUpdateSession(db, SessionCreateInput{
 		SessionID:     "gw-mixed",
 		ContainerName: "sandbox",
-		Mappings:      mappings,
+		Mappings:      sessionMappings,
 		Labels: map[string]string{
 			sessionPlaceholder:     "SESSION_KEY",
 			globalCred.Placeholder: "GLOBAL_KEY",
@@ -944,12 +939,12 @@ func TestSessionWithGlobalCredentials_Substitution(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Build a credential store and register
+	// Build a credential store (loads both sessions and global creds from DB)
 	store, err := NewCredentialStore(db, key, bus)
 	if err != nil {
 		t.Fatal(err)
 	}
-	store.RegisterSession(session, mappings)
+	store.RegisterSession(session, sessionMappings)
 
 	// Test substitution of session credential
 	req1, _ := http.NewRequest("GET", "https://api.example.com", nil)
@@ -962,7 +957,7 @@ func TestSessionWithGlobalCredentials_Substitution(t *testing.T) {
 		t.Errorf("session cred: got %q", req1.Header.Get("Authorization"))
 	}
 
-	// Test substitution of global credential
+	// Test substitution of global credential (loaded from global_credentials table, not session)
 	req2, _ := http.NewRequest("GET", "https://api.example.com", nil)
 	req2.Header.Set("Authorization", "Bearer "+globalCred.Placeholder)
 	result2 := store.SubstituteRequest(req2)

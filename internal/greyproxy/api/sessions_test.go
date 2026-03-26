@@ -90,7 +90,8 @@ func TestSessionsCreate_WithGlobalCredentials(t *testing.T) {
 		t.Errorf("placeholder = %q, want %q", placeholder, cred.Placeholder)
 	}
 
-	// Verify the session was stored with the global credential mapping
+	// Verify the session was stored WITHOUT the global credential value in mappings
+	// (global credentials are resolved at substitution time from the global store)
 	session, err := greyproxy.GetSession(s.DB, "gw-test-global")
 	if err != nil {
 		t.Fatal(err)
@@ -99,11 +100,11 @@ func TestSessionsCreate_WithGlobalCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if mappings[cred.Placeholder] != "sk-ant-real-secret" {
-		t.Errorf("mapping value = %q, want %q", mappings[cred.Placeholder], "sk-ant-real-secret")
+	if _, ok := mappings[cred.Placeholder]; ok {
+		t.Error("global credential value should NOT be duplicated into session mappings")
 	}
 
-	// Verify labels
+	// Verify labels still contain the global credential label (for dashboard display)
 	labels := greyproxy.GetSessionLabels(session)
 	if labels[cred.Placeholder] != "ANTHROPIC_API_KEY" {
 		t.Errorf("label = %q, want %q", labels[cred.Placeholder], "ANTHROPIC_API_KEY")
