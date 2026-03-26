@@ -674,9 +674,12 @@
     }
 
     function escapeHtml(text) {
-        var div = document.createElement('div');
-        div.appendChild(document.createTextNode(text));
-        return div.innerHTML;
+        return String(text)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
     window.generateCert = function(force) {
@@ -790,7 +793,7 @@
                     html += '<div class="p-3 bg-muted rounded-lg border border-border">';
                     html += '<div class="flex items-center justify-between mb-2">';
                     html += '<span class="text-sm font-medium">' + escapeHtml(s.container_name) + '</span>';
-                    html += '<button onclick="deleteSession(\'' + escapeHtml(s.session_id) + '\')" class="text-xs text-muted-foreground hover:text-destructive">Expire</button>';
+                    html += '<button data-delete-session="' + escapeHtml(s.session_id) + '" class="text-xs text-muted-foreground hover:text-destructive">Expire</button>';
                     html += '</div>';
                     // Created / duration
                     html += '<div class="flex items-center gap-3 text-xs text-muted-foreground mb-2">';
@@ -850,7 +853,7 @@
                     html += '<span class="text-sm font-medium">' + escapeHtml(c.label) + '</span>';
                     html += '<span class="text-xs text-muted-foreground font-mono">' + escapeHtml(c.value_preview) + '</span>';
                     html += '</div>';
-                    html += '<button onclick="deleteCredential(\'' + escapeHtml(c.id) + '\')" class="text-xs text-muted-foreground hover:text-destructive px-2 py-1">Delete</button>';
+                    html += '<button data-delete-credential="' + escapeHtml(c.id) + '" class="text-xs text-muted-foreground hover:text-destructive px-2 py-1">Delete</button>';
                     html += '</div>';
                 });
                 html += '</div>';
@@ -904,17 +907,25 @@
         });
     };
 
-    window.deleteCredential = function(id) {
-        fetch(prefix + '/api/credentials/' + id, { method: 'DELETE' })
+    function deleteCredential(id) {
+        fetch(prefix + '/api/credentials/' + encodeURIComponent(id), { method: 'DELETE' })
             .then(function() { loadCredentials(); })
             .catch(function() {});
-    };
+    }
 
-    window.deleteSession = function(id) {
-        fetch(prefix + '/api/sessions/' + id, { method: 'DELETE' })
+    function deleteSession(id) {
+        fetch(prefix + '/api/sessions/' + encodeURIComponent(id), { method: 'DELETE' })
             .then(function() { loadSessions(); })
             .catch(function() {});
-    };
+    }
+
+    // Event delegation for dynamically rendered buttons
+    document.addEventListener('click', function(e) {
+        var btn = e.target.closest('[data-delete-session]');
+        if (btn) { deleteSession(btn.getAttribute('data-delete-session')); return; }
+        btn = e.target.closest('[data-delete-credential]');
+        if (btn) { deleteCredential(btn.getAttribute('data-delete-credential')); return; }
+    });
 
     loadSessions();
     loadCredentials();
