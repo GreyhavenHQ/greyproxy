@@ -146,12 +146,20 @@ func ListSessions(db *DB) ([]Session, error) {
 }
 
 // DeleteExpiredSessions removes all expired sessions and returns their IDs.
+// Uses a single snapshot timestamp to avoid a race where a heartbeat between
+// the SELECT and DELETE could extend a session that was already marked expired.
 func DeleteExpiredSessions(db *DB) ([]string, error) {
 	db.Lock()
 	defer db.Unlock()
 
+	// Snapshot the current time once so both queries use the same cutoff.
+	var now string
+	if err := db.WriteDB().QueryRow("SELECT datetime('now')").Scan(&now); err != nil {
+		return nil, fmt.Errorf("get current time: %w", err)
+	}
+
 	rows, err := db.WriteDB().Query(
-		"SELECT session_id FROM sessions WHERE expires_at <= datetime('now')",
+		"SELECT session_id FROM sessions WHERE expires_at <= ?", now,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("find expired sessions: %w", err)
@@ -172,7 +180,7 @@ func DeleteExpiredSessions(db *DB) ([]string, error) {
 
 	if len(ids) > 0 {
 		_, err = db.WriteDB().Exec(
-			"DELETE FROM sessions WHERE expires_at <= datetime('now')",
+			"DELETE FROM sessions WHERE expires_at <= ?", now,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("delete expired sessions: %w", err)
