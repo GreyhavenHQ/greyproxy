@@ -10,6 +10,7 @@ release
 debian
 bin
 .vscode
+.idea
 
 # Architecture specific extensions/prefixes
 *.[568vq]
