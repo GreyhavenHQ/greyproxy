@@ -339,8 +339,8 @@ func (p *program) buildGreyproxyService() error {
 		} else {
 			shared.CredentialStore = credStore
 			if newKey {
-				if purged, err := credStore.PurgeUnreadableSessions(); err == nil && purged > 0 {
-					log.Infof("purged %d unreadable sessions (new encryption key)", purged)
+				if sessions, globals, err := credStore.PurgeUnreadableCredentials(); err == nil && (sessions > 0 || globals > 0) {
+					log.Infof("purged %d sessions and %d global credentials (new encryption key)", sessions, globals)
 				}
 			}
 			credStoreCtx, credStoreCancel := context.WithCancel(context.Background())

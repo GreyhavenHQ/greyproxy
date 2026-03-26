@@ -28,17 +28,28 @@ const (
 )
 
 // LoadOrGenerateKey loads the master encryption key from dataDir/session.key,
-// or generates a new one if the file does not exist or is invalid.
+// or generates a new one if the file does not exist.
 // Returns the 32-byte key and whether a new key was generated.
+// If the file exists but has the wrong size, an error is returned rather than
+// silently overwriting (which would make all stored credentials unreadable).
 func LoadOrGenerateKey(dataDir string) ([]byte, bool, error) {
 	keyPath := filepath.Join(dataDir, sessionKeyFile)
 
 	data, err := os.ReadFile(keyPath)
-	if err == nil && len(data) == sessionKeySize {
-		return data, false, nil
+	if err == nil {
+		if len(data) == sessionKeySize {
+			return data, false, nil
+		}
+		return nil, false, fmt.Errorf("encryption key file %s is corrupt (got %d bytes, want %d); "+
+			"delete it manually to generate a new key (existing encrypted credentials will be lost)",
+			keyPath, len(data), sessionKeySize)
 	}
 
-	// Generate new key
+	if !os.IsNotExist(err) {
+		return nil, false, fmt.Errorf("read key file: %w", err)
+	}
+
+	// File does not exist; generate new key
 	key := make([]byte, sessionKeySize)
 	if _, err := io.ReadFull(rand.Reader, key); err != nil {
 		return nil, false, fmt.Errorf("generate key: %w", err)

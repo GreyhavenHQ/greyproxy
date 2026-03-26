@@ -358,24 +358,37 @@ func (cs *CredentialStore) flushSubstitutionCounts() {
 	}
 }
 
-// PurgeUnreadableSessions removes sessions that cannot be decrypted
-// (e.g., after key rotation). Call this on startup if a new key was generated.
-func (cs *CredentialStore) PurgeUnreadableSessions() (int, error) {
-	sessions, err := LoadAllSessions(cs.db)
+// PurgeUnreadableCredentials removes sessions and global credentials that
+// cannot be decrypted (e.g., after key rotation). Call on startup if a new
+// key was generated. Returns the number of sessions and credentials purged.
+func (cs *CredentialStore) PurgeUnreadableCredentials() (sessions int, globals int, err error) {
+	allSessions, err := LoadAllSessions(cs.db)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 
-	purged := 0
-	for _, s := range sessions {
-		_, err := DecryptSessionMappings(&s, cs.encryptionKey)
-		if err != nil {
+	for _, s := range allSessions {
+		if _, decErr := DecryptSessionMappings(&s, cs.encryptionKey); decErr != nil {
 			if _, delErr := DeleteSession(cs.db, s.SessionID); delErr == nil {
-				purged++
+				sessions++
 			}
 		}
 	}
-	return purged, nil
+
+	allCreds, err := ListGlobalCredentials(cs.db)
+	if err != nil {
+		return sessions, 0, err
+	}
+
+	for _, c := range allCreds {
+		if _, decErr := DecryptGlobalCredentialValue(&c, cs.encryptionKey); decErr != nil {
+			if _, delErr := DeleteGlobalCredential(cs.db, c.ID); delErr == nil {
+				globals++
+			}
+		}
+	}
+
+	return sessions, globals, nil
 }
 
 // GetSessionLabels returns the labels map for a session from its JSON field.

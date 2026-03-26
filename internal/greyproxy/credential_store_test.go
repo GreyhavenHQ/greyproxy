@@ -774,7 +774,7 @@ func TestCredentialStore_CleanupLoop(t *testing.T) {
 	}
 }
 
-func TestCredentialStore_PurgeUnreadableSessions(t *testing.T) {
+func TestCredentialStore_PurgeUnreadableCredentials(t *testing.T) {
 	db := setupTestDB(t)
 	key1 := testEncryptionKey()
 
@@ -784,6 +784,15 @@ func TestCredentialStore_PurgeUnreadableSessions(t *testing.T) {
 		Mappings:      map[string]string{"p": "v"},
 		Labels:        map[string]string{},
 		TTLSeconds:    300,
+	}, key1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Also create a global credential with the old key
+	_, err = CreateGlobalCredential(db, GlobalCredentialCreateInput{
+		Label: "OLD_CRED",
+		Value: "old-secret-value",
 	}, key1)
 	if err != nil {
 		t.Fatal(err)
@@ -799,25 +808,36 @@ func TestCredentialStore_PurgeUnreadableSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The session should have been skipped during load
+	// Both should have been skipped during load
 	if cs.Size() != 0 {
-		t.Errorf("size = %d, want 0 (session encrypted with old key)", cs.Size())
+		t.Errorf("size = %d, want 0 (all encrypted with old key)", cs.Size())
 	}
 
-	purged, err := cs.PurgeUnreadableSessions()
+	sessions, globals, err := cs.PurgeUnreadableCredentials()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if purged != 1 {
-		t.Errorf("purged = %d, want 1", purged)
+	if sessions != 1 {
+		t.Errorf("purged sessions = %d, want 1", sessions)
+	}
+	if globals != 1 {
+		t.Errorf("purged globals = %d, want 1", globals)
 	}
 
-	sessions, err := LoadAllSessions(db)
+	remainingSessions, err := LoadAllSessions(db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(sessions) != 0 {
-		t.Errorf("sessions in DB = %d, want 0 after purge", len(sessions))
+	if len(remainingSessions) != 0 {
+		t.Errorf("sessions in DB = %d, want 0 after purge", len(remainingSessions))
+	}
+
+	remainingCreds, err := ListGlobalCredentials(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(remainingCreds) != 0 {
+		t.Errorf("global credentials in DB = %d, want 0 after purge", len(remainingCreds))
 	}
 }
 

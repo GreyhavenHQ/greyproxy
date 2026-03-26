@@ -3,6 +3,7 @@ package greyproxy
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -145,15 +146,27 @@ func TestLoadOrGenerateKey_CorruptKeyFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	key, isNew, err := LoadOrGenerateKey(dir)
-	if err != nil {
+	_, _, err := LoadOrGenerateKey(dir)
+	if err == nil {
+		t.Fatal("expected error when key file is corrupt")
+	}
+	if !strings.Contains(err.Error(), "corrupt") {
+		t.Errorf("error should mention corruption, got: %v", err)
+	}
+}
+
+func TestLoadOrGenerateKey_UnreadableKeyFile(t *testing.T) {
+	dir := t.TempDir()
+
+	// Write a key file with no read permissions
+	keyPath := filepath.Join(dir, sessionKeyFile)
+	if err := os.WriteFile(keyPath, []byte("data"), 0o000); err != nil {
 		t.Fatal(err)
 	}
-	if !isNew {
-		t.Error("expected isNew=true when existing key is corrupt")
-	}
-	if len(key) != sessionKeySize {
-		t.Errorf("key length = %d, want %d", len(key), sessionKeySize)
+
+	_, _, err := LoadOrGenerateKey(dir)
+	if err == nil {
+		t.Fatal("expected error when key file is unreadable")
 	}
 }
 
