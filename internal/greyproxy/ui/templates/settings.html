@@ -273,8 +273,8 @@
         <p class="text-sm text-muted-foreground mb-2">Store API keys here, then request them by label when launching a sandbox. Credentials are only injected when explicitly requested; they are never sent to processes automatically.</p>
         <div class="p-3 mb-4 rounded-md bg-muted border border-border space-y-2">
             <p class="text-xs font-medium text-foreground">Usage</p>
-            <code class="text-xs font-mono text-muted-foreground block">greywall --cred ANTHROPIC_API_KEY -- your-command</code>
-            <p class="text-xs text-muted-foreground">Use <code class="font-mono">--cred</code> multiple times to inject several credentials. Greywall sets the placeholder as an environment variable <em>and</em> rewrites <code class="font-mono">.env</code> / <code class="font-mono">.env.local</code> files so the real value never reaches the sandbox, regardless of where the application reads it from.</p>
+            <code class="text-xs font-mono text-muted-foreground block">greywall --inject ANTHROPIC_API_KEY -- your-command</code>
+            <p class="text-xs text-muted-foreground">Use <code class="font-mono">--inject</code> multiple times to inject several credentials. Greywall sets the placeholder as an environment variable <em>and</em> rewrites <code class="font-mono">.env</code> / <code class="font-mono">.env.local</code> files so the real value never reaches the sandbox, regardless of where the application reads it from.</p>
             <p class="text-xs text-muted-foreground">Once active, the proxy replaces <strong>every occurrence</strong> of the placeholder in HTTP headers and query parameters with the real credential value before forwarding upstream.</p>
         </div>
 
