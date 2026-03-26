@@ -151,11 +151,33 @@ type CredentialSubstitutionInfo struct {
 	SessionID string
 }
 
-// GlobalCredentialSubstituter is called (if set) just before forwarding a request upstream.
+// credentialSubstituterType is the function signature for the credential substituter hook.
+type credentialSubstituterType = func(req *http.Request) *CredentialSubstitutionInfo
+
+// globalCredentialSubstituter is called (if set) just before forwarding a request upstream.
 // It modifies the request in-place, replacing credential placeholders with real values.
 // Headers should already be cloned for storage before this point.
 // Returns substitution info (labels and session ID) or nil if nothing was substituted.
-var GlobalCredentialSubstituter func(req *http.Request) *CredentialSubstitutionInfo
+// Access is synchronized via atomic.Pointer to prevent races between setup and request handling.
+var globalCredentialSubstituter atomic.Pointer[credentialSubstituterType]
+
+// SetGlobalCredentialSubstituter atomically sets the credential substitution hook.
+func SetGlobalCredentialSubstituter(hook credentialSubstituterType) {
+	if hook == nil {
+		globalCredentialSubstituter.Store(nil)
+	} else {
+		globalCredentialSubstituter.Store(&hook)
+	}
+}
+
+// getGlobalCredentialSubstituter atomically loads the credential substitution hook.
+func getGlobalCredentialSubstituter() credentialSubstituterType {
+	p := globalCredentialSubstituter.Load()
+	if p == nil {
+		return nil
+	}
+	return *p
+}
 
 // globalMitmEnabled controls whether MITM TLS interception is active. Default: enabled (1).
 var globalMitmEnabled atomic.Int32
@@ -484,8 +506,8 @@ func (h *Sniffer) httpRoundTrip(ctx context.Context, rw, cc io.ReadWriteCloser, 
 	// Credential substitution: swap placeholders with real credentials.
 	// Headers were already cloned for storage, so this only affects the upstream request.
 	var subInfo *CredentialSubstitutionInfo
-	if GlobalCredentialSubstituter != nil {
-		subInfo = GlobalCredentialSubstituter(req)
+	if credSub := getGlobalCredentialSubstituter(); credSub != nil {
+		subInfo = credSub(req)
 	}
 
 	err = req.Write(cc)
@@ -1204,8 +1226,8 @@ func (h *h2Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Credential substitution: swap placeholders with real credentials (HTTP/2 path).
 	// Headers were already cloned for storage, so this only affects the upstream request.
 	var subInfo *CredentialSubstitutionInfo
-	if GlobalCredentialSubstituter != nil {
-		subInfo = GlobalCredentialSubstituter(req)
+	if credSub := getGlobalCredentialSubstituter(); credSub != nil {
+		subInfo = credSub(req)
 	}
 
 	resp, err := h.transport.RoundTrip(req.WithContext(r.Context()))

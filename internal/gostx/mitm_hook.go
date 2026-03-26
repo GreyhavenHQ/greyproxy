@@ -96,8 +96,9 @@ func SetGlobalMitmHook(hook func(info MitmRoundTripInfo)) {
 // just before they are forwarded upstream. Used to replace credential placeholders
 // with real values. Headers are already cloned for storage before this point.
 // The hook returns substitution info (labels and session ID).
+// Access is synchronized via atomic.Pointer (safe to call while requests are in flight).
 func SetGlobalCredentialSubstituter(hook func(req *http.Request) *CredentialSubstitutionInfo) {
-	sniffing.GlobalCredentialSubstituter = hook
+	sniffing.SetGlobalCredentialSubstituter(hook)
 }
 
 // SetGlobalMitmHoldHook sets a global callback that fires BEFORE forwarding a MITM-intercepted
