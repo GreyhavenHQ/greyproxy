@@ -83,7 +83,7 @@ func (cs *CredentialStore) loadFromDB() error {
 		}
 		mappings, err := DecryptSessionMappings(&s, cs.encryptionKey)
 		if err != nil {
-			log.Printf("WARN credential_store: failed to decrypt session %s (stale key?), skipping", s.SessionID)
+			log.Printf("[credential_store] WARN: failed to decrypt session %s (stale key?), skipping", s.SessionID)
 			continue
 		}
 		labels := GetSessionLabels(&s)
@@ -104,7 +104,7 @@ func (cs *CredentialStore) loadFromDB() error {
 	for _, c := range creds {
 		value, err := DecryptGlobalCredentialValue(&c, cs.encryptionKey)
 		if err != nil {
-			log.Printf("WARN credential_store: failed to decrypt global credential %s, skipping", c.ID)
+			log.Printf("[credential_store] WARN: failed to decrypt global credential %s, skipping", c.ID)
 			continue
 		}
 		cs.lookup[c.Placeholder] = value
@@ -316,7 +316,7 @@ func (cs *CredentialStore) StartCleanupLoop(ctx context.Context, interval time.D
 func (cs *CredentialStore) cleanup() {
 	expiredIDs, err := DeleteExpiredSessions(cs.db)
 	if err != nil {
-		log.Printf("WARN credential_store: cleanup error: %v", err)
+		log.Printf("[credential_store] WARN: cleanup error: %v", err)
 		return
 	}
 
@@ -328,7 +328,7 @@ func (cs *CredentialStore) cleanup() {
 		cs.mu.Unlock()
 
 		for _, id := range expiredIDs {
-			log.Printf("INFO credential_store: session %s expired", id)
+			log.Printf("[credential_store] session %s expired", id)
 			if cs.bus != nil {
 				cs.bus.Publish(Event{Type: EventSessionExpired, Data: id})
 			}
@@ -349,7 +349,7 @@ func (cs *CredentialStore) flushSubstitutionCounts() {
 
 	for sid, delta := range toFlush {
 		if err := IncrementSubstitutionCount(cs.db, sid, delta); err != nil {
-			log.Printf("WARN credential_store: failed to flush substitution count for %s: %v", sid, err)
+			log.Printf("[credential_store] WARN: failed to flush substitution count for %s: %v", sid, err)
 			continue
 		}
 		if cs.bus != nil {

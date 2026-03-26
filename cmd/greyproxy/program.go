@@ -13,9 +13,9 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
-	"time"
 	"strconv"
 	"strings"
+	"time"
 	"syscall"
 
 	"github.com/andybalholm/brotli"

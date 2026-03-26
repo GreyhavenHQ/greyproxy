@@ -16,8 +16,6 @@ const (
 	sessionKeyFile = "session.key"
 	// sessionKeySize is the AES-256 key size in bytes.
 	sessionKeySize = 32
-	// gcmNonceSize is the standard GCM nonce size.
-	gcmNonceSize = 12
 
 	// PlaceholderPrefix is the prefix used to identify credential placeholders.
 	PlaceholderPrefix = "greyproxy:credential:"
