@@ -700,7 +700,7 @@
             .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
             .then(function(res) {
                 if (res.ok) {
-                    status.innerHTML = '<span class="text-[var(--color-green)]">Certificate generated. Restart greyproxy to use it for new connections.</span>';
+                    status.innerHTML = '<span class="text-[var(--color-green)]">Certificate generated and loaded. Install it in your system trust store to enable TLS interception.</span>';
                     loadCertStatus();
                 } else {
                     status.innerHTML = '<span class="text-red-600">' + escapeHtml(res.data.error) + '</span>';
@@ -718,7 +718,7 @@
     };
 
     window.regenerateCert = function() {
-        if (!confirm('Regenerate the CA certificate? You will need to reinstall it in your system trust store and restart greyproxy.')) {
+        if (!confirm('Regenerate the CA certificate? You will need to reinstall it in your system trust store.')) {
             return;
         }
         var status = document.getElementById('cert-regen-status');
@@ -729,7 +729,7 @@
             .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
             .then(function(res) {
                 if (res.ok) {
-                    status.innerHTML = '<span class="text-[var(--color-green)]">Certificate regenerated. Reinstall it and restart greyproxy.</span>';
+                    status.innerHTML = '<span class="text-[var(--color-green)]">Certificate regenerated and reloaded. Reinstall it in your system trust store.</span>';
                     loadCertStatus();
                 } else {
                     status.innerHTML = '<span class="text-red-600">' + escapeHtml(res.data.error) + '</span>';
