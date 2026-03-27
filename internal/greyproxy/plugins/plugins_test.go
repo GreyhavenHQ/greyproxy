@@ -4,6 +4,29 @@ import (
 	"testing"
 )
 
+func TestMethodFromService(t *testing.T) {
+	tests := []struct {
+		service string
+		want    string
+	}{
+		{"http-proxy", "HTTP"},
+		{"http", "HTTP"},
+		{"socks5", "SOCKS5"},
+		{"socks", "SOCKS5"},
+		{"tcp-forward", "unknown"},
+		{"", "unknown"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.service, func(t *testing.T) {
+			got := methodFromService(tt.service)
+			if got != tt.want {
+				t.Errorf("methodFromService(%q) = %q, want %q", tt.service, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestParseClientID(t *testing.T) {
 	tests := []struct {
 		name     string

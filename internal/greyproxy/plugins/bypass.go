@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/bypass"
@@ -55,6 +56,11 @@ const gracePeriod = 30 * time.Second
 // Returns true to BLOCK, false to ALLOW.
 func (b *Bypass) Contains(ctx context.Context, network, addr string, opts ...bypass.Option) bool {
 	start := time.Now()
+
+	var o bypass.Options
+	for _, opt := range opts {
+		opt(&o)
+	}
 
 	host, portStr, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -128,7 +134,7 @@ func (b *Bypass) Contains(ctx context.Context, network, addr string, opts ...byp
 		result = "allowed"
 	}
 
-	go b.logRequest(containerName, containerID, host, port, resolvedHostname, result, ruleID, &elapsed)
+	go b.logRequest(containerName, containerID, host, port, resolvedHostname, methodFromService(o.Service), result, ruleID, &elapsed)
 
 	if allowed {
 		b.log.Debugf("ALLOW %s -> %s:%d (%s) rule=%v", containerName, matchHost, port, network, ruleID)
@@ -201,14 +207,27 @@ func resolveIdentity(clientID string) (containerName, containerID string) {
 	return fmt.Sprintf("unknown-%s", ip), ""
 }
 
-func (b *Bypass) logRequest(containerName, containerID, destHost string, destPort int, resolvedHostname, result string, ruleID *int64, responseTimeMs *int64) {
+// methodFromService maps a gost service name (e.g. "http-proxy", "socks5") to the
+// protocol label stored in request_logs. Falls back to "unknown".
+func methodFromService(service string) string {
+	switch {
+	case strings.Contains(service, "http"):
+		return "HTTP"
+	case strings.Contains(service, "socks"):
+		return "SOCKS5"
+	default:
+		return "unknown"
+	}
+}
+
+func (b *Bypass) logRequest(containerName, containerID, destHost string, destPort int, resolvedHostname, method, result string, ruleID *int64, responseTimeMs *int64) {
 	_, err := greyproxy.CreateLogEntry(b.db, greyproxy.LogCreateInput{
 		ContainerName:    containerName,
 		ContainerID:      containerID,
 		DestinationHost:  destHost,
 		DestinationPort:  destPort,
 		ResolvedHostname: resolvedHostname,
-		Method:           "SOCKS5",
+		Method:           method,
 		Result:           result,
 		RuleID:           ruleID,
 		ResponseTimeMs:   responseTimeMs,
