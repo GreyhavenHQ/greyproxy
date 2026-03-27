@@ -23,6 +23,11 @@ greyproxy:
   resolver: resolver-0
   notifications:
     enabled: true
+  docker:
+    enabled: true
+    socket: /var/run/docker.sock
+    cacheTTL: 30s
+
 
 services:
   # HTTP/HTTPS proxy on port 3128 (backward compatible with Squid)

@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	defaults "github.com/greyhavenhq/greyproxy"
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/logger"
@@ -247,6 +248,20 @@ func (p *program) buildGreyproxyService() error {
 		gaCfg.Resolver = "resolver-0"
 	}
 
+	// GREYPROXY_DOCKER_ENABLED env var overrides docker.enabled from config.
+	// "true" → enable, "false" → disable, unset → use config value.
+	switch os.Getenv("GREYPROXY_DOCKER_ENABLED") {
+	case "true":
+		gaCfg.Docker.Enabled = true
+	case "false":
+		gaCfg.Docker.Enabled = false
+	}
+
+	// GREYPROXY_DOCKER_SOCKET env var overrides docker.socket from config.
+	if v := os.Getenv("GREYPROXY_DOCKER_SOCKET"); v != "" {
+		gaCfg.Docker.Socket = v
+	}
+
 	log := logger.Default().WithFields(map[string]any{"kind": "service", "service": "@greyproxy"})
 
 	// Create shared state (this also opens the DB)
@@ -307,7 +322,23 @@ func (p *program) buildGreyproxyService() error {
 	// Create and register gost plugins
 	autherPlugin := greyproxy_plugins.NewAuther()
 	admissionPlugin := greyproxy_plugins.NewAdmission()
-	bypassPlugin := greyproxy_plugins.NewBypass(shared.DB, shared.Cache, shared.Bus, shared.Waiters, shared.ConnTracker)
+
+	// Initialize Docker resolver if configured.
+	var dockerResolver *greyproxy.DockerResolver
+	if gaCfg.Docker.Enabled {
+		socketPath := gaCfg.Docker.Socket
+		if socketPath == "" {
+			socketPath = "/var/run/docker.sock"
+		}
+		cacheTTL := gaCfg.Docker.CacheTTL
+		if cacheTTL == 0 {
+			cacheTTL = 30 * time.Second
+		}
+		dockerResolver = greyproxy.NewDockerResolver(socketPath, cacheTTL)
+		log.Infof("docker resolver enabled (socket=%s, cacheTTL=%s)", socketPath, cacheTTL)
+	}
+
+	bypassPlugin := greyproxy_plugins.NewBypass(shared.DB, shared.Cache, shared.Bus, shared.Waiters, shared.ConnTracker, dockerResolver)
 	resolverPlugin := greyproxy_plugins.NewResolver(shared.Cache)
 
 	registry.AutherRegistry().Register(gaCfg.Auther, autherPlugin)

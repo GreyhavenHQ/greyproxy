@@ -14,6 +14,10 @@ import (
 	greyproxy "github.com/greyhavenhq/greyproxy/internal/greyproxy"
 )
 
+type ContainerResolver interface {
+	ResolveIP(ip string) (name string, id string)
+}
+
 // Bypass implements bypass.Bypass.
 // This is the main ACL enforcement point — it evaluates every destination
 // against the rule database and decides whether to allow or block.
@@ -26,16 +30,19 @@ type Bypass struct {
 	bus         *greyproxy.EventBus
 	waiters     *greyproxy.WaiterTracker
 	connTracker *greyproxy.ConnTracker
+	docker      ContainerResolver // optional; nil means no Docker resolution
 	log         logger.Logger
 }
 
-func NewBypass(db *greyproxy.DB, cache *greyproxy.DNSCache, bus *greyproxy.EventBus, waiters *greyproxy.WaiterTracker, connTracker *greyproxy.ConnTracker) *Bypass {
+// NewBypass creates a Bypass plugin. docker may be nil if Docker resolution is disabled.
+func NewBypass(db *greyproxy.DB, cache *greyproxy.DNSCache, bus *greyproxy.EventBus, waiters *greyproxy.WaiterTracker, connTracker *greyproxy.ConnTracker, docker ContainerResolver) *Bypass {
 	return &Bypass{
 		db:          db,
 		cache:       cache,
 		bus:         bus,
 		waiters:     waiters,
 		connTracker: connTracker,
+		docker:      docker,
 		log: logger.Default().WithFields(map[string]any{
 			"kind":   "bypass",
 			"bypass": "greyproxy",
@@ -71,7 +78,22 @@ func (b *Bypass) Contains(ctx context.Context, network, addr string, opts ...byp
 
 	// Get client identity from context (set by auther)
 	clientID := string(ctxvalue.ClientIDFromContext(ctx))
-	containerName, containerID := resolveIdentity(clientID)
+
+	// Resolve container identity: Docker socket lookup takes priority when enabled,
+	// so rules can match full Docker container names (e.g. "docker-myapp-1").
+	// We use SrcAddrFromContext directly (not clientID) because clientID may be
+	// "unknown" in HTTP proxy mode where the auther hasn't run yet.
+	// Falls back to username-based or IP-based identity when Docker is unavailable.
+	var containerName, containerID string
+	if b.docker != nil {
+		if srcAddr := ctxvalue.SrcAddrFromContext(ctx); srcAddr != nil {
+			srcIP, _, _ := net.SplitHostPort(srcAddr.String())
+			containerName, containerID = b.docker.ResolveIP(srcIP)
+		}
+	}
+	if containerName == "" {
+		containerName, containerID = b.resolveIdentity(clientID)
+	}
 
 	// Resolve hostname
 	resolvedHostname := b.resolveHostname(host)
@@ -197,7 +219,7 @@ func (b *Bypass) resolveHostname(host string) string {
 	return b.cache.ResolveIP(host)
 }
 
-func resolveIdentity(clientID string) (containerName, containerID string) {
+func (b *Bypass) resolveIdentity(clientID string) (containerName, containerID string) {
 	ip, username := ParseClientID(clientID)
 
 	if username != "" && username != "proxy" {
