@@ -191,11 +191,6 @@ func CertGenerateHandler(s *Shared) gin.HandlerFunc {
 		}
 		keyOut.Close()
 
-		// Trigger live reload so the new cert takes effect immediately.
-		if s.ReloadCertFn != nil {
-			_ = s.ReloadCertFn()
-		}
-
 		c.JSON(http.StatusOK, gin.H{
 			"message":    "Certificate generated and reloaded.",
 			"certStatus": buildCertStatus(dataHome),
