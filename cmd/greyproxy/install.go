@@ -101,6 +101,12 @@ func handleInstall(args []string) {
 	binDst := installBinPath()
 
 	if isInstalled() {
+		// If the destination is a symlink (e.g. managed by mise), skip
+		// the binary copy and register the service using the symlink path.
+		if isSymlink(binDst) {
+			handleSymlinkInstall(binDst, force)
+			return
+		}
 		handleReinstall(binSrc, binDst, force)
 		return
 	}
@@ -166,6 +172,74 @@ func handleBrewInstall(brewBin string, force bool) {
 	fmt.Printf("Registered %s\n", label)
 
 	// Generate and trust CA certificate
+	ensureCert()
+
+	if err := service.Control(s, "start"); err != nil {
+		fmt.Fprintf(os.Stderr, "error: starting service: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("Service started")
+	fmt.Println("\nDashboard: http://localhost:43080")
+}
+
+// isSymlink reports whether path is a symbolic link.
+func isSymlink(path string) bool {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeSymlink != 0
+}
+
+func handleSymlinkInstall(binDst string, force bool) {
+	target, _ := os.Readlink(binDst)
+	label := serviceLabel()
+	fmt.Printf("Symlink detected at %s -> %s\n", binDst, target)
+	fmt.Printf("\nThe binary will not be replaced. This will:\n")
+
+	step := 1
+	fmt.Printf("  %d. Stop the running service\n", step)
+	step++
+	fmt.Printf("  %d. Remove the current service registration\n", step)
+	step++
+	fmt.Printf("  %d. Re-register the %s\n", step, label)
+	step++
+	if _, err := os.Stat(filepath.Join(greyproxyDataHome(), "ca-cert.pem")); os.IsNotExist(err) {
+		fmt.Printf("  %d. Generate and trust CA certificate (requires sudo)\n", step)
+		step++
+	} else if !isCertInstalled() {
+		fmt.Printf("  %d. Install CA certificate into OS trust store (requires sudo)\n", step)
+		step++
+	}
+	fmt.Printf("  %d. Start the service\n", step)
+
+	if !force {
+		fmt.Printf("\nProceed? [Y/n] ")
+		if !askConfirm() {
+			fmt.Println("You can start the server manually with: greyproxy serve")
+			fmt.Println("Dashboard: http://localhost:43080")
+			return
+		}
+	}
+
+	s, err := newServiceControl()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	_ = service.Control(s, "stop")
+	fmt.Println("Service stopped")
+
+	_ = service.Control(s, "uninstall")
+	fmt.Println("Removed old service registration")
+
+	if err := service.Control(s, "install"); err != nil {
+		fmt.Fprintf(os.Stderr, "error: registering service: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Registered %s\n", label)
+
 	ensureCert()
 
 	if err := service.Control(s, "start"); err != nil {
@@ -338,13 +412,22 @@ func handleUninstall(args []string) {
 	label := serviceLabel()
 
 	certInstalled := isCertInstalled()
+	symlink := isSymlink(binDst)
 
+	step := 1
 	fmt.Printf("Ready to uninstall greyproxy. This will:\n")
-	fmt.Printf("  1. Stop the greyproxy service\n")
-	fmt.Printf("  2. Remove the %s\n", label)
-	fmt.Printf("  3. Remove %s\n", binDst)
+	fmt.Printf("  %d. Stop the greyproxy service\n", step)
+	step++
+	fmt.Printf("  %d. Remove the %s\n", step, label)
+	step++
+	if symlink {
+		fmt.Printf("  (Skipping binary removal: %s is a symlink)\n", binDst)
+	} else {
+		fmt.Printf("  %d. Remove %s\n", step, binDst)
+		step++
+	}
 	if certInstalled {
-		fmt.Printf("  4. Remove CA certificate from system trust store\n")
+		fmt.Printf("  %d. Remove CA certificate from system trust store\n", step)
 	}
 
 	if !force {
@@ -371,12 +454,16 @@ func handleUninstall(args []string) {
 	}
 	fmt.Printf("Removed %s\n", label)
 
-	// 3. Remove binary
-	if err := os.Remove(binDst); err != nil && !os.IsNotExist(err) {
-		fmt.Fprintf(os.Stderr, "error: removing binary: %v\n", err)
-		os.Exit(1)
+	// 3. Remove binary (skip if symlink -- managed externally)
+	if !symlink {
+		if err := os.Remove(binDst); err != nil && !os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "error: removing binary: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Removed %s\n", binDst)
+	} else {
+		fmt.Printf("Symlink %s left intact\n", binDst)
 	}
-	fmt.Printf("Removed %s\n", binDst)
 
 	// 4. Remove CA certificate from trust store
 	if certInstalled {
