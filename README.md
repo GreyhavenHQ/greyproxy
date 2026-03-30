@@ -66,6 +66,12 @@ greyproxy cert generate
 greyproxy cert install
 ```
 
+`greyproxy install` generates the certificate automatically on first install if one does not exist. If you regenerate the certificate later, greyproxy detects the change and reloads automatically — no restart needed. You can also trigger a reload manually:
+
+```bash
+greyproxy cert reload
+```
+
 Alternatively, use [`greywall setup`](https://github.com/GreyhavenHQ/greywall) to handle the full build and install automatically.
 
 ### Install

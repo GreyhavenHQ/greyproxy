@@ -109,7 +109,8 @@ func handleInstall(args []string) {
 	fmt.Printf("Ready to install greyproxy. This will:\n")
 	fmt.Printf("  1. Copy %s -> %s\n", binSrc, binDst)
 	fmt.Printf("  2. Register greyproxy as a %s\n", label)
-	fmt.Printf("  3. Start the service\n")
+	fmt.Printf("  3. Generate CA certificate (if not already present)\n")
+	fmt.Printf("  4. Start the service\n")
 
 	if !force {
 		fmt.Printf("\nProceed? [Y/n] ")
@@ -225,6 +226,12 @@ func freshInstall(binSrc, binDst string) {
 		os.Exit(1)
 	}
 	fmt.Printf("Registered %s\n", label)
+
+	// Generate CA certificate if not already present
+	certFile := filepath.Join(greyproxyDataHome(), "ca-cert.pem")
+	if _, err := os.Stat(certFile); os.IsNotExist(err) {
+		handleCertGenerate(false)
+	}
 
 	// Start service
 	if err := service.Control(s, "start"); err != nil {

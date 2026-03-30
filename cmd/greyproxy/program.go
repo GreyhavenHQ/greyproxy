@@ -150,6 +150,7 @@ func (p *program) watchCertFiles(ctx context.Context, dataDir string) {
 	keyFile := filepath.Join(dataDir, "ca-key.pem")
 
 	var debounce *time.Timer
+	sawCert, sawKey := false, false
 	for {
 		select {
 		case <-ctx.Done():
@@ -161,13 +162,21 @@ func (p *program) watchCertFiles(ctx context.Context, dataDir string) {
 			if !ok {
 				return
 			}
-			if event.Name != certFile && event.Name != keyFile {
-				continue
-			}
 			if !event.Has(fsnotify.Write) && !event.Has(fsnotify.Create) {
 				continue
 			}
-			// Debounce: wait briefly so both cert and key finish writing before reloading
+			if event.Name == certFile {
+				sawCert = true
+			} else if event.Name == keyFile {
+				sawKey = true
+			} else {
+				continue
+			}
+
+			if !sawCert || !sawKey {
+				continue
+			}
+			sawCert, sawKey = false, false
 			if debounce != nil {
 				debounce.Stop()
 			}
