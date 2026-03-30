@@ -916,12 +916,14 @@
     };
 
     function deleteCredential(id) {
+        if (!confirm('Are you sure you want to delete this credential? Active sessions using it will no longer have it substituted.')) return;
         fetch(prefix + '/api/credentials/' + encodeURIComponent(id), { method: 'DELETE' })
             .then(function() { loadCredentials(); })
             .catch(function() {});
     }
 
     function deleteSession(id) {
+        if (!confirm('Are you sure you want to expire this session?')) return;
         fetch(prefix + '/api/sessions/' + encodeURIComponent(id), { method: 'DELETE' })
             .then(function() { loadSessions(); })
             .catch(function() {});
