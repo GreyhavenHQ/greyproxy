@@ -217,7 +217,7 @@
                 <div id="cert-install-section" class="hidden mb-4">
                     <div class="p-4 bg-muted rounded-lg border border-border">
                         <p class="font-medium text-sm mb-2">Install in system trust store</p>
-                        <p class="text-xs text-muted-foreground mb-3">Run this command in your terminal to trust the CA certificate system-wide:</p>
+                        <p class="text-xs text-muted-foreground mb-3">Run this in your terminal to trust the CA certificate system-wide (requires sudo):</p>
                         <div class="relative">
                             <pre id="cert-install-cmd" class="text-xs bg-background rounded p-3 pr-10 overflow-x-auto border border-border font-mono"></pre>
                             <button onclick="copyInstallCmd()" class="absolute top-2 right-2 p-1 rounded hover:bg-muted-foreground/10" title="Copy to clipboard">
@@ -663,7 +663,7 @@
             document.getElementById('cert-install-section').classList.add('hidden');
         } else {
             icon.innerHTML = '<svg class="h-5 w-5 text-yellow-600 dark:text-yellow-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>';
-            text.innerHTML = '<span class="text-yellow-600 dark:text-yellow-500">Certificate generated but not installed in system trust store</span>';
+            text.innerHTML = '<span class="text-yellow-600 dark:text-yellow-500">Certificate generated but not trusted by your OS</span>';
             if (data.expiresAt) {
                 text.innerHTML += ' <span class="text-muted-foreground">&middot; expires ' + data.expiresAt.split('T')[0] + '</span>';
             }

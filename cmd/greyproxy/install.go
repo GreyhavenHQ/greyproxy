@@ -106,11 +106,18 @@ func handleInstall(args []string) {
 	}
 
 	label := serviceLabel()
+	step := 3
 	fmt.Printf("Ready to install greyproxy. This will:\n")
 	fmt.Printf("  1. Copy %s -> %s\n", binSrc, binDst)
 	fmt.Printf("  2. Register greyproxy as a %s\n", label)
-	fmt.Printf("  3. Generate CA certificate (if not already present)\n")
-	fmt.Printf("  4. Start the service\n")
+	if _, err := os.Stat(filepath.Join(greyproxyDataHome(), "ca-cert.pem")); os.IsNotExist(err) {
+		fmt.Printf("  %d. Generate and trust CA certificate (requires sudo)\n", step)
+		step++
+	} else if !isCertInstalled() {
+		fmt.Printf("  %d. Install CA certificate into OS trust store (requires sudo)\n", step)
+		step++
+	}
+	fmt.Printf("  %d. Start the service\n", step)
 
 	if !force {
 		fmt.Printf("\nProceed? [Y/n] ")
@@ -157,6 +164,9 @@ func handleBrewInstall(brewBin string, force bool) {
 		os.Exit(1)
 	}
 	fmt.Printf("Registered %s\n", label)
+
+	// Generate and trust CA certificate
+	ensureCert()
 
 	if err := service.Control(s, "start"); err != nil {
 		fmt.Fprintf(os.Stderr, "error: starting service: %v\n", err)
@@ -227,11 +237,8 @@ func freshInstall(binSrc, binDst string) {
 	}
 	fmt.Printf("Registered %s\n", label)
 
-	// Generate CA certificate if not already present
-	certFile := filepath.Join(greyproxyDataHome(), "ca-cert.pem")
-	if _, err := os.Stat(certFile); os.IsNotExist(err) {
-		handleCertGenerate(false)
-	}
+	// Generate and trust CA certificate
+	ensureCert()
 
 	// Start service
 	if err := service.Control(s, "start"); err != nil {
@@ -239,6 +246,80 @@ func freshInstall(binSrc, binDst string) {
 		os.Exit(1)
 	}
 	fmt.Println("Service started")
+}
+
+// ensureCert generates the CA certificate if missing and attempts to install
+// it into the OS trust store. If the trust step fails (e.g. sudo unavailable
+// in a non-interactive context), installation continues but the user is told
+// to run 'greyproxy cert install' manually.
+func ensureCert() {
+	certFile := filepath.Join(greyproxyDataHome(), "ca-cert.pem")
+	if _, err := os.Stat(certFile); os.IsNotExist(err) {
+		handleCertGenerate(false)
+	}
+
+	if isCertInstalled() {
+		return
+	}
+
+	if !tryCertInstall() {
+		fmt.Println("\n  HTTPS inspection requires a trusted CA certificate.")
+		fmt.Println("  Run 'greyproxy cert install' to complete the setup.")
+	}
+}
+
+// tryCertInstall attempts to install the CA certificate into the OS trust
+// store. Returns true on success, false if the install failed (e.g. sudo
+// not available or user denied the prompt).
+func tryCertInstall() bool {
+	certFile := filepath.Join(greyproxyDataHome(), "ca-cert.pem")
+	if _, err := os.Stat(certFile); os.IsNotExist(err) {
+		return false
+	}
+
+	switch runtime.GOOS {
+	case "darwin":
+		// Remove any existing Greyproxy CA cert to avoid errSecDuplicateItem
+		exec.Command("security", "delete-certificate", "-c", "Greyproxy CA").Run()
+
+		fmt.Println("Installing CA certificate into system trust store (requires sudo)...")
+		cmd := exec.Command("sudo", "security", "add-trusted-cert",
+			"-d", "-p", "ssl", "-p", "basic",
+			"-k", "/Library/Keychains/System.keychain",
+			certFile,
+		)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		cmd.Stdin = os.Stdin
+		if err := cmd.Run(); err != nil {
+			return false
+		}
+		fmt.Println("CA certificate installed and trusted")
+		return true
+
+	case "linux":
+		destPath, updateCmd := linuxCertInstallInfo()
+		fmt.Println("Installing CA certificate into system trust store (requires sudo)...")
+		cpCmd := exec.Command("sudo", "cp", certFile, destPath)
+		cpCmd.Stdout = os.Stdout
+		cpCmd.Stderr = os.Stderr
+		cpCmd.Stdin = os.Stdin
+		if err := cpCmd.Run(); err != nil {
+			return false
+		}
+		updCmd := exec.Command("sudo", updateCmd)
+		updCmd.Stdout = os.Stdout
+		updCmd.Stderr = os.Stderr
+		updCmd.Stdin = os.Stdin
+		if err := updCmd.Run(); err != nil {
+			return false
+		}
+		fmt.Printf("CA certificate installed and trusted at %s\n", destPath)
+		return true
+
+	default:
+		return false
+	}
 }
 
 func askConfirm() bool {
