@@ -169,6 +169,13 @@ var migrations = []string{
 	ALTER TABLE http_transactions ADD COLUMN session_id TEXT DEFAULT NULL;
 	CREATE INDEX IF NOT EXISTS idx_http_transactions_session ON http_transactions(session_id);
 	ALTER TABLE sessions ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}';`,
+
+	// Migration 10: Create dns_cache table for persistent IP-to-hostname mappings
+	`CREATE TABLE IF NOT EXISTS dns_cache (
+		ip TEXT PRIMARY KEY,
+		hostname TEXT NOT NULL,
+		updated_at DATETIME NOT NULL DEFAULT (datetime('now'))
+	);`,
 }
 
 func runMigrations(db *sql.DB) error {

@@ -86,7 +86,7 @@ func NewService(cfg *Config, handler http.Handler) (*Service, error) {
 		},
 		addr:    addr,
 		DB:      db,
-		Cache:   NewDNSCache(),
+		Cache:   NewDNSCache(db),
 		Bus:     bus,
 		Waiters: NewWaiterTracker(bus),
 	}, nil
