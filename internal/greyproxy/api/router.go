@@ -23,9 +23,9 @@ type Shared struct {
 	EncryptionKey   []byte
 	Version         string
 	Ports           map[string]int
-	DataHome        string        // Path to greyproxy data directory (contains CA cert/key)
-	ReloadCertFn    func() error  // Triggers a live MITM cert reload (set by the running service)
-	CertMtimeFn     func() time.Time // Returns mtime of cert when last loaded (for change detection)
+	DataHome        string        
+	ReloadCertFn    func() error
+	CertMtimeFn     func() time.Time
 }
 
 // NewRouter creates the Gin router with all routes.
