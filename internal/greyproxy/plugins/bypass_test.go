@@ -28,13 +28,15 @@ func TestResolveIdentityWithDocker(t *testing.T) {
 	tests := []struct {
 		name          string
 		clientID      string
+		srcIP         string
 		wantContainer string
 		wantID        string
 	}{
 		{
-			// No username → falls back to "unknown-<ip>"; Docker resolver is NOT called here.
-			name:          "IP only falls back to unknown",
-			clientID:      "172.17.0.2",
+			// No username → falls back to "unknown-<srcIP>"; Docker resolver is NOT called here.
+			name:          "srcIP used when clientID has no username",
+			clientID:      "unknown",
+			srcIP:         "172.17.0.2",
 			wantContainer: "unknown-172.17.0.2",
 			wantID:        "",
 		},
@@ -42,12 +44,14 @@ func TestResolveIdentityWithDocker(t *testing.T) {
 			// Username present → returns username regardless of Docker.
 			name:          "IP with user returns username",
 			clientID:      "172.17.0.2|alice",
+			srcIP:         "172.17.0.2",
 			wantContainer: "alice",
 			wantID:        "",
 		},
 		{
-			name:          "Unknown IP",
-			clientID:      "192.168.1.1",
+			name:          "srcIP used when clientID is unknown",
+			clientID:      "unknown",
+			srcIP:         "192.168.1.1",
 			wantContainer: "unknown-192.168.1.1",
 			wantID:        "",
 		},
@@ -55,7 +59,7 @@ func TestResolveIdentityWithDocker(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotContainer, gotID := b.resolveIdentity(tt.clientID)
+			gotContainer, gotID := b.resolveIdentity(tt.clientID, tt.srcIP)
 			if gotContainer != tt.wantContainer {
 				t.Errorf("container: got %q, want %q", gotContainer, tt.wantContainer)
 			}
@@ -72,18 +76,28 @@ func TestResolveIdentityNoDocker(t *testing.T) {
 	tests := []struct {
 		name          string
 		clientID      string
+		srcIP         string
 		wantContainer string
 		wantID        string
 	}{
 		{
-			name:          "IP",
-			clientID:      "192.168.1.1",
+			name:          "srcIP available",
+			clientID:      "unknown",
+			srcIP:         "192.168.1.1",
 			wantContainer: "unknown-192.168.1.1",
 			wantID:        "",
 		},
 		{
-			name:          "User with IP",
+			name:          "srcIP empty falls back to clientID",
+			clientID:      "192.168.1.1",
+			srcIP:         "",
+			wantContainer: "unknown-192.168.1.1",
+			wantID:        "",
+		},
+		{
+			name:          "username takes priority over srcIP",
 			clientID:      "192.168.1.1|alice",
+			srcIP:         "192.168.1.1",
 			wantContainer: "alice",
 			wantID:        "",
 		},
@@ -91,7 +105,7 @@ func TestResolveIdentityNoDocker(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotContainer, gotID := b.resolveIdentity(tt.clientID)
+			gotContainer, gotID := b.resolveIdentity(tt.clientID, tt.srcIP)
 			if gotContainer != tt.wantContainer {
 				t.Errorf("container: got %q, want %q", gotContainer, tt.wantContainer)
 			}

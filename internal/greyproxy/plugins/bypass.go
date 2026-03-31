@@ -79,20 +79,22 @@ func (b *Bypass) Contains(ctx context.Context, network, addr string, opts ...byp
 	// Get client identity from context (set by auther)
 	clientID := string(ctxvalue.ClientIDFromContext(ctx))
 
+	// Extract the real source IP from context. This is more reliable than parsing
+	// clientID, which may be "unknown" in HTTP proxy mode before the auther runs.
+	srcIP := ""
+	if srcAddr := ctxvalue.SrcAddrFromContext(ctx); srcAddr != nil {
+		srcIP, _, _ = net.SplitHostPort(srcAddr.String())
+	}
+
 	// Resolve container identity: Docker socket lookup takes priority when enabled,
-	// so rules can match full Docker container names (e.g. "docker-myapp-1").
-	// We use SrcAddrFromContext directly (not clientID) because clientID may be
-	// "unknown" in HTTP proxy mode where the auther hasn't run yet.
+	// so rules can match full Docker container names (e.g. "my-app-1").
 	// Falls back to username-based or IP-based identity when Docker is unavailable.
 	var containerName, containerID string
-	if b.docker != nil {
-		if srcAddr := ctxvalue.SrcAddrFromContext(ctx); srcAddr != nil {
-			srcIP, _, _ := net.SplitHostPort(srcAddr.String())
-			containerName, containerID = b.docker.ResolveIP(srcIP)
-		}
+	if b.docker != nil && srcIP != "" {
+		containerName, containerID = b.docker.ResolveIP(srcIP)
 	}
 	if containerName == "" {
-		containerName, containerID = b.resolveIdentity(clientID)
+		containerName, containerID = b.resolveIdentity(clientID, srcIP)
 	}
 
 	// Resolve hostname
@@ -219,13 +221,20 @@ func (b *Bypass) resolveHostname(host string) string {
 	return b.cache.ResolveIP(host)
 }
 
-func (b *Bypass) resolveIdentity(clientID string) (containerName, containerID string) {
-	ip, username := ParseClientID(clientID)
+// resolveIdentity derives a display name for the connecting client.
+// srcIP, when non-empty, is preferred over parsing the IP from clientID because
+// clientID may be "unknown" in HTTP proxy mode before the auther runs.
+func (b *Bypass) resolveIdentity(clientID, srcIP string) (containerName, containerID string) {
+	_, username := ParseClientID(clientID)
 
 	if username != "" && username != "proxy" {
 		return username, ""
 	}
 
+	ip := srcIP
+	if ip == "" {
+		ip, _ = ParseClientID(clientID)
+	}
 	return fmt.Sprintf("unknown-%s", ip), ""
 }
 
