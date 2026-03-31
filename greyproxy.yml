@@ -23,10 +23,6 @@ greyproxy:
   resolver: resolver-0
   notifications:
     enabled: true
-  docker:
-    enabled: true
-    socket: /var/run/docker.sock
-    cacheTTL: 30s
 
 
 services:

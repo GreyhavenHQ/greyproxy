@@ -248,19 +248,8 @@ func (p *program) buildGreyproxyService() error {
 		gaCfg.Resolver = "resolver-0"
 	}
 
-	// GREYPROXY_DOCKER_ENABLED env var overrides docker.enabled from config.
-	// "true" → enable, "false" → disable, unset → use config value.
-	switch os.Getenv("GREYPROXY_DOCKER_ENABLED") {
-	case "true":
-		gaCfg.Docker.Enabled = true
-	case "false":
-		gaCfg.Docker.Enabled = false
-	}
 
-	// GREYPROXY_DOCKER_SOCKET env var overrides docker.socket from config.
-	if v := os.Getenv("GREYPROXY_DOCKER_SOCKET"); v != "" {
-		gaCfg.Docker.Socket = v
-	}
+	applyDockerEnvOverrides(&gaCfg)
 
 	log := logger.Default().WithFields(map[string]any{"kind": "service", "service": "@greyproxy"})
 
@@ -324,7 +313,7 @@ func (p *program) buildGreyproxyService() error {
 	admissionPlugin := greyproxy_plugins.NewAdmission()
 
 	// Initialize Docker resolver if configured.
-	var dockerResolver *greyproxy.DockerResolver
+	var dockerResolver greyproxy_plugins.ContainerResolver
 	if gaCfg.Docker.Enabled {
 		socketPath := gaCfg.Docker.Socket
 		if socketPath == "" {
@@ -413,4 +402,22 @@ func greyproxyDataHome() string {
 		return filepath.Join(home, "Library", "Application Support", "greyproxy")
 	}
 	return filepath.Join(home, ".local", "share", "greyproxy")
+}
+
+// applyDockerEnvOverrides configures Docker resolution from environment variables.
+// Docker is disabled by default; use these env vars to opt in:
+//
+//   - GREYPROXY_DOCKER_ENABLED=true  → enable Docker resolution
+//   - GREYPROXY_DOCKER_ENABLED=false → explicitly disable (default)
+//   - GREYPROXY_DOCKER_SOCKET=<path> → socket path (default: /var/run/docker.sock)
+func applyDockerEnvOverrides(cfg *greyproxy.Config) {
+	switch os.Getenv("GREYPROXY_DOCKER_ENABLED") {
+	case "true":
+		cfg.Docker.Enabled = true
+	case "false":
+		cfg.Docker.Enabled = false
+	}
+	if v := os.Getenv("GREYPROXY_DOCKER_SOCKET"); v != "" {
+		cfg.Docker.Socket = v
+	}
 }
