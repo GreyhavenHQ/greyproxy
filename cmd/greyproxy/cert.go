@@ -1,14 +1,18 @@
 package main
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"math/big"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,6 +28,7 @@ Commands:
   generate    Generate CA certificate and key pair
   install     Trust the CA certificate on the OS
   uninstall   Remove the CA certificate from the OS trust store
+  reload      Reload the CA certificate in the running greyproxy (no restart needed)
 
 Options:
   -f          Force overwrite existing files (generate, install)
@@ -40,6 +45,8 @@ Options:
 		handleCertInstall(force)
 	case "uninstall":
 		handleCertUninstall()
+	case "reload":
+		handleCertReload()
 	default:
 		fmt.Fprintf(os.Stderr, "unknown cert command: %s\n", args[0])
 		os.Exit(1)
@@ -62,14 +69,12 @@ func handleCertGenerate(force bool) {
 		}
 	}
 
-	// Generate ECDSA P-256 key
 	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to generate private key: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Create self-signed CA certificate
 	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to generate serial number: %v\n", err)
@@ -96,13 +101,11 @@ func handleCertGenerate(force bool) {
 		os.Exit(1)
 	}
 
-	// Ensure data directory exists
 	if err := os.MkdirAll(dataDir, 0700); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to create data directory: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Write certificate
 	certOut, err := os.OpenFile(certFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to write certificate: %v\n", err)
@@ -115,7 +118,6 @@ func handleCertGenerate(force bool) {
 	}
 	certOut.Close()
 
-	// Write private key
 	keyBytes, err := x509.MarshalECPrivateKey(privateKey)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to marshal private key: %v\n", err)
@@ -288,5 +290,32 @@ func handleCertUninstall() {
 
 	default:
 		fmt.Println("Please remove the Greyproxy CA certificate manually from your OS trust store.")
+	}
+}
+
+// handleCertReload sends a reload request to the running greyproxy instance.
+func handleCertReload() {
+	apiURL := "http://localhost:43080/api/cert/reload"
+	resp, err := http.Post(apiURL, "application/json", bytes.NewReader(nil)) //nolint:gosec,noctx // localhost only, no user input
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to reach greyproxy at %s: %v\n", apiURL, err)
+		fmt.Fprintf(os.Stderr, "Is greyproxy running? Check with: greyproxy service status\n")
+		os.Exit(1)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		fmt.Fprintf(os.Stderr, "reload failed (HTTP %d): %s\n", resp.StatusCode, string(body))
+		os.Exit(1)
+	}
+
+	var result struct {
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(body, &result); err == nil && result.Message != "" {
+		fmt.Println(result.Message)
+	} else {
+		fmt.Println("MITM cert reloaded successfully.")
 	}
 }

@@ -35,6 +35,7 @@ This software is meant to be used with [**greywall**](https://github.com/Greyhav
 ```bash
 brew tap greyhavenhq/tap
 brew install greyproxy
+greyproxy install
 ```
 
 ### Build from Source
@@ -43,23 +44,49 @@ brew install greyproxy
 git clone https://github.com/greyhavenhq/greyproxy.git
 cd greyproxy
 go build ./cmd/greyproxy
-```
-
-### Install
-
-Install the binary to `~/.local/bin/` and register it as a systemd user service:
-
-```bash
 ./greyproxy install
 ```
 
-This copies the binary, registers a systemd user service, and starts it automatically. The dashboard will be available at `http://localhost:43080`.
+**macOS only:** after building, codesign the binary before installing to avoid Gatekeeper quarantine:
+
+```bash
+codesign --sign - --force ./greyproxy
+```
+
+Alternatively, use [`greywall setup`](https://github.com/GreyhavenHQ/greywall) to handle the full build and install automatically.
+
+### What `install` Does
+
+`greyproxy install` handles the full setup in one step:
+
+1. Copies the binary to `~/.local/bin/` (skipped for Homebrew installs)
+2. Registers a launchd user agent (macOS) or systemd user service (Linux)
+3. Generates a CA certificate for HTTPS inspection (if not already present)
+4. Installs the CA certificate into the OS trust store (requires sudo)
+5. Starts the service
+
+The dashboard will be available at `http://localhost:43080`.
+
+If you decline the sudo prompt for certificate trust, HTTPS inspection will not work until you run `greyproxy cert install` manually.
 
 To remove everything:
 
 ```bash
 greyproxy uninstall
 ```
+
+### Certificate Management
+
+The CA certificate is generated and trusted automatically during `greyproxy install`. For manual control:
+
+```bash
+greyproxy cert generate    # regenerate the CA certificate
+greyproxy cert install     # trust it on the OS (requires sudo)
+greyproxy cert uninstall   # remove from OS trust store
+greyproxy cert reload      # reload cert in running server (no restart needed)
+```
+
+If you regenerate the certificate, greyproxy detects the file change and reloads it automatically.
 
 ### Run in Foreground
 

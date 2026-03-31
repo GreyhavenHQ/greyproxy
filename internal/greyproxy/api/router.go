@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	greyproxy "github.com/greyhavenhq/greyproxy/internal/greyproxy"
@@ -22,7 +23,9 @@ type Shared struct {
 	EncryptionKey   []byte
 	Version         string
 	Ports           map[string]int
-	DataHome        string // Path to greyproxy data directory (contains CA cert/key)
+	DataHome        string        
+	ReloadCertFn    func() error
+	CertMtimeFn     func() time.Time
 }
 
 // NewRouter creates the Gin router with all routes.
@@ -91,6 +94,7 @@ func NewRouter(s *Shared, pathPrefix string) (*gin.Engine, *gin.RouterGroup) {
 		api.GET("/cert/status", CertStatusHandler(s))
 		api.POST("/cert/generate", CertGenerateHandler(s))
 		api.GET("/cert/download", CertDownloadHandler(s))
+		api.POST("/cert/reload", CertReloadHandler(s))
 
 		// Maintenance
 		api.POST("/maintenance/rebuild-conversations", RebuildConversationsHandler(s))

@@ -15,10 +15,12 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/andybalholm/brotli"
+	"github.com/fsnotify/fsnotify"
 	"github.com/klauspost/compress/zstd"
 	defaults "github.com/greyhavenhq/greyproxy"
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/logger"
@@ -47,6 +49,9 @@ type program struct {
 	cancel           context.CancelFunc
 	assemblerCancel  context.CancelFunc
 	credStoreCancel  context.CancelFunc
+
+	certMtimeMu sync.Mutex
+	certMtime   time.Time // mtime of ca-cert.pem at last successful reload
 }
 
 func (p *program) initParser() {
@@ -75,27 +80,7 @@ func (p *program) Start(s service.Service) error {
 	}
 
 	// Auto-inject MITM cert paths if CA files exist
-	certFile := filepath.Join(greyproxyDataHome(), "ca-cert.pem")
-	keyFile := filepath.Join(greyproxyDataHome(), "ca-key.pem")
-	if _, err := os.Stat(certFile); err == nil {
-		if _, err := os.Stat(keyFile); err == nil {
-			for _, svc := range cfg.Services {
-				if svc.Handler == nil {
-					continue
-				}
-				if svc.Handler.Type != "http" && svc.Handler.Type != "socks5" {
-					continue
-				}
-				if svc.Handler.Metadata == nil {
-					svc.Handler.Metadata = make(map[string]any)
-				}
-				if _, ok := svc.Handler.Metadata["mitm.certFile"]; !ok {
-					svc.Handler.Metadata["mitm.certFile"] = certFile
-					svc.Handler.Metadata["mitm.keyFile"] = keyFile
-				}
-			}
-		}
-	}
+	injectCertPaths(cfg, greyproxyDataHome())
 
 	config.Set(cfg)
 
@@ -114,8 +99,102 @@ func (p *program) Start(s service.Service) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	p.cancel = cancel
 	go p.reload(ctx)
+	go p.watchCertFiles(ctx, greyproxyDataHome())
 
 	return nil
+}
+
+// injectCertPaths injects the CA cert/key paths into HTTP and SOCKS5 handler configs if the files exist.
+func injectCertPaths(cfg *config.Config, dataDir string) {
+	certFile := filepath.Join(dataDir, "ca-cert.pem")
+	keyFile := filepath.Join(dataDir, "ca-key.pem")
+	if _, err := os.Stat(certFile); err != nil {
+		return
+	}
+	if _, err := os.Stat(keyFile); err != nil {
+		return
+	}
+	for _, svc := range cfg.Services {
+		if svc.Handler == nil {
+			continue
+		}
+		if svc.Handler.Type != "http" && svc.Handler.Type != "socks5" {
+			continue
+		}
+		if svc.Handler.Metadata == nil {
+			svc.Handler.Metadata = make(map[string]any)
+		}
+		if _, ok := svc.Handler.Metadata["mitm.certFile"]; !ok {
+			svc.Handler.Metadata["mitm.certFile"] = certFile
+			svc.Handler.Metadata["mitm.keyFile"] = keyFile
+		}
+	}
+}
+
+// watchCertFiles watches ca-cert.pem and ca-key.pem using inotify (fsnotify) and
+// triggers a config reload when either file is written or created.
+func (p *program) watchCertFiles(ctx context.Context, dataDir string) {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		logger.Default().Errorf("cert watcher: failed to create watcher: %v", err)
+		return
+	}
+	defer watcher.Close()
+
+	if err := watcher.Add(dataDir); err != nil {
+		logger.Default().Errorf("cert watcher: failed to watch %s: %v", dataDir, err)
+		return
+	}
+
+	certFile := filepath.Join(dataDir, "ca-cert.pem")
+	keyFile := filepath.Join(dataDir, "ca-key.pem")
+
+	var debounce *time.Timer
+	sawCert, sawKey := false, false
+	for {
+		select {
+		case <-ctx.Done():
+			if debounce != nil {
+				debounce.Stop()
+			}
+			return
+		case event, ok := <-watcher.Events:
+			if !ok {
+				return
+			}
+			if !event.Has(fsnotify.Write) && !event.Has(fsnotify.Create) {
+				continue
+			}
+			if event.Name == certFile {
+				sawCert = true
+			} else if event.Name == keyFile {
+				sawKey = true
+			} else {
+				continue
+			}
+
+			if !sawCert || !sawKey {
+				continue
+			}
+			sawCert, sawKey = false, false
+			if debounce != nil {
+				debounce.Stop()
+			}
+			debounce = time.AfterFunc(100*time.Millisecond, func() {
+				logger.Default().Info("cert files changed, reloading MITM cert...")
+				if err := p.reloadConfig(); err != nil {
+					logger.Default().Errorf("cert reload failed: %v", err)
+				} else {
+					logger.Default().Info("MITM cert reloaded")
+				}
+			})
+		case err, ok := <-watcher.Errors:
+			if !ok {
+				return
+			}
+			logger.Default().Errorf("cert watcher error: %v", err)
+		}
+	}
 }
 
 func (p *program) run(cfg *config.Config) error {
@@ -244,6 +323,7 @@ func (p *program) reloadConfig() error {
 	if err != nil {
 		return err
 	}
+	injectCertPaths(cfg, greyproxyDataHome())
 	config.Set(cfg)
 
 	if err := loader.Load(cfg); err != nil {
@@ -252,6 +332,14 @@ func (p *program) reloadConfig() error {
 
 	if err := p.run(cfg); err != nil {
 		return err
+	}
+
+	// Record mtime of ca-cert.pem so CertReloadHandler can detect no-op calls.
+	certFile := filepath.Join(greyproxyDataHome(), "ca-cert.pem")
+	if info, err := os.Stat(certFile); err == nil {
+		p.certMtimeMu.Lock()
+		p.certMtime = info.ModTime()
+		p.certMtimeMu.Unlock()
 	}
 
 	return nil
@@ -368,20 +456,26 @@ func (p *program) buildGreyproxyService() error {
 		}
 	}
 
+	shared.ReloadCertFn = p.reloadConfig
+	shared.CertMtimeFn = func() time.Time {
+		p.certMtimeMu.Lock()
+		defer p.certMtimeMu.Unlock()
+		return p.certMtime
+	}
 	shared.Version = version
 
 	// Collect listening ports for the health endpoint
 	ports := make(map[string]int)
 	if _, portStr, err := net.SplitHostPort(gaCfg.Addr); err == nil {
-		if p, err := strconv.Atoi(portStr); err == nil {
-			ports["api"] = p
+		if portNum, err := strconv.Atoi(portStr); err == nil {
+			ports["api"] = portNum
 		}
 	}
 	for name, svc := range registry.ServiceRegistry().GetAll() {
 		if addr := svc.Addr(); addr != nil {
 			if _, portStr, err := net.SplitHostPort(addr.String()); err == nil {
-				if p, err := strconv.Atoi(portStr); err == nil {
-					ports[name] = p
+				if portNum, err := strconv.Atoi(portStr); err == nil {
+					ports[name] = portNum
 				}
 			}
 		}
