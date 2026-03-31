@@ -34,7 +34,6 @@ type Bypass struct {
 	log         logger.Logger
 }
 
-// NewBypass creates a Bypass plugin. docker may be nil if Docker resolution is disabled.
 func NewBypass(db *greyproxy.DB, cache *greyproxy.DNSCache, bus *greyproxy.EventBus, waiters *greyproxy.WaiterTracker, connTracker *greyproxy.ConnTracker, docker ContainerResolver) *Bypass {
 	return &Bypass{
 		db:          db,
@@ -94,7 +93,7 @@ func (b *Bypass) Contains(ctx context.Context, network, addr string, opts ...byp
 		containerName, containerID = b.docker.ResolveIP(srcIP)
 	}
 	if containerName == "" {
-		containerName, containerID = b.resolveIdentity(clientID, srcIP)
+		containerName, containerID = ResolveIdentity(clientID, srcIP)
 	}
 
 	// Resolve hostname
@@ -221,10 +220,11 @@ func (b *Bypass) resolveHostname(host string) string {
 	return b.cache.ResolveIP(host)
 }
 
-// resolveIdentity derives a display name for the connecting client.
+// ResolveIdentity derives a display name for the connecting client.
 // srcIP, when non-empty, is preferred over parsing the IP from clientID because
 // clientID may be "unknown" in HTTP proxy mode before the auther runs.
-func (b *Bypass) resolveIdentity(clientID, srcIP string) (containerName, containerID string) {
+// Pass srcIP as "" when only a clientID is available (e.g. MITM hooks).
+func ResolveIdentity(clientID, srcIP string) (containerName, containerID string) {
 	_, username := ParseClientID(clientID)
 
 	if username != "" && username != "proxy" {

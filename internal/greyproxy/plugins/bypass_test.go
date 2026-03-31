@@ -18,12 +18,12 @@ func (m *mockDockerResolver) ResolveIP(ip string) (string, string) {
 // Contains(), not inside resolveIdentity(), so the expected values here are the
 // pure IP/username fallback results.
 func TestResolveIdentityWithDocker(t *testing.T) {
-	mockResolver := &mockDockerResolver{
+	// Docker resolution happens upstream in Contains(), not inside ResolveIdentity(),
+	// so the mock resolver is not used here — only the pure IP/username fallback is tested.
+	_ = &mockDockerResolver{
 		names: map[string]string{"172.17.0.2": "my-container"},
 		ids:   map[string]string{"172.17.0.2": "abc123456789"},
 	}
-
-	b := &Bypass{docker: mockResolver}
 
 	tests := []struct {
 		name          string
@@ -59,7 +59,7 @@ func TestResolveIdentityWithDocker(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotContainer, gotID := b.resolveIdentity(tt.clientID, tt.srcIP)
+			gotContainer, gotID := ResolveIdentity(tt.clientID, tt.srcIP)
 			if gotContainer != tt.wantContainer {
 				t.Errorf("container: got %q, want %q", gotContainer, tt.wantContainer)
 			}
@@ -71,8 +71,6 @@ func TestResolveIdentityWithDocker(t *testing.T) {
 }
 
 func TestResolveIdentityNoDocker(t *testing.T) {
-	b := &Bypass{}
-
 	tests := []struct {
 		name          string
 		clientID      string
@@ -105,7 +103,7 @@ func TestResolveIdentityNoDocker(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotContainer, gotID := b.resolveIdentity(tt.clientID, tt.srcIP)
+			gotContainer, gotID := ResolveIdentity(tt.clientID, tt.srcIP)
 			if gotContainer != tt.wantContainer {
 				t.Errorf("container: got %q, want %q", gotContainer, tt.wantContainer)
 			}

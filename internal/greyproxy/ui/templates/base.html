@@ -23,6 +23,9 @@
     <script>
         tailwind.config = {
             darkMode: 'class',
+            safelist: [
+                'text-green-600', 'text-blue-600', 'text-yellow-600', 'text-red-600',
+            ],
             theme: {
                 extend: {
                     fontFamily: {
@@ -159,9 +162,13 @@
                         class="{{if contains .CurrentPath "/rules"}}border-primary text-foreground{{else}}border-transparent text-muted-foreground hover:border-border hover:text-foreground{{end}} inline-flex items-center px-1 pt-[2px] border-b-2 text-sm font-medium">
                         Rules
                     </a>
-                    <a href="{{.Prefix}}/logs"
-                        class="{{if contains .CurrentPath "/logs"}}border-primary text-foreground{{else}}border-transparent text-muted-foreground hover:border-border hover:text-foreground{{end}} inline-flex items-center px-1 pt-[2px] border-b-2 text-sm font-medium">
-                        Logs
+                    <a href="{{.Prefix}}/activity"
+                        class="{{if contains .CurrentPath "/activity"}}border-primary text-foreground{{else}}border-transparent text-muted-foreground hover:border-border hover:text-foreground{{end}} inline-flex items-center px-1 pt-[2px] border-b-2 text-sm font-medium">
+                        Activity
+                    </a>
+                    <a href="{{.Prefix}}/conversations"
+                        class="{{if contains .CurrentPath "/conversations"}}border-primary text-foreground{{else}}border-transparent text-muted-foreground hover:border-border hover:text-foreground{{end}} inline-flex items-center px-1 pt-[2px] border-b-2 text-sm font-medium">
+                        Conversations
                     </a>
                     <a href="{{.Prefix}}/settings"
                         class="{{if contains .CurrentPath "/settings"}}text-foreground{{else}}text-muted-foreground hover:text-foreground{{end}} btn-plain ml-2 p-1.5 self-center rounded-md hover:bg-muted transition-colors"
@@ -189,9 +196,13 @@
                         class="{{if contains .CurrentPath "/rules"}}bg-muted border-primary text-foreground{{else}}border-transparent text-muted-foreground hover:bg-muted hover:text-foreground{{end}} block pl-3 pr-4 py-2 border-l-4 text-base font-medium">
                         Rules
                     </a>
-                    <a href="{{.Prefix}}/logs"
-                        class="{{if contains .CurrentPath "/logs"}}bg-muted border-primary text-foreground{{else}}border-transparent text-muted-foreground hover:bg-muted hover:text-foreground{{end}} block pl-3 pr-4 py-2 border-l-4 text-base font-medium">
-                        Logs
+                    <a href="{{.Prefix}}/activity"
+                        class="{{if contains .CurrentPath "/activity"}}bg-muted border-primary text-foreground{{else}}border-transparent text-muted-foreground hover:bg-muted hover:text-foreground{{end}} block pl-3 pr-4 py-2 border-l-4 text-base font-medium">
+                        Activity
+                    </a>
+                    <a href="{{.Prefix}}/conversations"
+                        class="{{if contains .CurrentPath "/conversations"}}bg-muted border-primary text-foreground{{else}}border-transparent text-muted-foreground hover:bg-muted hover:text-foreground{{end}} block pl-3 pr-4 py-2 border-l-4 text-base font-medium">
+                        Conversations
                     </a>
                     <a href="{{.Prefix}}/settings"
                         class="{{if contains .CurrentPath "/settings"}}bg-muted border-primary text-foreground{{else}}border-transparent text-muted-foreground hover:bg-muted hover:text-foreground{{end}} block pl-3 pr-4 py-2 border-l-4 text-base font-medium">
@@ -267,10 +278,10 @@
             }
 
             function fetchPendingCount() {
-                fetch('{{.Prefix}}/api/pending/count')
-                    .then(function(r) { return r.json(); })
-                    .then(function(data) { updateBadge(data.count); })
-                    .catch(function(err) { console.warn('Failed to fetch pending count:', err); });
+                fetch('{{.Prefix}}/api/pending/count').then(function(r) { return r.json(); })
+                .then(function(data) {
+                    updateBadge(data.count || 0);
+                }).catch(function(err) { console.warn('Failed to fetch pending count:', err); });
             }
 
             function connect() {
@@ -288,6 +299,18 @@
                         if (msg.type && (msg.type.indexOf('pending_request.') === 0 || msg.type === 'waiters.changed')) {
                             fetchPendingCount();
                             window.dispatchEvent(new CustomEvent('proxy:pending-event', { detail: msg }));
+                        }
+                        if (msg.type === 'transaction.new') {
+                            window.dispatchEvent(new CustomEvent('proxy:transaction-event', { detail: msg }));
+                        }
+                        if (msg.type === 'conversation.updated') {
+                            window.dispatchEvent(new CustomEvent('proxy:conversation-event', { detail: msg }));
+                        }
+                        if (msg.type === 'maintenance.progress') {
+                            window.dispatchEvent(new CustomEvent('proxy:maintenance-event', { detail: msg }));
+                        }
+                        if (msg.type && msg.type.indexOf('session.') === 0) {
+                            window.dispatchEvent(new CustomEvent('proxy:session-event', { detail: msg }));
                         }
                     } catch (e) {}
                 };

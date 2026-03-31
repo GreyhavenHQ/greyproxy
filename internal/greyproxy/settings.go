@@ -10,14 +10,18 @@ import (
 // UserSettings stores user-overridden settings. Only non-nil fields
 // have been explicitly set by the user and will be persisted to disk.
 type UserSettings struct {
-	Theme                *string `json:"theme,omitempty"`
-	NotificationsEnabled *bool   `json:"notificationsEnabled,omitempty"`
+	Theme                *string  `json:"theme,omitempty"`
+	NotificationsEnabled *bool    `json:"notificationsEnabled,omitempty"`
+	MitmEnabled          *bool    `json:"mitmEnabled,omitempty"`
+	RedactedHeaders      []string `json:"redactedHeaders,omitempty"`
 }
 
 // ResolvedSettings is the fully resolved settings with defaults applied.
 type ResolvedSettings struct {
-	Theme                string `json:"theme"`
-	NotificationsEnabled bool   `json:"notificationsEnabled"`
+	Theme                string   `json:"theme"`
+	NotificationsEnabled bool     `json:"notificationsEnabled"`
+	MitmEnabled          bool     `json:"mitmEnabled"`
+	RedactedHeaders      []string `json:"redactedHeaders"`
 }
 
 // SettingsManager handles loading and saving user settings, merging
@@ -31,19 +35,29 @@ type SettingsManager struct {
 	defaultNotificationsEnabled bool
 
 	onNotificationsChanged func(bool)
+	onMitmChanged          func(bool)
+
+	redactor *HeaderRedactor
 }
 
 func NewSettingsManager(path string, defaultNotificationsEnabled bool) *SettingsManager {
-	return &SettingsManager{
+	m := &SettingsManager{
 		path:                        path,
 		defaultNotificationsEnabled: defaultNotificationsEnabled,
 	}
+	m.redactor = NewHeaderRedactor(nil)
+	return m
 }
 
 // OnNotificationsChanged sets a callback invoked when the notifications
 // enabled state changes.
 func (m *SettingsManager) OnNotificationsChanged(fn func(bool)) {
 	m.onNotificationsChanged = fn
+}
+
+// OnMitmChanged sets a callback invoked when the MITM enabled state changes.
+func (m *SettingsManager) OnMitmChanged(fn func(bool)) {
+	m.onMitmChanged = fn
 }
 
 // Load reads user settings from disk. If the file doesn't exist,
@@ -60,7 +74,15 @@ func (m *SettingsManager) Load() error {
 		return err
 	}
 
-	return json.Unmarshal(data, &m.user)
+	if err := json.Unmarshal(data, &m.user); err != nil {
+		return err
+	}
+	m.rebuildRedactor()
+	return nil
+}
+
+func (m *SettingsManager) rebuildRedactor() {
+	m.redactor = NewHeaderRedactor(m.user.RedactedHeaders)
 }
 
 // Get returns the fully resolved settings (defaults + user overrides).
@@ -74,6 +96,8 @@ func (m *SettingsManager) resolve() ResolvedSettings {
 	s := ResolvedSettings{
 		Theme:                "system",
 		NotificationsEnabled: m.defaultNotificationsEnabled,
+		MitmEnabled:          true, // MITM enabled by default
+		RedactedHeaders:      DefaultRedactedHeaders,
 	}
 	if m.user.Theme != nil {
 		s.Theme = *m.user.Theme
@@ -81,7 +105,21 @@ func (m *SettingsManager) resolve() ResolvedSettings {
 	if m.user.NotificationsEnabled != nil {
 		s.NotificationsEnabled = *m.user.NotificationsEnabled
 	}
+	if m.user.MitmEnabled != nil {
+		s.MitmEnabled = *m.user.MitmEnabled
+	}
+	if m.user.RedactedHeaders != nil {
+		s.RedactedHeaders = append(DefaultRedactedHeaders, m.user.RedactedHeaders...)
+	}
 	return s
+}
+
+// HeaderRedactor returns the current header redactor, which includes
+// both default and user-configured patterns.
+func (m *SettingsManager) HeaderRedactor() *HeaderRedactor {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.redactor
 }
 
 // Update applies a partial settings update. Only non-nil fields in
@@ -101,6 +139,18 @@ func (m *SettingsManager) Update(patch UserSettings) (ResolvedSettings, error) {
 		notifChanged = old != *patch.NotificationsEnabled
 	}
 
+	var mitmChanged bool
+	if patch.MitmEnabled != nil {
+		old := m.resolve().MitmEnabled
+		m.user.MitmEnabled = patch.MitmEnabled
+		mitmChanged = old != *patch.MitmEnabled
+	}
+
+	if patch.RedactedHeaders != nil {
+		m.user.RedactedHeaders = patch.RedactedHeaders
+		m.rebuildRedactor()
+	}
+
 	if err := m.save(); err != nil {
 		return ResolvedSettings{}, err
 	}
@@ -110,12 +160,15 @@ func (m *SettingsManager) Update(patch UserSettings) (ResolvedSettings, error) {
 	if notifChanged && m.onNotificationsChanged != nil {
 		m.onNotificationsChanged(resolved.NotificationsEnabled)
 	}
+	if mitmChanged && m.onMitmChanged != nil {
+		m.onMitmChanged(resolved.MitmEnabled)
+	}
 
 	return resolved, nil
 }
 
 func (m *SettingsManager) save() error {
-	if m.user.Theme == nil && m.user.NotificationsEnabled == nil {
+	if m.user.Theme == nil && m.user.NotificationsEnabled == nil && m.user.MitmEnabled == nil && m.user.RedactedHeaders == nil {
 		return nil
 	}
 

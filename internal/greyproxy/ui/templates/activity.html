@@ -1,0 +1,180 @@
+{{define "content"}}
+<div class="space-y-6">
+    <div class="flex justify-between items-center">
+        <h1 class="text-2xl font-bold text-foreground">Activity</h1>
+        <button id="activity-live-btn" onclick="toggleActivityLive()" type="button"
+            class="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-md transition-colors">
+            <span id="activity-live-dot" class="relative flex h-2.5 w-2.5 overflow-hidden">
+                <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-500 opacity-75"></span>
+                <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span>
+            </span>
+            <span id="activity-live-text">Live</span>
+            <span id="activity-pending-badge" class="hidden ml-0.5 inline-flex items-center justify-center px-1.5 py-0.5 text-xs font-bold leading-none rounded-full min-w-[1.25rem]"></span>
+        </button>
+    </div>
+
+    <div class="bg-card rounded-lg shadow-sm border border-border p-3 relative">
+        <form id="activity-filter-form"
+            hx-get="{{.Prefix}}/htmx/activity-table" hx-target="#activity-table" hx-swap="innerHTML"
+            hx-trigger="submit, change delay:100ms, input delay:100ms"
+            hx-sync="this:replace"
+            hx-indicator="#activity-filter-spinner"
+            class="space-y-3">
+            <div class="grid grid-cols-1 md:grid-cols-6 gap-3">
+                <div>
+                    <label for="a-kind" class="block text-xs font-medium text-foreground mb-1">Type</label>
+                    <select id="a-kind" name="kind"
+                        class="mt-1 block w-full pl-2 pr-8 py-1.5 text-xs border-border focus:outline-none focus:ring-ring focus:border-ring rounded-md bg-background">
+                        <option value="">All</option>
+                        <option value="http">Decoded (HTTP)</option>
+                        <option value="connection">Undecoded (TCP)</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="a-container" class="block text-xs font-medium text-foreground mb-1">Source</label>
+                    <select id="a-container" name="container"
+                        class="mt-1 block w-full pl-2 pr-8 py-1.5 text-xs border-border focus:outline-none focus:ring-ring focus:border-ring rounded-md bg-background">
+                        <option value="">All</option>
+                        {{range .Containers}}<option value="{{.}}">{{.}}</option>{{end}}
+                    </select>
+                </div>
+                <div>
+                    <label for="a-result" class="block text-xs font-medium text-foreground mb-1">Result</label>
+                    <select id="a-result" name="result"
+                        class="mt-1 block w-full pl-2 pr-8 py-1.5 text-xs border-border focus:outline-none focus:ring-ring focus:border-ring rounded-md bg-background">
+                        <option value="">All</option>
+                        <option value="allowed">Allowed</option>
+                        <option value="blocked">Blocked</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="a-destination" class="block text-xs font-medium text-foreground mb-1">Destination</label>
+                    <input type="text" id="a-destination" name="destination" placeholder="e.g., api.anthropic.com"
+                        class="mt-1 block w-full px-2 py-1.5 text-xs border border-border rounded-md shadow-sm focus:outline-none focus:ring-ring focus:border-ring bg-background">
+                </div>
+                <div>
+                    <label for="a-limit" class="block text-xs font-medium text-foreground mb-1">Limit</label>
+                    <select id="a-limit" name="limit"
+                        class="mt-1 block w-full pl-2 pr-8 py-1.5 text-xs border-border focus:outline-none focus:ring-ring focus:border-ring rounded-md bg-background">
+                        <option value="50">50</option>
+                        <option value="100">100</option>
+                        <option value="200">200</option>
+                        <option value="500">500</option>
+                    </select>
+                </div>
+                <div class="flex items-end space-x-2">
+                    <button type="button" id="a-reset-filters-btn" onclick="resetActivityFilters()"
+                        class="hidden w-full inline-flex justify-center items-center px-3 py-1.5 border border-border text-xs font-medium rounded-md text-secondary-foreground bg-background hover:bg-muted">
+                        Reset
+                    </button>
+                    <svg id="activity-filter-spinner" class="htmx-indicator h-5 w-5 animate-spin text-primary" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                    </svg>
+                </div>
+            </div>
+        </form>
+    </div>
+
+    <div id="activity-table"
+         hx-get="{{.Prefix}}/htmx/activity-table" hx-include="#activity-filter-form"
+         hx-trigger="load" hx-swap="innerHTML">
+        <div class="flex justify-center py-8">
+            <div class="inline-block w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+    var activityLive = true;
+    var activityPendingCount = 0;
+
+    function applyLiveButtonStyle() {
+        var btn = document.getElementById('activity-live-btn');
+        var text = document.getElementById('activity-live-text');
+        var badge = document.getElementById('activity-pending-badge');
+        var dot = document.getElementById('activity-live-dot');
+        if (activityLive) {
+            btn.className = 'inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-md text-foreground hover:bg-muted transition-colors';
+            text.textContent = 'Live';
+            badge.classList.add('hidden');
+            dot.innerHTML = '<span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-500 opacity-75"></span>'
+                          + '<span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span>';
+        } else {
+            btn.className = 'inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-md text-muted-foreground hover:bg-muted transition-colors';
+            dot.innerHTML = '<span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-muted-foreground/50"></span>';
+            if (activityPendingCount > 0) {
+                text.textContent = 'Paused';
+                badge.textContent = activityPendingCount;
+                badge.className = 'ml-0.5 inline-flex items-center justify-center px-1.5 py-0.5 text-xs font-bold leading-none text-primary-foreground bg-primary rounded-full min-w-[1.25rem]';
+            } else {
+                text.textContent = 'Paused';
+                badge.classList.add('hidden');
+            }
+        }
+    }
+
+    function toggleActivityLive() {
+        activityLive = !activityLive;
+        if (activityLive) {
+            // Switching back to live: flush pending events
+            if (activityPendingCount > 0) {
+                activityPendingCount = 0;
+                loadActivityTable();
+            }
+        }
+        applyLiveButtonStyle();
+    }
+
+    function resetActivityFilters() {
+        document.getElementById('a-kind').value = '';
+        document.getElementById('a-container').value = '';
+        document.getElementById('a-result').value = '';
+        document.getElementById('a-destination').value = '';
+        document.getElementById('a-limit').value = '50';
+        updateActivityResetButton();
+        loadActivityTable();
+    }
+
+    function updateActivityResetButton() {
+        var hasFilters = document.getElementById('a-kind').value !== '' ||
+                         document.getElementById('a-container').value !== '' ||
+                         document.getElementById('a-result').value !== '' ||
+                         document.getElementById('a-destination').value !== '' ||
+                         document.getElementById('a-limit').value !== '50';
+        document.getElementById('a-reset-filters-btn').classList.toggle('hidden', !hasFilters);
+    }
+
+    function loadActivityTable() {
+        activityPendingCount = 0;
+        applyLiveButtonStyle();
+        document.getElementById('activity-filter-form').dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
+    function onNewActivityEvent() {
+        if (activityLive) {
+            loadActivityTable();
+        } else {
+            activityPendingCount++;
+            applyLiveButtonStyle();
+        }
+    }
+
+    // Pre-fill from URL query params
+    (function() {
+        var params = new URLSearchParams(window.location.search);
+        ['kind', 'container', 'result', 'destination', 'limit'].forEach(function(key) {
+            var el = document.getElementById('a-' + key);
+            var val = params.get(key);
+            if (val && el) el.value = val;
+        });
+    })();
+    document.getElementById('activity-filter-form').addEventListener('change', updateActivityResetButton);
+    document.getElementById('activity-filter-form').addEventListener('input', updateActivityResetButton);
+    updateActivityResetButton();
+    applyLiveButtonStyle();
+
+    window.addEventListener('proxy:transaction-event', onNewActivityEvent);
+    window.addEventListener('proxy:conversation-event', onNewActivityEvent);
+</script>
+{{end}}

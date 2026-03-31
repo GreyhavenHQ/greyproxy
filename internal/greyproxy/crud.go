@@ -2,6 +2,7 @@ package greyproxy
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -87,11 +88,13 @@ func CreateRule(db *DB, input RuleCreateInput) (*Rule, error) {
 	return GetRule(db, id)
 }
 
+// ruleColumns is the SELECT list for all rule queries.
+const ruleColumns = `id, container_pattern, destination_pattern, port_pattern,
+	rule_type, action, created_at, expires_at, last_used_at, created_by, notes`
+
 func GetRule(db *DB, id int64) (*Rule, error) {
 	row := db.ReadDB().QueryRow(
-		`SELECT id, container_pattern, destination_pattern, port_pattern, rule_type, action,
-		        created_at, expires_at, last_used_at, created_by, notes
-		 FROM rules WHERE id = ?`, id,
+		`SELECT `+ruleColumns+` FROM rules WHERE id = ?`, id,
 	)
 	return scanRule(row)
 }
@@ -151,7 +154,7 @@ func GetRules(db *DB, f RuleFilter) ([]Rule, int, error) {
 	}
 
 	rows, err := db.ReadDB().Query(
-		"SELECT id, container_pattern, destination_pattern, port_pattern, rule_type, action, created_at, expires_at, last_used_at, created_by, notes FROM rules WHERE "+whereClause+" ORDER BY created_at DESC LIMIT ? OFFSET ?",
+		"SELECT "+ruleColumns+" FROM rules WHERE "+whereClause+" ORDER BY created_at DESC LIMIT ? OFFSET ?",
 		append(args, f.Limit, f.Offset)...,
 	)
 	if err != nil {
@@ -308,9 +311,7 @@ func IngestRules(db *DB, rules []IngestRuleInput) (*IngestResult, error) {
 func FindMatchingRule(db *DB, containerName, destHost string, destPort int, resolvedHostname string) *Rule {
 	// Get all non-expired rules
 	rows, err := db.ReadDB().Query(
-		`SELECT id, container_pattern, destination_pattern, port_pattern, rule_type, action,
-		        created_at, expires_at, last_used_at, created_by, notes
-		 FROM rules
+		`SELECT `+ruleColumns+` FROM rules
 		 WHERE expires_at IS NULL OR expires_at > datetime('now')`,
 	)
 	if err != nil {
@@ -339,12 +340,14 @@ func FindMatchingRule(db *DB, containerName, destHost string, destPort int, reso
 			matched = MatchesRule(containerName, resolvedHostname, destPort, r.ContainerPattern, r.DestinationPattern, r.PortPattern)
 		}
 
-		if matched {
-			matches = append(matches, scored{
-				rule:        r,
-				specificity: CalculateSpecificity(r.ContainerPattern, r.DestinationPattern, r.PortPattern),
-			})
+		if !matched {
+			continue
 		}
+
+		matches = append(matches, scored{
+			rule:        r,
+			specificity: CalculateSpecificity(r.ContainerPattern, r.DestinationPattern, r.PortPattern),
+		})
 	}
 
 	if len(matches) == 0 {
@@ -777,8 +780,7 @@ func parseDuration(duration string) (ruleType string, expiresIn *int64) {
 func findExistingRule(db *DB, containerPattern, destPattern, portPattern, action string) *Rule {
 	var r Rule
 	err := db.ReadDB().QueryRow(
-		`SELECT id, container_pattern, destination_pattern, port_pattern, rule_type, action,
-		        created_at, expires_at, last_used_at, created_by, notes
+		`SELECT `+ruleColumns+`
 		 FROM rules
 		 WHERE container_pattern = ? AND destination_pattern = ? AND port_pattern = ? AND action = ?
 		   AND (expires_at IS NULL OR expires_at > datetime('now'))`,
@@ -803,6 +805,7 @@ type LogCreateInput struct {
 	Result           string
 	RuleID           *int64
 	ResponseTimeMs   *int64
+	MitmSkipReason   string
 }
 
 func CreateLogEntry(db *DB, input LogCreateInput) (*RequestLog, error) {
@@ -811,8 +814,8 @@ func CreateLogEntry(db *DB, input LogCreateInput) (*RequestLog, error) {
 
 	result, err := db.WriteDB().Exec(
 		`INSERT INTO request_logs (container_name, container_id, destination_host, destination_port,
-		 resolved_hostname, method, result, rule_id, response_time_ms)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 resolved_hostname, method, result, rule_id, response_time_ms, mitm_skip_reason)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		input.ContainerName,
 		sql.NullString{String: input.ContainerID, Valid: input.ContainerID != ""},
 		input.DestinationHost,
@@ -822,6 +825,7 @@ func CreateLogEntry(db *DB, input LogCreateInput) (*RequestLog, error) {
 		input.Result,
 		sql.NullInt64{Int64: ptrInt64OrZero(input.RuleID), Valid: input.RuleID != nil},
 		sql.NullInt64{Int64: ptrInt64OrZero(input.ResponseTimeMs), Valid: input.ResponseTimeMs != nil},
+		sql.NullString{String: input.MitmSkipReason, Valid: input.MitmSkipReason != ""},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("insert log: %w", err)
@@ -829,6 +833,28 @@ func CreateLogEntry(db *DB, input LogCreateInput) (*RequestLog, error) {
 
 	id, _ := result.LastInsertId()
 	return getLogByID(db.WriteDB(), id)
+}
+
+// UpdateLatestLogMitmSkipReason sets the mitm_skip_reason on the most recent
+// log entry matching the given container and destination. This is called after
+// the handler finishes, when we know whether MITM was attempted and why it was skipped.
+func UpdateLatestLogMitmSkipReason(db *DB, containerName, destHost string, destPort int, reason string) error {
+	if reason == "" {
+		return nil
+	}
+	db.Lock()
+	defer db.Unlock()
+
+	_, err := db.WriteDB().Exec(
+		`UPDATE request_logs SET mitm_skip_reason = ?
+		 WHERE id = (
+			SELECT id FROM request_logs
+			WHERE container_name = ? AND (destination_host = ? OR resolved_hostname = ?) AND COALESCE(destination_port, 0) = ?
+			ORDER BY id DESC LIMIT 1
+		 )`,
+		reason, containerName, destHost, destHost, destPort,
+	)
+	return err
 }
 
 func ptrInt64OrZero(p *int64) int64 {
@@ -842,10 +868,11 @@ func getLogByID(conn *sql.DB, id int64) (*RequestLog, error) {
 	var l RequestLog
 	err := conn.QueryRow(
 		`SELECT id, timestamp, container_name, container_id, destination_host, destination_port,
-		        resolved_hostname, method, result, rule_id, response_time_ms
+		        resolved_hostname, method, result, rule_id, response_time_ms, mitm_skip_reason
 		 FROM request_logs WHERE id = ?`, id,
 	).Scan(&l.ID, &l.Timestamp, &l.ContainerName, &l.ContainerID, &l.DestinationHost,
-		&l.DestinationPort, &l.ResolvedHostname, &l.Method, &l.Result, &l.RuleID, &l.ResponseTimeMs)
+		&l.DestinationPort, &l.ResolvedHostname, &l.Method, &l.Result, &l.RuleID, &l.ResponseTimeMs,
+		&l.MitmSkipReason)
 	if err != nil {
 		return nil, err
 	}
@@ -901,7 +928,7 @@ func QueryLogs(db *DB, f LogFilter) ([]RequestLog, int, error) {
 
 	rows, err := db.ReadDB().Query(
 		`SELECT rl.id, rl.timestamp, rl.container_name, rl.container_id, rl.destination_host, rl.destination_port,
-		        rl.resolved_hostname, rl.method, rl.result, rl.rule_id, rl.response_time_ms,
+		        rl.resolved_hostname, rl.method, rl.result, rl.rule_id, rl.response_time_ms, rl.mitm_skip_reason,
 		        CASE WHEN r.id IS NOT NULL THEN r.container_pattern || ' → ' || r.destination_pattern || ':' || r.port_pattern ELSE NULL END AS rule_summary
 		 FROM request_logs rl
 		 LEFT JOIN rules r ON rl.rule_id = r.id
@@ -918,7 +945,7 @@ func QueryLogs(db *DB, f LogFilter) ([]RequestLog, int, error) {
 		var l RequestLog
 		if err := rows.Scan(&l.ID, &l.Timestamp, &l.ContainerName, &l.ContainerID, &l.DestinationHost,
 			&l.DestinationPort, &l.ResolvedHostname, &l.Method, &l.Result, &l.RuleID, &l.ResponseTimeMs,
-			&l.RuleSummary); err != nil {
+			&l.MitmSkipReason, &l.RuleSummary); err != nil {
 			return nil, 0, err
 		}
 		logs = append(logs, l)
@@ -1053,4 +1080,306 @@ func GetDashboardStats(db *DB, fromDate, toDate time.Time, groupBy string, recen
 	}
 
 	return stats, nil
+}
+
+// --- HTTP Transactions ---
+
+// MaxBodyCapture is the max bytes to store per request/response body.
+const MaxBodyCapture = 2 * 1024 * 1024 // 2MB
+
+func CreateHttpTransaction(db *DB, input HttpTransactionCreateInput) (*HttpTransaction, error) {
+	db.Lock()
+	defer db.Unlock()
+
+	if input.Result == "" {
+		input.Result = "auto"
+	}
+
+	var reqHeadersJSON sql.NullString
+	if input.RequestHeaders != nil {
+		b, _ := json.Marshal(input.RequestHeaders)
+		reqHeadersJSON = sql.NullString{String: string(b), Valid: true}
+	}
+
+	var respHeadersJSON sql.NullString
+	if input.ResponseHeaders != nil {
+		b, _ := json.Marshal(input.ResponseHeaders)
+		respHeadersJSON = sql.NullString{String: string(b), Valid: true}
+	}
+
+	reqBody := input.RequestBody
+	reqBodySize := int64(len(reqBody))
+	if len(reqBody) > MaxBodyCapture {
+		reqBody = reqBody[:MaxBodyCapture]
+	}
+
+	respBody := input.ResponseBody
+	respBodySize := int64(len(respBody))
+	if len(respBody) > MaxBodyCapture {
+		respBody = respBody[:MaxBodyCapture]
+	}
+
+	var subCredsJSON sql.NullString
+	if len(input.SubstitutedCredentials) > 0 {
+		b, _ := json.Marshal(input.SubstitutedCredentials)
+		subCredsJSON = sql.NullString{String: string(b), Valid: true}
+	}
+
+	var sessionID sql.NullString
+	if input.SessionID != "" {
+		sessionID = sql.NullString{String: input.SessionID, Valid: true}
+	}
+
+	result, err := db.WriteDB().Exec(
+		`INSERT INTO http_transactions (container_name, destination_host, destination_port,
+		 method, url, request_headers, request_body, request_body_size, request_content_type,
+		 status_code, response_headers, response_body, response_body_size, response_content_type,
+		 duration_ms, rule_id, result, substituted_credentials, session_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		input.ContainerName, input.DestinationHost, input.DestinationPort,
+		input.Method, input.URL,
+		reqHeadersJSON, reqBody, reqBodySize,
+		sql.NullString{String: input.RequestContentType, Valid: input.RequestContentType != ""},
+		sql.NullInt64{Int64: int64(input.StatusCode), Valid: input.StatusCode != 0},
+		respHeadersJSON, respBody, respBodySize,
+		sql.NullString{String: input.ResponseContentType, Valid: input.ResponseContentType != ""},
+		sql.NullInt64{Int64: input.DurationMs, Valid: input.DurationMs > 0},
+		sql.NullInt64{Int64: ptrInt64OrZero(input.RuleID), Valid: input.RuleID != nil},
+		input.Result,
+		subCredsJSON, sessionID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("insert http_transaction: %w", err)
+	}
+
+	id, _ := result.LastInsertId()
+	return getHttpTransactionByID(db.WriteDB(), id)
+}
+
+func getHttpTransactionByID(conn *sql.DB, id int64) (*HttpTransaction, error) {
+	var t HttpTransaction
+	err := conn.QueryRow(
+		`SELECT id, timestamp, container_name, destination_host, destination_port,
+		        method, url, request_headers, request_body, request_body_size, request_content_type,
+		        status_code, response_headers, response_body, response_body_size, response_content_type,
+		        duration_ms, rule_id, result, substituted_credentials, session_id
+		 FROM http_transactions WHERE id = ?`, id,
+	).Scan(&t.ID, &t.Timestamp, &t.ContainerName, &t.DestinationHost, &t.DestinationPort,
+		&t.Method, &t.URL, &t.RequestHeaders, &t.RequestBody, &t.RequestBodySize, &t.RequestContentType,
+		&t.StatusCode, &t.ResponseHeaders, &t.ResponseBody, &t.ResponseBodySize, &t.ResponseContentType,
+		&t.DurationMs, &t.RuleID, &t.Result, &t.SubstitutedCredentials, &t.SessionID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &t, nil
+}
+
+func GetHttpTransaction(db *DB, id int64) (*HttpTransaction, error) {
+	return getHttpTransactionByID(db.ReadDB(), id)
+}
+
+type TransactionFilter struct {
+	Container   string
+	Destination string
+	Method      string
+	SessionID   string
+	FromDate    *time.Time
+	ToDate      *time.Time
+	Limit       int
+	Offset      int
+}
+
+func QueryHttpTransactions(db *DB, f TransactionFilter) ([]HttpTransaction, int, error) {
+	if f.Limit <= 0 {
+		f.Limit = 50
+	}
+
+	where := []string{"1=1"}
+	args := []any{}
+
+	if f.Container != "" {
+		where = append(where, "container_name LIKE ?")
+		args = append(args, "%"+f.Container+"%")
+	}
+	if f.Destination != "" {
+		where = append(where, "destination_host LIKE ?")
+		args = append(args, "%"+f.Destination+"%")
+	}
+	if f.Method != "" {
+		where = append(where, "method = ?")
+		args = append(args, f.Method)
+	}
+	if f.SessionID != "" {
+		where = append(where, "session_id = ?")
+		args = append(args, f.SessionID)
+	}
+	if f.FromDate != nil {
+		where = append(where, "timestamp >= ?")
+		args = append(args, f.FromDate.UTC().Format("2006-01-02 15:04:05"))
+	}
+	if f.ToDate != nil {
+		where = append(where, "timestamp <= ?")
+		args = append(args, f.ToDate.UTC().Format("2006-01-02 15:04:05"))
+	}
+
+	whereClause := strings.Join(where, " AND ")
+
+	var total int
+	err := db.ReadDB().QueryRow("SELECT COUNT(*) FROM http_transactions WHERE "+whereClause, args...).Scan(&total)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	// List query excludes body blobs for performance
+	rows, err := db.ReadDB().Query(
+		`SELECT id, timestamp, container_name, destination_host, destination_port,
+		        method, url, request_headers, NULL, request_body_size, request_content_type,
+		        status_code, response_headers, NULL, response_body_size, response_content_type,
+		        duration_ms, rule_id, result, substituted_credentials, session_id
+		 FROM http_transactions WHERE `+whereClause+` ORDER BY timestamp DESC LIMIT ? OFFSET ?`,
+		append(args, f.Limit, f.Offset)...,
+	)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var txns []HttpTransaction
+	for rows.Next() {
+		var t HttpTransaction
+		if err := rows.Scan(&t.ID, &t.Timestamp, &t.ContainerName, &t.DestinationHost, &t.DestinationPort,
+			&t.Method, &t.URL, &t.RequestHeaders, &t.RequestBody, &t.RequestBodySize, &t.RequestContentType,
+			&t.StatusCode, &t.ResponseHeaders, &t.ResponseBody, &t.ResponseBodySize, &t.ResponseContentType,
+			&t.DurationMs, &t.RuleID, &t.Result, &t.SubstitutedCredentials, &t.SessionID); err != nil {
+			return nil, 0, err
+		}
+		txns = append(txns, t)
+	}
+	return txns, total, nil
+}
+
+// MaintenanceProgress reports the progress of a batch redaction operation.
+type MaintenanceProgress struct {
+	Task      string `json:"task"`
+	Processed int    `json:"processed"`
+	Total     int    `json:"total"`
+	Done      bool   `json:"done"`
+	Error     string `json:"error,omitempty"`
+}
+
+// RedactExistingTransactionHeaders applies the given HeaderRedactor to
+// all stored HTTP transactions. It processes rows in batches, unmarshals
+// headers from JSON, redacts sensitive values, and writes them back.
+// The optional onProgress callback is invoked after each batch.
+// Returns the number of rows processed.
+func RedactExistingTransactionHeaders(db *DB, redactor *HeaderRedactor, onProgress func(MaintenanceProgress)) (int, error) {
+	const batchSize = 500
+
+	if onProgress == nil {
+		onProgress = func(MaintenanceProgress) {}
+	}
+
+	db.Lock()
+	defer db.Unlock()
+
+	// Count total rows to report progress
+	var totalRows int
+	if err := db.WriteDB().QueryRow(
+		`SELECT COUNT(*) FROM http_transactions
+		 WHERE request_headers IS NOT NULL OR response_headers IS NOT NULL`).Scan(&totalRows); err != nil {
+		return 0, fmt.Errorf("count transactions: %w", err)
+	}
+
+	onProgress(MaintenanceProgress{Task: "redact_headers", Total: totalRows})
+
+	var processed int
+	for {
+		rows, err := db.WriteDB().Query(
+			`SELECT id, request_headers, response_headers
+			 FROM http_transactions
+			 WHERE request_headers IS NOT NULL OR response_headers IS NOT NULL
+			 LIMIT ? OFFSET ?`, batchSize, processed)
+		if err != nil {
+			return processed, fmt.Errorf("query transactions: %w", err)
+		}
+
+		type row struct {
+			id          int64
+			reqHeaders  sql.NullString
+			respHeaders sql.NullString
+		}
+		var batch []row
+		for rows.Next() {
+			var r row
+			if err := rows.Scan(&r.id, &r.reqHeaders, &r.respHeaders); err != nil {
+				rows.Close()
+				return processed, fmt.Errorf("scan: %w", err)
+			}
+			batch = append(batch, r)
+		}
+		rows.Close()
+
+		if len(batch) == 0 {
+			break
+		}
+
+		for _, r := range batch {
+			newReq, reqChanged := redactHeaderJSON(r.reqHeaders, redactor)
+			newResp, respChanged := redactHeaderJSON(r.respHeaders, redactor)
+			if !reqChanged && !respChanged {
+				processed++
+				continue
+			}
+			_, err := db.WriteDB().Exec(
+				`UPDATE http_transactions SET request_headers = ?, response_headers = ? WHERE id = ?`,
+				newReq, newResp, r.id)
+			if err != nil {
+				return processed, fmt.Errorf("update id %d: %w", r.id, err)
+			}
+			processed++
+		}
+
+		onProgress(MaintenanceProgress{Task: "redact_headers", Processed: processed, Total: totalRows})
+
+		if len(batch) < batchSize {
+			break
+		}
+	}
+
+	onProgress(MaintenanceProgress{Task: "redact_headers", Processed: processed, Total: totalRows, Done: true})
+	return processed, nil
+}
+
+// redactHeaderJSON unmarshals a JSON header string, applies redaction,
+// and re-marshals. Returns the new NullString and whether any value changed.
+func redactHeaderJSON(h sql.NullString, redactor *HeaderRedactor) (sql.NullString, bool) {
+	if !h.Valid || h.String == "" {
+		return h, false
+	}
+	var headers map[string][]string
+	if err := json.Unmarshal([]byte(h.String), &headers); err != nil {
+		return h, false
+	}
+
+	changed := false
+	for key, vals := range headers {
+		if redactor.isSensitive(key) {
+			if len(vals) != 1 || vals[0] != RedactedValue {
+				headers[key] = []string{RedactedValue}
+				changed = true
+			}
+		}
+	}
+	if !changed {
+		return h, false
+	}
+
+	b, err := json.Marshal(headers)
+	if err != nil {
+		return h, false
+	}
+	return sql.NullString{String: string(b), Valid: true}, true
 }

@@ -142,6 +142,9 @@ func main() {
 	case "uninstall":
 		handleUninstall(os.Args[2:])
 
+	case "cert":
+		handleCert(os.Args[2:])
+
 	case "-V", "--version":
 		fmt.Fprintf(os.Stdout, "greyproxy %s (%s %s/%s)\n  built:  %s\n  commit: %s\n",
 			version, runtime.Version(), runtime.GOOS, runtime.GOARCH, buildTime, gitCommit)
@@ -159,6 +162,7 @@ Usage: greyproxy <command>
 
 Commands:
   serve       Run the proxy server in foreground
+  cert        Manage MITM CA certificate (generate/install/uninstall)
   install     Install binary and register as a background service [-f]
   uninstall   Stop service, remove registration and binary [-f]
   service     Manage the OS service (start/stop/restart/status/...)

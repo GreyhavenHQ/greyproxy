@@ -82,9 +82,10 @@ type HandlerRecorderObject struct {
 	DstAddr    string `json:"dst"`
 	Host       string `json:"host"`
 	Proto      string `json:"proto,omitempty"`
-	ClientIP    string                   `json:"clientIP"`
-	ClientID    string                   `json:"clientID,omitempty"`
-	HTTP        *HTTPRecorderObject      `json:"http,omitempty"`
+	ClientIP       string                   `json:"clientIP"`
+	ClientID       string                   `json:"clientID,omitempty"`
+	MitmSkipReason string                   `json:"mitmSkipReason,omitempty"`
+	HTTP           *HTTPRecorderObject      `json:"http,omitempty"`
 	Websocket   *WebsocketRecorderObject `json:"websocket,omitempty"`
 	TLS         *TLSRecorderObject       `json:"tls,omitempty"`
 	DNS         *DNSRecorderObject       `json:"dns,omitempty"`

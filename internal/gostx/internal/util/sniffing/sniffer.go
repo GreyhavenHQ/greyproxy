@@ -14,6 +14,8 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"sync"
+	"sync/atomic"
 	"net/http/httputil"
 	"strings"
 	"time"
@@ -42,9 +44,9 @@ const (
 	DefaultReadTimeout = 30 * time.Second
 
 	// DefaultBodySize is the default HTTP body or websocket frame size to record.
-	DefaultBodySize = 64 * 1024 // 64KB
+	DefaultBodySize = 2 * 1024 * 1024 // 2MB
 	// MaxBodySize is the maximum HTTP body or websocket frame size to record.
-	MaxBodySize = 1024 * 1024 // 1MB
+	MaxBodySize = 2 * 1024 * 1024 // 2MB
 	// DeafultSampleRate is the default websocket sample rate (samples per second).
 	DefaultSampleRate = 10.0
 )
@@ -101,6 +103,103 @@ func WithLog(log logger.Logger) HandleOption {
 	}
 }
 
+// HTTPRoundTripInfo contains decrypted HTTP request/response data from a MITM round-trip.
+type HTTPRoundTripInfo struct {
+	Host                   string
+	Method                 string
+	URI                    string
+	Proto                  string
+	StatusCode             int
+	RequestHeaders         http.Header
+	RequestBody            []byte
+	ResponseHeaders        http.Header
+	ResponseBody           []byte
+	ContainerName          string
+	DurationMs             int64
+	SubstitutedCredentials []string
+	SessionID              string
+}
+
+// GlobalHTTPRoundTripHook is called (if set) after each MITM-intercepted HTTP round-trip.
+// Set this from program initialization to record transactions to the database.
+var GlobalHTTPRoundTripHook func(info HTTPRoundTripInfo)
+
+// ErrRequestDenied is returned by the hold hook to indicate the request should be denied.
+var ErrRequestDenied = errors.New("request denied")
+
+// ErrNotHTTP is returned by HandleHTTP when the decrypted stream is not HTTP.
+// The caller should fall back to raw piping.
+var ErrNotHTTP = errors.New("not HTTP")
+
+// HTTPRequestHoldInfo contains request details for the hold hook to evaluate.
+type HTTPRequestHoldInfo struct {
+	Host          string
+	Method        string
+	URI           string
+	RequestHeaders http.Header
+	RequestBody   []byte
+	ContainerName string
+}
+
+// GlobalHTTPRequestHoldHook is called (if set) before forwarding a MITM-intercepted HTTP request upstream.
+// Return nil to allow, ErrRequestDenied to send 403, or block until approval.
+var GlobalHTTPRequestHoldHook func(ctx context.Context, info HTTPRequestHoldInfo) error
+
+// CredentialSubstitutionInfo holds the result of a credential substitution pass.
+type CredentialSubstitutionInfo struct {
+	Labels    []string
+	SessionID string
+}
+
+// credentialSubstituterType is the function signature for the credential substituter hook.
+type credentialSubstituterType = func(req *http.Request) *CredentialSubstitutionInfo
+
+// globalCredentialSubstituter is called (if set) just before forwarding a request upstream.
+// It modifies the request in-place, replacing credential placeholders with real values.
+// Headers should already be cloned for storage before this point.
+// Returns substitution info (labels and session ID) or nil if nothing was substituted.
+// Access is synchronized via atomic.Pointer to prevent races between setup and request handling.
+var globalCredentialSubstituter atomic.Pointer[credentialSubstituterType]
+
+// SetGlobalCredentialSubstituter atomically sets the credential substitution hook.
+func SetGlobalCredentialSubstituter(hook credentialSubstituterType) {
+	if hook == nil {
+		globalCredentialSubstituter.Store(nil)
+	} else {
+		globalCredentialSubstituter.Store(&hook)
+	}
+}
+
+// getGlobalCredentialSubstituter atomically loads the credential substitution hook.
+func getGlobalCredentialSubstituter() credentialSubstituterType {
+	p := globalCredentialSubstituter.Load()
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
+// globalMitmEnabled controls whether MITM TLS interception is active. Default: enabled (1).
+var globalMitmEnabled atomic.Int32
+
+func init() {
+	globalMitmEnabled.Store(1) // enabled by default
+}
+
+// SetGlobalMitmEnabled enables or disables MITM TLS interception globally.
+func SetGlobalMitmEnabled(enabled bool) {
+	if enabled {
+		globalMitmEnabled.Store(1)
+	} else {
+		globalMitmEnabled.Store(0)
+	}
+}
+
+// IsMitmEnabled returns whether MITM TLS interception is globally enabled.
+func IsMitmEnabled() bool {
+	return globalMitmEnabled.Load() != 0
+}
+
 type Sniffer struct {
 	Websocket           bool
 	WebsocketSampleRate float64
@@ -116,6 +215,15 @@ type Sniffer struct {
 	MitmBypass         bypass.Bypass
 
 	ReadTimeout time.Duration
+
+	// UpstreamRootCAs overrides the system root CAs when verifying upstream TLS certificates.
+	UpstreamRootCAs *x509.CertPool
+
+	// OnHTTPRoundTrip is called after each decrypted HTTP round-trip with request/response details.
+	OnHTTPRoundTrip func(info HTTPRoundTripInfo)
+
+	// OnMitmSkip is called when MITM is skipped for a TLS connection, before piping starts.
+	OnMitmSkip func()
 }
 
 func (h *Sniffer) HandleHTTP(ctx context.Context, network string, conn net.Conn, opts ...HandleOption) error {
@@ -132,6 +240,14 @@ func (h *Sniffer) HandleHTTP(ctx context.Context, network string, conn net.Conn,
 	conn = stats_wrapper.WrapConn(conn, &pStats)
 
 	br := bufio.NewReader(conn)
+
+	// Peek at the first bytes to verify this is actually HTTP before attempting
+	// to parse. After MITM TLS termination without ALPN, the decrypted stream
+	// could be a non-HTTP protocol. In that case, fall back to raw piping.
+	if hdr, err := br.Peek(5); err == nil && !isHTTP(string(hdr)) {
+		return ErrNotHTTP
+	}
+
 	req, err := http.ReadRequest(br)
 	if err != nil {
 		return err
@@ -272,6 +388,7 @@ func (h *Sniffer) serveH2(ctx context.Context, network string, conn net.Conn, ho
 			recorderOptions: h.RecorderOptions,
 			recorderObject:  ro,
 			log:             log,
+			onHTTPRoundTrip: h.OnHTTPRoundTrip,
 		},
 	})
 	return nil
@@ -326,11 +443,12 @@ func (h *Sniffer) httpRoundTrip(ctx context.Context, rw, cc io.ReadWriteCloser, 
 	}
 
 	var reqBody *xhttp.Body
-	if opts := h.RecorderOptions; opts != nil && opts.HTTPBody {
+	captureBody := (h.RecorderOptions != nil && h.RecorderOptions.HTTPBody) || h.OnHTTPRoundTrip != nil || GlobalHTTPRequestHoldHook != nil
+	if captureBody {
 		if req.Body != nil {
-			bodySize := opts.MaxBodySize
-			if bodySize <= 0 {
-				bodySize = DefaultBodySize
+			bodySize := DefaultBodySize
+			if opts := h.RecorderOptions; opts != nil && opts.MaxBodySize > 0 {
+				bodySize = opts.MaxBodySize
 			}
 			if bodySize > MaxBodySize {
 				bodySize = MaxBodySize
@@ -338,6 +456,58 @@ func (h *Sniffer) httpRoundTrip(ctx context.Context, rw, cc io.ReadWriteCloser, 
 			reqBody = xhttp.NewBody(req.Body, bodySize)
 			req.Body = reqBody
 		}
+	}
+
+	// Request-level hold: evaluate before forwarding upstream
+	if GlobalHTTPRequestHoldHook != nil {
+		containerName := string(xctx.ClientIDFromContext(ctx))
+		if containerName == "" {
+			containerName = ro.ClientID
+		}
+		// Read the body first so it's captured for the hook
+		var holdBody []byte
+		if reqBody != nil {
+			// Force body to be read by reading through the tee
+			bodyBuf := new(bytes.Buffer)
+			if req.Body != nil {
+				bodyBuf.ReadFrom(req.Body)
+				// Reconstruct body for forwarding
+				req.Body = io.NopCloser(bodyBuf)
+				req.ContentLength = int64(bodyBuf.Len())
+			}
+			holdBody = reqBody.Content()
+		}
+
+		holdInfo := HTTPRequestHoldInfo{
+			Host:           req.Host,
+			Method:         req.Method,
+			URI:            req.RequestURI,
+			RequestHeaders: req.Header.Clone(),
+			RequestBody:    holdBody,
+			ContainerName:  containerName,
+		}
+		if holdErr := GlobalHTTPRequestHoldHook(ctx, holdInfo); holdErr != nil {
+			// Request denied — send 403 to client
+			denyResp := &http.Response{
+				StatusCode: http.StatusForbidden,
+				Proto:      req.Proto,
+				ProtoMajor: req.ProtoMajor,
+				ProtoMinor: req.ProtoMinor,
+				Header:     http.Header{"Content-Type": {"text/plain"}},
+				Body:       io.NopCloser(strings.NewReader("Request denied by proxy")),
+			}
+			denyResp.ContentLength = 22
+			denyResp.Write(rw)
+			close = true
+			return
+		}
+	}
+
+	// Credential substitution: swap placeholders with real credentials.
+	// Headers were already cloned for storage, so this only affects the upstream request.
+	var subInfo *CredentialSubstitutionInfo
+	if credSub := getGlobalCredentialSubstituter(); credSub != nil {
+		subInfo = credSub(req)
 	}
 
 	err = req.Write(cc)
@@ -395,10 +565,10 @@ func (h *Sniffer) httpRoundTrip(ctx context.Context, rw, cc io.ReadWriteCloser, 
 	}
 
 	var respBody *xhttp.Body
-	if opts := h.RecorderOptions; opts != nil && opts.HTTPBody {
-		bodySize := opts.MaxBodySize
-		if bodySize <= 0 {
-			bodySize = DefaultBodySize
+	if captureBody {
+		bodySize := DefaultBodySize
+		if opts := h.RecorderOptions; opts != nil && opts.MaxBodySize > 0 {
+			bodySize = opts.MaxBodySize
 		}
 		if bodySize > MaxBodySize {
 			bodySize = MaxBodySize
@@ -417,6 +587,40 @@ func (h *Sniffer) httpRoundTrip(ctx context.Context, rw, cc io.ReadWriteCloser, 
 	if err != nil {
 		err = fmt.Errorf("write response: %w", err)
 		return
+	}
+
+	if h.OnHTTPRoundTrip != nil || GlobalHTTPRoundTripHook != nil {
+		containerName := string(xctx.ClientIDFromContext(ctx))
+		if containerName == "" {
+			containerName = ro.ClientID
+		}
+		info := HTTPRoundTripInfo{
+			Host:            req.Host,
+			Method:          req.Method,
+			URI:             req.RequestURI,
+			Proto:           req.Proto,
+			StatusCode:      resp.StatusCode,
+			RequestHeaders:  ro.HTTP.Request.Header,
+			ResponseHeaders: ro.HTTP.Response.Header,
+			ContainerName:   containerName,
+			DurationMs:      time.Since(ro.Time).Milliseconds(),
+		}
+		if subInfo != nil {
+			info.SubstitutedCredentials = subInfo.Labels
+			info.SessionID = subInfo.SessionID
+		}
+		if reqBody != nil {
+			info.RequestBody = reqBody.Content()
+		}
+		if respBody != nil {
+			info.ResponseBody = respBody.Content()
+		}
+		if h.OnHTTPRoundTrip != nil {
+			h.OnHTTPRoundTrip(info)
+		}
+		if GlobalHTTPRoundTripHook != nil {
+			GlobalHTTPRoundTripHook(info)
+		}
 	}
 
 	if resp.ContentLength >= 0 {
@@ -626,14 +830,18 @@ func (h *Sniffer) HandleTLS(ctx context.Context, network string, conn net.Conn, 
 	ro.SrcAddr = cc.LocalAddr().String()
 	ro.DstAddr = cc.RemoteAddr().String()
 
-	if h.Certificate != nil && h.PrivateKey != nil &&
-		len(clientHello.SupportedProtos) > 0 && (clientHello.SupportedProtos[0] == "h2" || clientHello.SupportedProtos[0] == "http/1.1") {
+	if !IsMitmEnabled() {
+		ro.MitmSkipReason = "mitm_disabled"
+	} else if h.Certificate != nil && h.PrivateKey != nil {
 		if host == "" {
 			host = ro.Host
 		}
 		if h.MitmBypass == nil || !h.MitmBypass.Contains(ctx, network, host, bypass.WithService(ho.service)) {
 			return h.terminateTLS(ctx, network, xnet.NewReadWriteConn(io.MultiReader(buf, conn), conn, conn), cc, clientHello, &ho)
 		}
+		ro.MitmSkipReason = "mitm_bypass"
+	} else {
+		ro.MitmSkipReason = "no_cert"
 	}
 
 	if _, err := buf.WriteTo(cc); err != nil {
@@ -663,6 +871,10 @@ func (h *Sniffer) HandleTLS(ctx context.Context, network string, conn net.Conn, 
 		return err
 	}
 
+	if h.OnMitmSkip != nil {
+		h.OnMitmSkip()
+	}
+
 	log.Infof("%s <-> %s", ro.RemoteAddr, ro.Host)
 	// xnet.Transport(conn, cc)
 	xnet.Pipe(ctx, conn, cc)
@@ -677,6 +889,13 @@ func (h *Sniffer) terminateTLS(ctx context.Context, network string, conn, cc net
 	ro := ho.recorderObject
 	log := ho.log
 
+	// Deferred connect mode: if a hold hook is set, we do client-side TLS first
+	// (without upstream) so we can read and evaluate HTTP requests before connecting.
+	if GlobalHTTPRequestHoldHook != nil {
+		return h.terminateTLSDeferred(ctx, network, conn, cc, clientHello, ho)
+	}
+
+	// Original flow: connect upstream first, then client
 	nextProtos := clientHello.SupportedProtos
 	if h.NegotiatedProtocol != "" {
 		nextProtos = []string{h.NegotiatedProtocol}
@@ -686,6 +905,7 @@ func (h *Sniffer) terminateTLS(ctx context.Context, network string, conn, cc net
 		ServerName:   clientHello.ServerName,
 		NextProtos:   nextProtos,
 		CipherSuites: clientHello.CipherSuites,
+		RootCAs:      h.UpstreamRootCAs,
 	}
 	if cfg.ServerName == "" {
 		cfg.InsecureSkipVerify = true
@@ -755,7 +975,7 @@ func (h *Sniffer) terminateTLS(ctx context.Context, network string, conn, cc net
 			}
 
 			return &tls.Certificate{
-				Certificate: [][]byte{cert.Raw},
+				Certificate: [][]byte{cert.Raw, h.Certificate.Raw},
 				PrivateKey:  h.PrivateKey,
 			}, nil
 		},
@@ -780,7 +1000,145 @@ func (h *Sniffer) terminateTLS(ctx context.Context, network string, conn, cc net
 		WithRecorderObject(ro),
 		WithLog(log),
 	}
-	return h.HandleHTTP(ctx, network, serverConn, opts...)
+	if err := h.HandleHTTP(ctx, network, serverConn, opts...); err != nil && errors.Is(err, ErrNotHTTP) {
+		// Decrypted stream is not HTTP (binary protocol over TLS).
+		// Fall back to piping the decrypted connections.
+		log.Debugf("MITM: decrypted stream is not HTTP, falling back to pipe")
+		ro.MitmSkipReason = "non_http_after_tls"
+		xnet.Pipe(ctx, serverConn, clientConn)
+		return nil
+	} else {
+		return err
+	}
+}
+
+// terminateTLSDeferred performs the client-side TLS handshake FIRST (without upstream),
+// allowing us to read HTTP requests before deciding whether to connect upstream.
+// This enables request-level hold/approval: the user sees the full HTTP request
+// before any data reaches the destination.
+func (h *Sniffer) terminateTLSDeferred(ctx context.Context, network string, conn, cc net.Conn, clientHello *dissector.ClientHelloInfo, ho *HandleOptions) error {
+	ro := ho.recorderObject
+	log := ho.log
+
+	host := clientHello.ServerName
+	if host == "" {
+		host = ro.Host
+	}
+	if hostPart, _, _ := net.SplitHostPort(host); hostPart != "" {
+		host = hostPart
+	}
+
+	// For deferred mode, prefer http/1.1 with the client but respect client ALPN if present.
+	// (HTTP/2 deferred connect is a future enhancement)
+	nextProtos := []string{"http/1.1"}
+	if len(clientHello.SupportedProtos) > 0 {
+		nextProtos = clientHello.SupportedProtos
+	}
+
+	ro.TLS.Proto = "http/1.1"
+
+	// Step 1: TLS handshake with client (MITM) — no upstream connection yet
+	wb := &bytes.Buffer{}
+	conn = xnet.NewReadWriteConn(conn, io.MultiWriter(wb, conn), conn)
+
+	serverConn := tls.Server(conn, &tls.Config{
+		NextProtos: nextProtos,
+		GetCertificate: func(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
+			certPool := h.CertPool
+			if certPool == nil {
+				certPool = DefaultCertPool
+			}
+			serverName := chi.ServerName
+			if serverName == "" {
+				serverName = host
+			}
+			cert, err := certPool.Get(serverName)
+			if cert != nil {
+				pool := x509.NewCertPool()
+				pool.AddCert(h.Certificate)
+				if _, err = cert.Verify(x509.VerifyOptions{
+					DNSName: serverName,
+					Roots:   pool,
+				}); err != nil {
+					log.Warnf("verify cached certificate for %s: %v", serverName, err)
+					cert = nil
+				}
+			}
+			if cert == nil {
+				cert, err = tls_util.GenerateCertificate(serverName, 7*24*time.Hour, h.Certificate, h.PrivateKey)
+				certPool.Put(serverName, cert)
+			}
+			if err != nil {
+				return nil, err
+			}
+			return &tls.Certificate{
+				Certificate: [][]byte{cert.Raw, h.Certificate.Raw},
+				PrivateKey:  h.PrivateKey,
+			}, nil
+		},
+	})
+	if err := serverConn.HandshakeContext(ctx); err != nil {
+		return err
+	}
+	if record, _ := dissector.ReadRecord(wb); record != nil {
+		wb.Reset()
+		record.WriteTo(wb)
+		ro.TLS.ServerHello = hex.EncodeToString(wb.Bytes())
+	}
+
+	// Step 2: Lazy upstream connection — established on first dial
+	var upstreamOnce sync.Once
+	var upstreamConn net.Conn
+	var upstreamErr error
+
+	lazyDial := func(ctx context.Context, network, address string) (net.Conn, error) {
+		upstreamOnce.Do(func() {
+			// TLS handshake with upstream — match what we negotiated with the client
+			upstreamCfg := &tls.Config{
+				ServerName:   clientHello.ServerName,
+				NextProtos:   nextProtos,
+				CipherSuites: clientHello.CipherSuites,
+				RootCAs:      h.UpstreamRootCAs,
+			}
+			if upstreamCfg.ServerName == "" {
+				upstreamCfg.InsecureSkipVerify = true
+			}
+			tlsConn := tls.Client(cc, upstreamCfg)
+			if err := tlsConn.HandshakeContext(ctx); err != nil {
+				upstreamErr = err
+				return
+			}
+			cs := tlsConn.ConnectionState()
+			ro.TLS.CipherSuite = tls_util.CipherSuite(cs.CipherSuite).String()
+			ro.TLS.Version = tls_util.Version(cs.Version).String()
+			upstreamConn = tlsConn
+		})
+		return upstreamConn, upstreamErr
+	}
+
+	// Step 3: HandleHTTP reads requests from the decrypted client connection
+	// and forwards them via the lazy dialer
+	opts := []HandleOption{
+		WithDial(lazyDial),
+		WithDialTLS(func(ctx context.Context, network, address string, cfg *tls.Config) (net.Conn, error) {
+			return lazyDial(ctx, network, address)
+		}),
+		WithRecorderObject(ro),
+		WithLog(log),
+	}
+	if err := h.HandleHTTP(ctx, network, serverConn, opts...); err != nil && errors.Is(err, ErrNotHTTP) {
+		// Decrypted stream is not HTTP. Establish upstream and pipe raw bytes.
+		log.Debugf("MITM: decrypted stream is not HTTP, falling back to pipe")
+		ro.MitmSkipReason = "non_http_after_tls"
+		upstream, dialErr := lazyDial(ctx, network, "")
+		if dialErr != nil {
+			return dialErr
+		}
+		xnet.Pipe(ctx, serverConn, upstream)
+		return nil
+	} else {
+		return err
+	}
 }
 
 type h2Handler struct {
@@ -789,6 +1147,7 @@ type h2Handler struct {
 	recorderOptions *recorder.Options
 	recorderObject  *xrecorder.HandlerRecorderObject
 	log             logger.Logger
+	onHTTPRoundTrip func(info HTTPRoundTripInfo)
 }
 
 func (h *h2Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -848,11 +1207,12 @@ func (h *h2Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var reqBody *xhttp.Body
-	if opts := h.recorderOptions; opts != nil && opts.HTTPBody {
+	h2CaptureBody := (h.recorderOptions != nil && h.recorderOptions.HTTPBody) || h.onHTTPRoundTrip != nil
+	if h2CaptureBody {
 		if req.Body != nil {
-			bodySize := opts.MaxBodySize
-			if bodySize <= 0 {
-				bodySize = DefaultBodySize
+			bodySize := DefaultBodySize
+			if opts := h.recorderOptions; opts != nil && opts.MaxBodySize > 0 {
+				bodySize = opts.MaxBodySize
 			}
 			if bodySize > MaxBodySize {
 				bodySize = MaxBodySize
@@ -861,6 +1221,13 @@ func (h *h2Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			reqBody = xhttp.NewBody(req.Body, bodySize)
 			req.Body = reqBody
 		}
+	}
+
+	// Credential substitution: swap placeholders with real credentials (HTTP/2 path).
+	// Headers were already cloned for storage, so this only affects the upstream request.
+	var subInfo *CredentialSubstitutionInfo
+	if credSub := getGlobalCredentialSubstituter(); credSub != nil {
+		subInfo = credSub(req)
 	}
 
 	resp, err := h.transport.RoundTrip(req.WithContext(r.Context()))
@@ -888,10 +1255,10 @@ func (h *h2Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(resp.StatusCode)
 
 	var respBody *xhttp.Body
-	if opts := h.recorderOptions; opts != nil && opts.HTTPBody {
-		bodySize := opts.MaxBodySize
-		if bodySize <= 0 {
-			bodySize = DefaultBodySize
+	if h2CaptureBody {
+		bodySize := DefaultBodySize
+		if opts := h.recorderOptions; opts != nil && opts.MaxBodySize > 0 {
+			bodySize = opts.MaxBodySize
 		}
 		if bodySize > MaxBodySize {
 			bodySize = MaxBodySize
@@ -905,6 +1272,40 @@ func (h *h2Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if respBody != nil {
 		ro.HTTP.Response.Body = respBody.Content()
 		ro.HTTP.Response.ContentLength = respBody.Length()
+	}
+
+	if h.onHTTPRoundTrip != nil || GlobalHTTPRoundTripHook != nil {
+		containerName := string(xctx.ClientIDFromContext(r.Context()))
+		if containerName == "" {
+			containerName = ro.ClientID
+		}
+		info := HTTPRoundTripInfo{
+			Host:            r.Host,
+			Method:          r.Method,
+			URI:             r.RequestURI,
+			Proto:           r.Proto,
+			StatusCode:      resp.StatusCode,
+			RequestHeaders:  ro.HTTP.Request.Header,
+			ResponseHeaders: ro.HTTP.Response.Header,
+			ContainerName:   containerName,
+			DurationMs:      time.Since(ro.Time).Milliseconds(),
+		}
+		if subInfo != nil {
+			info.SubstitutedCredentials = subInfo.Labels
+			info.SessionID = subInfo.SessionID
+		}
+		if reqBody != nil {
+			info.RequestBody = reqBody.Content()
+		}
+		if respBody != nil {
+			info.ResponseBody = respBody.Content()
+		}
+		if h.onHTTPRoundTrip != nil {
+			h.onHTTPRoundTrip(info)
+		}
+		if GlobalHTTPRoundTripHook != nil {
+			GlobalHTTPRoundTripHook(info)
+		}
 	}
 }
 

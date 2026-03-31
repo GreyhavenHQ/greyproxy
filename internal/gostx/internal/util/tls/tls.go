@@ -2,6 +2,8 @@ package tls
 
 import (
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
@@ -423,6 +425,8 @@ func GenerateCertificate(serverName string, validity time.Duration, caCert *x509
 		serverName = host
 	}
 
+	sigAlg := sigAlgorithm(caKey)
+
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(time.Now().UnixNano() / 100000),
 		Subject: pkix.Name{
@@ -430,7 +434,7 @@ func GenerateCertificate(serverName string, validity time.Duration, caCert *x509
 		},
 		NotBefore:          time.Now().Add(-validity),
 		NotAfter:           time.Now().Add(validity),
-		SignatureAlgorithm: x509.SHA256WithRSA,
+		SignatureAlgorithm: sigAlg,
 		ExtKeyUsage:        []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
 	}
 
@@ -452,6 +456,18 @@ func GenerateCertificate(serverName string, validity time.Duration, caCert *x509
 	}
 
 	return x509.ParseCertificate(raw)
+}
+
+// sigAlgorithm returns the appropriate x509.SignatureAlgorithm for the given private key.
+func sigAlgorithm(key crypto.PrivateKey) x509.SignatureAlgorithm {
+	switch key.(type) {
+	case *ecdsa.PrivateKey:
+		return x509.ECDSAWithSHA256
+	case ed25519.PrivateKey:
+		return x509.PureEd25519
+	default:
+		return x509.SHA256WithRSA
+	}
 }
 
 // https://pkg.go.dev/crypto#PrivateKey

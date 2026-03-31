@@ -76,6 +76,7 @@ homebrew_casks:
       owner: GreyhavenHQ
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    skip_upload: auto
     homepage: "https://github.com/GreyhavenHQ/greyproxy"
     description: "SOCKS5 proxy with DNS resolution and web dashboard for network sandboxing"
     license: "Apache-2.0"

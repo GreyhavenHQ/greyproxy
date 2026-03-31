@@ -2,6 +2,8 @@ package greyproxy
 
 import (
 	"database/sql"
+	"encoding/json"
+	"net/http"
 	"time"
 )
 
@@ -122,6 +124,7 @@ type RequestLog struct {
 	Result           string         `json:"result"`
 	RuleID           sql.NullInt64  `json:"rule_id"`
 	ResponseTimeMs   sql.NullInt64  `json:"response_time_ms"`
+	MitmSkipReason   sql.NullString `json:"mitm_skip_reason"`
 	RuleSummary      sql.NullString `json:"-"` // Computed at query time via JOIN
 }
 
@@ -180,6 +183,142 @@ func (l *RequestLog) DisplayHost() string {
 	return l.DestinationHost
 }
 
+// HttpTransaction represents a MITM-captured HTTP request/response pair.
+type HttpTransaction struct {
+	ID                     int64          `json:"id"`
+	Timestamp              time.Time      `json:"timestamp"`
+	ContainerName          string         `json:"container_name"`
+	DestinationHost        string         `json:"destination_host"`
+	DestinationPort        int            `json:"destination_port"`
+	Method                 string         `json:"method"`
+	URL                    string         `json:"url"`
+	RequestHeaders         sql.NullString `json:"-"`
+	RequestBody            []byte         `json:"-"`
+	RequestBodySize        sql.NullInt64  `json:"-"`
+	RequestContentType     sql.NullString `json:"-"`
+	StatusCode             sql.NullInt64  `json:"status_code"`
+	ResponseHeaders        sql.NullString `json:"-"`
+	ResponseBody           []byte         `json:"-"`
+	ResponseBodySize       sql.NullInt64  `json:"-"`
+	ResponseContentType    sql.NullString `json:"-"`
+	DurationMs             sql.NullInt64  `json:"duration_ms"`
+	RuleID                 sql.NullInt64  `json:"rule_id"`
+	Result                 string         `json:"result"`
+	SubstitutedCredentials sql.NullString `json:"-"`
+	SessionID              sql.NullString `json:"-"`
+}
+
+type HttpTransactionJSON struct {
+	ID                     int64    `json:"id"`
+	Timestamp              string   `json:"timestamp"`
+	ContainerName          string   `json:"container_name"`
+	DestinationHost        string   `json:"destination_host"`
+	DestinationPort        int      `json:"destination_port"`
+	Method                 string   `json:"method"`
+	URL                    string   `json:"url"`
+	RequestHeaders         any      `json:"request_headers,omitempty"`
+	RequestBody            *string  `json:"request_body,omitempty"`
+	RequestBodySize        *int64   `json:"request_body_size,omitempty"`
+	RequestContentType     *string  `json:"request_content_type,omitempty"`
+	StatusCode             *int64   `json:"status_code,omitempty"`
+	ResponseHeaders        any      `json:"response_headers,omitempty"`
+	ResponseBody           *string  `json:"response_body,omitempty"`
+	ResponseBodySize       *int64   `json:"response_body_size,omitempty"`
+	ResponseContentType    *string  `json:"response_content_type,omitempty"`
+	DurationMs             *int64   `json:"duration_ms,omitempty"`
+	RuleID                 *int64   `json:"rule_id,omitempty"`
+	Result                 string   `json:"result"`
+	SubstitutedCredentials []string `json:"substituted_credentials,omitempty"`
+	SessionID              *string  `json:"session_id,omitempty"`
+}
+
+func (t *HttpTransaction) ToJSON(includeBody bool) HttpTransactionJSON {
+	j := HttpTransactionJSON{
+		ID:              t.ID,
+		Timestamp:       t.Timestamp.UTC().Format(time.RFC3339),
+		ContainerName:   t.ContainerName,
+		DestinationHost: t.DestinationHost,
+		DestinationPort: t.DestinationPort,
+		Method:          t.Method,
+		URL:             t.URL,
+		Result:          t.Result,
+	}
+	if t.RequestHeaders.Valid {
+		var h map[string]any
+		if json.Unmarshal([]byte(t.RequestHeaders.String), &h) == nil {
+			j.RequestHeaders = h
+		}
+	}
+	if t.RequestBodySize.Valid {
+		j.RequestBodySize = &t.RequestBodySize.Int64
+	}
+	if t.RequestContentType.Valid {
+		j.RequestContentType = &t.RequestContentType.String
+	}
+	if t.StatusCode.Valid {
+		j.StatusCode = &t.StatusCode.Int64
+	}
+	if t.ResponseHeaders.Valid {
+		var h map[string]any
+		if json.Unmarshal([]byte(t.ResponseHeaders.String), &h) == nil {
+			j.ResponseHeaders = h
+		}
+	}
+	if t.ResponseBodySize.Valid {
+		j.ResponseBodySize = &t.ResponseBodySize.Int64
+	}
+	if t.ResponseContentType.Valid {
+		j.ResponseContentType = &t.ResponseContentType.String
+	}
+	if t.DurationMs.Valid {
+		j.DurationMs = &t.DurationMs.Int64
+	}
+	if t.RuleID.Valid {
+		j.RuleID = &t.RuleID.Int64
+	}
+	if includeBody {
+		if len(t.RequestBody) > 0 {
+			s := string(t.RequestBody)
+			j.RequestBody = &s
+		}
+		if len(t.ResponseBody) > 0 {
+			s := string(t.ResponseBody)
+			j.ResponseBody = &s
+		}
+	}
+	if t.SubstitutedCredentials.Valid && t.SubstitutedCredentials.String != "" {
+		var creds []string
+		if json.Unmarshal([]byte(t.SubstitutedCredentials.String), &creds) == nil {
+			j.SubstitutedCredentials = creds
+		}
+	}
+	if t.SessionID.Valid {
+		j.SessionID = &t.SessionID.String
+	}
+	return j
+}
+
+// HttpTransactionCreateInput holds the data needed to create a transaction record.
+type HttpTransactionCreateInput struct {
+	ContainerName          string
+	DestinationHost        string
+	DestinationPort        int
+	Method                 string
+	URL                    string
+	RequestHeaders         http.Header
+	RequestBody            []byte
+	RequestContentType     string
+	StatusCode             int
+	ResponseHeaders        http.Header
+	ResponseBody           []byte
+	ResponseContentType    string
+	DurationMs             int64
+	RuleID                 *int64
+	Result                 string
+	SubstitutedCredentials []string
+	SessionID              string
+}
+
 // DashboardStats holds aggregated data for the dashboard.
 type DashboardStats struct {
 	Period        Period                   `json:"period"`
@@ -218,4 +357,82 @@ type TimelinePoint struct {
 	Timestamp string `json:"timestamp"`
 	Allowed   int    `json:"allowed"`
 	Blocked   int    `json:"blocked"`
+}
+
+// Session represents a credential substitution session registered by greywall.
+type Session struct {
+	SessionID         string    `json:"session_id"`
+	ContainerName     string    `json:"container_name"`
+	MappingsEnc       []byte    `json:"-"`
+	LabelsJSON        string    `json:"-"`
+	MetadataJSON      string    `json:"-"`
+	TTLSeconds        int       `json:"ttl_seconds"`
+	CreatedAt         time.Time `json:"created_at"`
+	ExpiresAt         time.Time `json:"expires_at"`
+	LastHeartbeat     time.Time `json:"last_heartbeat"`
+	SubstitutionCount int64     `json:"substitution_count"`
+}
+
+type SessionJSON struct {
+	SessionID         string            `json:"session_id"`
+	ContainerName     string            `json:"container_name"`
+	CredentialCount   int               `json:"credential_count"`
+	CredentialLabels  []string          `json:"credential_labels"`
+	Metadata          map[string]string `json:"metadata,omitempty"`
+	TTLSeconds        int               `json:"ttl_seconds"`
+	CreatedAt         string            `json:"created_at"`
+	ExpiresAt         string            `json:"expires_at"`
+	LastHeartbeat     string            `json:"last_heartbeat"`
+	SubstitutionCount int64             `json:"substitution_count"`
+}
+
+func (s *Session) ToJSON(labels map[string]string) SessionJSON {
+	labelList := make([]string, 0, len(labels))
+	for _, v := range labels {
+		labelList = append(labelList, v)
+	}
+	var metadata map[string]string
+	if s.MetadataJSON != "" && s.MetadataJSON != "{}" {
+		json.Unmarshal([]byte(s.MetadataJSON), &metadata)
+	}
+	return SessionJSON{
+		SessionID:         s.SessionID,
+		ContainerName:     s.ContainerName,
+		CredentialCount:   len(labels),
+		CredentialLabels:  labelList,
+		Metadata:          metadata,
+		TTLSeconds:        s.TTLSeconds,
+		CreatedAt:         s.CreatedAt.UTC().Format(time.RFC3339),
+		ExpiresAt:         s.ExpiresAt.UTC().Format(time.RFC3339),
+		LastHeartbeat:     s.LastHeartbeat.UTC().Format(time.RFC3339),
+		SubstitutionCount: s.SubstitutionCount,
+	}
+}
+
+// GlobalCredential represents a persistent credential configured via the dashboard.
+type GlobalCredential struct {
+	ID           string    `json:"id"`
+	Label        string    `json:"label"`
+	Placeholder  string    `json:"placeholder"`
+	ValueEnc     []byte    `json:"-"`
+	ValuePreview string    `json:"value_preview"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+type GlobalCredentialJSON struct {
+	ID           string `json:"id"`
+	Label        string `json:"label"`
+	Placeholder  string `json:"placeholder"`
+	ValuePreview string `json:"value_preview"`
+	CreatedAt    string `json:"created_at"`
+}
+
+func (g *GlobalCredential) ToJSON() GlobalCredentialJSON {
+	return GlobalCredentialJSON{
+		ID:           g.ID,
+		Label:        g.Label,
+		Placeholder:  g.Placeholder,
+		ValuePreview: g.ValuePreview,
+		CreatedAt:    g.CreatedAt.UTC().Format(time.RFC3339),
+	}
 }

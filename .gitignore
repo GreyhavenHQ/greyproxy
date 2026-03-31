@@ -32,6 +32,11 @@ _testmain.go
 
 *.bak
 
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
 cmd/greyproxy/greyproxy
 snap
 
@@ -43,4 +48,9 @@ dist/
 /greyproxy.db
 /greyproxy.db-shm
 /greyproxy.db-wal
+/conversation.db
 /greyproxy
+exported_logs/
+/buildrun.sh
+/greyproxy.log
+/greyproxy.reload

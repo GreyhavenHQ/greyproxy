@@ -2,10 +2,12 @@ package ui
 
 import (
 	"embed"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"math"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -66,12 +68,6 @@ var funcMap = template.FuncMap{
 	"sub": func(a, b int) int {
 		return a - b
 	},
-	"gt": func(a, b int) bool {
-		return a > b
-	},
-	"lt": func(a, b int) bool {
-		return a < b
-	},
 	"formatFloat": func(f float64) string {
 		return fmt.Sprintf("%.1f", f)
 	},
@@ -109,11 +105,56 @@ var funcMap = template.FuncMap{
 		}
 		return plural
 	},
-	"truncate": func(s string, n int) string {
+	"truncate": func(v any, n int) string {
+		s := fmt.Sprintf("%v", v)
 		if len(s) <= n {
 			return s
 		}
 		return s[:n]
+	},
+	"mitmSkipReasonLabel": func(reason string) string {
+		switch reason {
+		case "no_cert":
+			return "CA certificate not configured"
+		case "mitm_bypass":
+			return "Host is in MITM bypass list"
+		case "sniffing_disabled":
+			return "Traffic sniffing is disabled"
+		case "non_tls":
+			return "Protocol is not TLS"
+		case "mitm_disabled":
+			return "MITM is globally disabled"
+		case "non_http_after_tls":
+			return "Decrypted stream is not HTTP"
+		case "mitm_error":
+			return "TLS interception failed (client may reject forged certificate)"
+		default:
+			return reason
+		}
+	},
+	"strLen": func(v any) int {
+		if v == nil {
+			return 0
+		}
+		return len(fmt.Sprintf("%v", v))
+	},
+	"cleanToolOutput": func(v any) string {
+		s := fmt.Sprintf("%v", v)
+		lines := strings.Split(s, "\n")
+		for i, line := range lines {
+			// Strip line number prefixes like "     1→" or "   42→"
+			for j := 0; j < len(line); j++ {
+				if line[j] == '\xe2' && j+2 < len(line) && line[j+1] == '\x86' && line[j+2] == '\x92' {
+					// Found → (U+2192), strip everything before and including it
+					lines[i] = line[j+3:]
+					break
+				}
+				if line[j] != ' ' && (line[j] < '0' || line[j] > '9') {
+					break
+				}
+			}
+		}
+		return strings.Join(lines, "\n")
 	},
 	"expiresIn": func(t time.Time) string {
 		d := time.Until(t)
@@ -129,6 +170,11 @@ var funcMap = template.FuncMap{
 	},
 	"isExpired": func(t time.Time) bool {
 		return time.Now().After(t)
+	},
+	"credLabels": func(raw string) []string {
+		var labels []string
+		json.Unmarshal([]byte(raw), &labels)
+		return labels
 	},
 	"derefStr": func(s *string) string {
 		if s == nil {
@@ -155,6 +201,204 @@ var funcMap = template.FuncMap{
 		}
 		return result
 	},
+	// Conversation detail template helpers
+	"isStep": func(step any, stepType string) bool {
+		if m, ok := step.(map[string]any); ok {
+			return m["type"] == stepType
+		}
+		return false
+	},
+	"hasStepField": func(step any, field string) bool {
+		if m, ok := step.(map[string]any); ok {
+			v, exists := m[field]
+			if !exists {
+				return false
+			}
+			if s, ok := v.(string); ok {
+				return s != ""
+			}
+			return v != nil
+		}
+		return false
+	},
+	"stepField": func(step any, field string) string {
+		if m, ok := step.(map[string]any); ok {
+			if v, ok := m[field]; ok {
+				if s, ok := v.(string); ok {
+					return s
+				}
+				return fmt.Sprintf("%v", v)
+			}
+		}
+		return ""
+	},
+	"stepToolCalls": func(step any) []map[string]any {
+		if m, ok := step.(map[string]any); ok {
+			if tcs, ok := m["tool_calls"].([]any); ok {
+				var result []map[string]any
+				for _, tc := range tcs {
+					if tcMap, ok := tc.(map[string]any); ok {
+						result = append(result, tcMap)
+					}
+				}
+				return result
+			}
+		}
+		return nil
+	},
+	"stepID": func(step any) string {
+		if m, ok := step.(map[string]any); ok {
+			if id, ok := m["tool_use_id"].(string); ok {
+				return id
+			}
+		}
+		return fmt.Sprintf("%p", step)
+	},
+	// toolSummary returns a compact one-line summary for a tool call.
+	// It parses the input_preview JSON and extracts the most relevant field.
+	"toolSummary": func(tc map[string]any) string {
+		// Prefer pre-computed summary (available for new data)
+		if summary, ok := tc["tool_summary"].(string); ok && summary != "" {
+			return summary
+		}
+		// Fallback: parse input_preview JSON (may fail on truncated data)
+		toolName, _ := tc["tool"].(string)
+		inputRaw, _ := tc["input_preview"].(string)
+		if inputRaw == "" {
+			return ""
+		}
+		var input map[string]any
+		if err := json.Unmarshal([]byte(inputRaw), &input); err != nil {
+			// Not valid JSON, return truncated raw
+			if len(inputRaw) > 80 {
+				return inputRaw[:80] + "..."
+			}
+			return inputRaw
+		}
+		switch toolName {
+		case "Read", "Edit", "Write":
+			if fp, ok := input["file_path"].(string); ok {
+				short := filepath.Base(fp)
+				dir := filepath.Dir(fp)
+				// Show last 2 path components for context
+				parent := filepath.Base(dir)
+				if parent != "." && parent != "/" {
+					short = parent + "/" + short
+				}
+				return short
+			}
+		case "Bash":
+			if desc, ok := input["description"].(string); ok && desc != "" {
+				return desc
+			}
+			if cmd, ok := input["command"].(string); ok {
+				if len(cmd) > 80 {
+					return cmd[:80] + "..."
+				}
+				return cmd
+			}
+		case "Grep":
+			if pat, ok := input["pattern"].(string); ok {
+				summary := "pattern: " + pat
+				if p, ok := input["path"].(string); ok {
+					summary += " in " + filepath.Base(p)
+				}
+				return summary
+			}
+		case "Glob":
+			if pat, ok := input["pattern"].(string); ok {
+				return pat
+			}
+		case "Agent":
+			if desc, ok := input["description"].(string); ok && desc != "" {
+				return desc
+			}
+		case "ToolSearch":
+			if q, ok := input["query"].(string); ok {
+				return q
+			}
+		case "WebFetch", "WebSearch":
+			if u, ok := input["url"].(string); ok {
+				return u
+			}
+			if q, ok := input["query"].(string); ok {
+				return q
+			}
+		}
+		// Fallback: show truncated JSON
+		if len(inputRaw) > 80 {
+			return inputRaw[:80] + "..."
+		}
+		return inputRaw
+	},
+	// toolIcon returns an SVG icon name hint for a tool (used as CSS class).
+	"toolIcon": func(toolName string) string {
+		switch toolName {
+		case "Read":
+			return "tool-icon-read"
+		case "Edit":
+			return "tool-icon-edit"
+		case "Write":
+			return "tool-icon-write"
+		case "Bash":
+			return "tool-icon-bash"
+		case "Grep", "Glob":
+			return "tool-icon-search"
+		case "Agent":
+			return "tool-icon-agent"
+		default:
+			return "tool-icon-default"
+		}
+	},
+	// toolResultSummary returns a short result summary for collapsed view.
+	"toolResultSummary": func(tc map[string]any) string {
+		result, _ := tc["result_preview"].(string)
+		if result == "" {
+			return ""
+		}
+		// Clean tool output (strip line number prefixes)
+		lines := strings.Split(result, "\n")
+		for i, line := range lines {
+			for j := 0; j < len(line); j++ {
+				if line[j] == '\xe2' && j+2 < len(line) && line[j+1] == '\x86' && line[j+2] == '\x92' {
+					lines[i] = line[j+3:]
+					break
+				}
+				if line[j] != ' ' && (line[j] < '0' || line[j] > '9') {
+					break
+				}
+			}
+		}
+		cleaned := strings.Join(lines, "\n")
+		isError, _ := tc["is_error"].(bool)
+		if isError {
+			first := strings.SplitN(cleaned, "\n", 2)[0]
+			if len(first) > 60 {
+				first = first[:60] + "..."
+			}
+			return "Error: " + first
+		}
+		first := strings.SplitN(cleaned, "\n", 2)[0]
+		if len(first) > 60 {
+			first = first[:60] + "..."
+		}
+		return first
+	},
+	// truncateLines returns the first N lines of a string.
+	"truncateLines": func(s string, n int) string {
+		lines := strings.SplitN(s, "\n", n+1)
+		if len(lines) <= n {
+			return s
+		}
+		return strings.Join(lines[:n], "\n") + "\n..."
+	},
+	// countToolResultLines counts the lines in a tool result.
+	"countToolResultLines": func(s string) int {
+		if s == "" {
+			return 0
+		}
+		return strings.Count(s, "\n") + 1
+	},
 }
 
 func parseTemplate(name string, files ...string) *template.Template {
@@ -176,10 +420,18 @@ var (
 	logsTmpl      = parseTemplate("base.html", "base.html", "logs.html")
 	settingsTmpl  = parseTemplate("base.html", "base.html", "settings.html")
 
-	dashboardStatsTmpl = parseTemplate("dashboard_stats.html", "partials/dashboard_stats.html")
-	pendingListTmpl    = parseTemplate("pending_list.html", "partials/pending_list.html")
-	rulesListTmpl      = parseTemplate("rules_list.html", "partials/rules_list.html")
-	logsTableTmpl      = parseTemplate("logs_table.html", "partials/logs_table.html")
+	trafficTmpl       = parseTemplate("base.html", "base.html", "traffic.html")
+	activityTmpl      = parseTemplate("base.html", "base.html", "activity.html")
+	conversationsTmpl = parseTemplate("base.html", "base.html", "conversations.html")
+
+	dashboardStatsTmpl    = parseTemplate("dashboard_stats.html", "partials/dashboard_stats.html")
+	pendingListTmpl       = parseTemplate("pending_list.html", "partials/pending_list.html")
+	rulesListTmpl         = parseTemplate("rules_list.html", "partials/rules_list.html")
+	logsTableTmpl         = parseTemplate("logs_table.html", "partials/logs_table.html")
+	trafficTableTmpl      = parseTemplate("traffic_table.html", "partials/traffic_table.html")
+	activityTableTmpl     = parseTemplate("activity_table.html", "partials/activity_table.html")
+	convListTmpl          = parseTemplate("conversation_list.html", "partials/conversation_list.html")
+	convDetailTmpl        = parseTemplate("conversation_detail.html", "partials/conversation_detail.html")
 )
 
 // cacheBuster is set once at startup for static asset cache busting.
@@ -198,6 +450,7 @@ func getContainers(db *greyproxy.DB) []string {
 	rows, err := db.ReadDB().Query(
 		`SELECT DISTINCT container_name FROM pending_requests
 		 UNION SELECT DISTINCT container_name FROM request_logs
+		 UNION SELECT DISTINCT container_name FROM http_transactions
 		 ORDER BY container_name`)
 	if err != nil {
 		return nil
@@ -253,13 +506,7 @@ func RegisterPageRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 	})
 
 	r.GET("/logs", func(c *gin.Context) {
-		logsTmpl.Execute(c.Writer, PageData{
-			CurrentPath: c.Request.URL.Path,
-			Prefix:      prefix,
-			CacheBuster: cacheBuster,
-			Title:       "Logs - Greyproxy",
-			Containers:  getContainers(db),
-		})
+		c.Redirect(http.StatusFound, prefix+"/activity?kind=connection")
 	})
 
 	r.GET("/settings", func(c *gin.Context) {
@@ -268,6 +515,31 @@ func RegisterPageRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 			Prefix:      prefix,
 			CacheBuster: cacheBuster,
 			Title:       "Settings - Greyproxy",
+			Containers:  getContainers(db),
+		})
+	})
+
+	r.GET("/traffic", func(c *gin.Context) {
+		c.Redirect(http.StatusFound, prefix+"/activity?kind=http")
+	})
+
+	r.GET("/activity", func(c *gin.Context) {
+		activityTmpl.Execute(c.Writer, PageData{
+			CurrentPath: c.Request.URL.Path,
+			Prefix:      prefix,
+			CacheBuster: cacheBuster,
+			Title:       "Activity - Greyproxy",
+			Containers:  getContainers(db),
+		})
+	})
+
+	r.GET("/conversations", func(c *gin.Context) {
+		conversationsTmpl.Execute(c.Writer, PageData{
+			CurrentPath: c.Request.URL.Path,
+			Prefix:      prefix,
+			CacheBuster: cacheBuster,
+			Title:       "Conversations - Greyproxy",
+			Containers:  getContainers(db),
 		})
 	})
 }
@@ -575,6 +847,170 @@ func RegisterHTMXRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 			"Page":       page,
 			"Pages":      pages,
 			"HasFilters": hasFilters,
+		})
+	})
+
+	htmx.GET("/traffic-table", func(c *gin.Context) {
+		limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+		offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+
+		if page, err := strconv.Atoi(c.Query("page")); err == nil && page > 1 {
+			offset = (page - 1) * limit
+		}
+
+		container := c.Query("container")
+		destination := c.Query("destination")
+		method := c.Query("method")
+		sessionID := c.Query("session_id")
+
+		f := greyproxy.TransactionFilter{
+			Container:   container,
+			Destination: destination,
+			Method:      method,
+			SessionID:   sessionID,
+			Limit:       limit,
+			Offset:      offset,
+		}
+
+		items, total, err := greyproxy.QueryHttpTransactions(db, f)
+		if err != nil {
+			c.String(http.StatusInternalServerError, "Error: %v", err)
+			return
+		}
+
+		page := 1
+		if limit > 0 && offset > 0 {
+			page = offset/limit + 1
+		}
+		pages := 1
+		if limit > 0 && total > 0 {
+			pages = int(math.Ceil(float64(total) / float64(limit)))
+		}
+
+		hasFilters := container != "" || destination != "" || method != ""
+
+		c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+		trafficTableTmpl.Execute(c.Writer, gin.H{
+			"Prefix":     prefix,
+			"Items":      items,
+			"Total":      total,
+			"Page":       page,
+			"Pages":      pages,
+			"HasFilters": hasFilters,
+		})
+	})
+
+	// Activity HTMX route (unified logs + traffic)
+	htmx.GET("/activity-table", func(c *gin.Context) {
+		limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+		offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+
+		if page, err := strconv.Atoi(c.Query("page")); err == nil && page > 1 {
+			offset = (page - 1) * limit
+		}
+
+		container := c.Query("container")
+		destination := c.Query("destination")
+		kind := c.Query("kind")
+		result := c.Query("result")
+
+		f := greyproxy.ActivityFilter{
+			Container:   container,
+			Destination: destination,
+			Kind:        kind,
+			Result:      result,
+			Limit:       limit,
+			Offset:      offset,
+		}
+
+		items, total, err := greyproxy.QueryActivity(db, f)
+		if err != nil {
+			c.String(http.StatusInternalServerError, "Error: %v", err)
+			return
+		}
+
+		page := 1
+		if limit > 0 && offset > 0 {
+			page = offset/limit + 1
+		}
+		pages := 1
+		if limit > 0 && total > 0 {
+			pages = int(math.Ceil(float64(total) / float64(limit)))
+		}
+
+		hasFilters := container != "" || destination != "" || kind != "" || result != ""
+
+		c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+		activityTableTmpl.Execute(c.Writer, gin.H{
+			"Prefix":     prefix,
+			"Items":      items,
+			"Total":      total,
+			"Page":       page,
+			"Pages":      pages,
+			"HasFilters": hasFilters,
+		})
+	})
+
+	// Conversation HTMX routes
+	htmx.GET("/conversation-list", func(c *gin.Context) {
+		container := c.Query("container")
+		f := greyproxy.ConversationFilter{
+			Container: container,
+			Limit:     50,
+		}
+		convs, total, err := greyproxy.QueryConversations(db, f)
+		if err != nil {
+			c.String(http.StatusInternalServerError, "Error: %v", err)
+			return
+		}
+		var items []greyproxy.ConversationJSON
+		for _, conv := range convs {
+			items = append(items, conv.ToJSON(false))
+		}
+		c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+		convListTmpl.Execute(c.Writer, gin.H{
+			"Prefix": prefix,
+			"Items":  items,
+			"Total":  total,
+		})
+	})
+
+	htmx.GET("/conversation-detail", func(c *gin.Context) {
+		id := c.Query("id")
+		if id == "" {
+			c.String(http.StatusBadRequest, "Missing id")
+			return
+		}
+		conv, err := greyproxy.GetConversation(db, id)
+		if err != nil {
+			c.String(http.StatusInternalServerError, "Error: %v", err)
+			return
+		}
+
+		var convJSON *greyproxy.ConversationJSON
+		var subagents []greyproxy.ConversationJSON
+		var txnIDs []int64
+		if conv != nil {
+			j := conv.ToJSON(true)
+			convJSON = &j
+
+			// Load subagents
+			subs, _ := greyproxy.GetSubagents(db, id)
+			for _, s := range subs {
+				subagents = append(subagents, s.ToJSON(false))
+			}
+
+			// Get transaction IDs
+			txnIDs, _ = greyproxy.GetTransactionsByConversationID(db, id)
+		}
+
+		c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+		c.Writer.Header().Set("Cache-Control", "no-store")
+		convDetailTmpl.Execute(c.Writer, gin.H{
+			"Prefix":    prefix,
+			"Conv":      convJSON,
+			"Subagents": subagents,
+			"TxnIDs":    txnIDs,
 		})
 	})
 }

@@ -249,10 +249,15 @@ func handleUninstall(args []string) {
 	binDst := installBinPath()
 	label := serviceLabel()
 
+	certInstalled := isCertInstalled()
+
 	fmt.Printf("Ready to uninstall greyproxy. This will:\n")
 	fmt.Printf("  1. Stop the greyproxy service\n")
 	fmt.Printf("  2. Remove the %s\n", label)
 	fmt.Printf("  3. Remove %s\n", binDst)
+	if certInstalled {
+		fmt.Printf("  4. Remove CA certificate from system trust store\n")
+	}
 
 	if !force {
 		fmt.Printf("\nProceed? [Y/n] ")
@@ -284,6 +289,11 @@ func handleUninstall(args []string) {
 		os.Exit(1)
 	}
 	fmt.Printf("Removed %s\n", binDst)
+
+	// 4. Remove CA certificate from trust store
+	if certInstalled {
+		handleCertUninstall()
+	}
 }
 
 func copyBinary(src, dst string) error {

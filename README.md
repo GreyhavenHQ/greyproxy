@@ -23,6 +23,7 @@ This software is meant to be used with [**greywall**](https://github.com/Greyhav
 - **Pending Requests**: Review and approve/deny network requests awaiting a policy decision
 - **Multi-Protocol Proxy**: HTTP, SOCKS5, and DNS proxies with forwarding chain support
 - **DNS Caching**: Built-in DNS resolution and caching with hostname enrichment on requests
+- **Sensitive Header Redaction**: Automatically strips Authorization, Cookie, API keys, and tokens from stored HTTP transactions. Configurable patterns via the API.
 - **REST API**: Full HTTP API for automation and integration
 - **Real-Time Updates**: WebSocket-based live updates on the dashboard
 - **Single Binary**: Web UI, fonts, icons, and assets are all embedded, no separate frontend to deploy
@@ -118,6 +119,20 @@ services:
 | HTTP Proxy    | `43051` |
 | SOCKS5 Proxy  | `43052` |
 | DNS Proxy     | `43053` |
+
+## Documentation
+
+Full documentation is available at [docs.greywall.io/greyproxy](https://docs.greywall.io/greyproxy):
+
+- [Quick Start](https://docs.greywall.io/greyproxy/quickstart)
+- [Configuration Reference](https://docs.greywall.io/greyproxy/configuration)
+- [Rule Engine](https://docs.greywall.io/greyproxy/rules)
+- [REST API](https://docs.greywall.io/greyproxy/api)
+- [Dashboard](https://docs.greywall.io/greyproxy/dashboard)
+- [Multi-Protocol Proxy](https://docs.greywall.io/greyproxy/proxy)
+- [Service Management](https://docs.greywall.io/greyproxy/service)
+- [Architecture](https://docs.greywall.io/greyproxy/architecture)
+- [Troubleshooting](https://docs.greywall.io/greyproxy/troubleshooting)
 
 ## Acknowledgments
 

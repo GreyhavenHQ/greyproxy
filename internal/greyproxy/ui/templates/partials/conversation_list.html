@@ -1,0 +1,46 @@
+{{if not .Items}}
+<div class="p-4 text-center text-sm text-muted-foreground">
+    No conversations found
+</div>
+{{else}}
+<div class="divide-y divide-border">
+    {{range .Items}}
+    <div data-conv-id="{{.ID}}" onclick="selectConversation('{{.ID}}')"
+        class="p-3 cursor-pointer hover:bg-muted/50 transition-colors">
+        <div class="flex items-start justify-between">
+            <div class="min-w-0 flex-1">
+                <div class="flex items-center gap-1.5 mb-0.5">
+                    {{if .Incomplete}}
+                    <span class="inline-block w-2 h-2 rounded-full bg-yellow-500 flex-shrink-0" title="Incomplete"></span>
+                    {{else if .LastTurnHasResponse}}
+                    <span class="inline-block w-2 h-2 rounded-full bg-green-500 flex-shrink-0" title="Complete"></span>
+                    {{else}}
+                    <span class="inline-block w-2 h-2 rounded-full bg-blue-500 flex-shrink-0" title="In progress"></span>
+                    {{end}}
+                    <span class="text-xs font-medium text-foreground truncate">
+                        {{if hasValue .Model}}{{derefStr .Model}}{{else}}unknown{{end}}
+                    </span>
+                </div>
+                <p class="text-xs text-foreground/80 line-clamp-2 leading-snug">
+                    {{if hasValue .FirstPrompt}}{{truncate (derefStr .FirstPrompt) 120}}{{else}}<span class="italic text-muted-foreground">No prompt</span>{{end}}
+                </p>
+                <div class="flex items-center gap-2 mt-1">
+                    <span class="text-[10px] text-muted-foreground">{{.TurnCount}} {{pluralize .TurnCount "turn" "turns"}}</span>
+                    {{if hasValue .ContainerName}}
+                    <span class="text-[10px] text-muted-foreground">{{derefStr .ContainerName}}</span>
+                    {{end}}
+                    {{if hasValue .StartedAt}}
+                    <span class="text-[10px] text-muted-foreground">{{formatTimeOnly (derefStr .StartedAt)}}</span>
+                    {{end}}
+                </div>
+            </div>
+        </div>
+    </div>
+    {{end}}
+</div>
+{{if gt .Total (len .Items)}}
+<div class="p-3 text-center text-xs text-muted-foreground border-t border-border">
+    Showing {{len .Items}} of {{.Total}}
+</div>
+{{end}}
+{{end}}
