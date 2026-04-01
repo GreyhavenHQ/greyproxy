@@ -18,6 +18,13 @@ type ContainerResolver interface {
 	ResolveIP(ip string) (name string, id string)
 }
 
+// AllowAllChecker is satisfied by AllowAllManager. Extracted as an interface
+// so the bypass plugin does not import the full greyproxy package for this.
+type AllowAllChecker interface {
+	IsActive() bool
+	Mode() string // "allow" or "deny"
+}
+
 // Bypass implements bypass.Bypass.
 // This is the main ACL enforcement point — it evaluates every destination
 // against the rule database and decides whether to allow or block.
@@ -31,10 +38,11 @@ type Bypass struct {
 	waiters     *greyproxy.WaiterTracker
 	connTracker *greyproxy.ConnTracker
 	docker      ContainerResolver // optional; nil means no Docker resolution
+	allowAll    AllowAllChecker   // optional; nil means feature is disabled
 	log         logger.Logger
 }
 
-func NewBypass(db *greyproxy.DB, cache *greyproxy.DNSCache, bus *greyproxy.EventBus, waiters *greyproxy.WaiterTracker, connTracker *greyproxy.ConnTracker, docker ContainerResolver) *Bypass {
+func NewBypass(db *greyproxy.DB, cache *greyproxy.DNSCache, bus *greyproxy.EventBus, waiters *greyproxy.WaiterTracker, connTracker *greyproxy.ConnTracker, docker ContainerResolver, allowAll AllowAllChecker) *Bypass {
 	return &Bypass{
 		db:          db,
 		cache:       cache,
@@ -42,6 +50,7 @@ func NewBypass(db *greyproxy.DB, cache *greyproxy.DNSCache, bus *greyproxy.Event
 		waiters:     waiters,
 		connTracker: connTracker,
 		docker:      docker,
+		allowAll:    allowAll,
 		log: logger.Default().WithFields(map[string]any{
 			"kind":   "bypass",
 			"bypass": "greyproxy",
@@ -66,6 +75,41 @@ func (b *Bypass) Contains(ctx context.Context, network, addr string, opts ...byp
 	var o bypass.Options
 	for _, opt := range opts {
 		opt(&o)
+	}
+
+	// Silent mode: bypass all rule evaluation for the duration.
+	// Connections are still logged (with nil rule ID) so activity remains visible.
+	if b.allowAll != nil && b.allowAll.IsActive() {
+		silentHost, silentPortStr, _ := net.SplitHostPort(addr)
+		if silentHost == "" {
+			silentHost = addr
+			silentPortStr = "0"
+		}
+		silentPort, _ := strconv.Atoi(silentPortStr)
+		elapsed := time.Since(start).Milliseconds()
+		clientID := string(ctxvalue.ClientIDFromContext(ctx))
+		srcIP := ""
+		if srcAddr := ctxvalue.SrcAddrFromContext(ctx); srcAddr != nil {
+			srcIP, _, _ = net.SplitHostPort(srcAddr.String())
+		}
+		var containerName, containerID string
+		if b.docker != nil && srcIP != "" {
+			containerName, containerID = b.docker.ResolveIP(srcIP)
+		}
+		if containerName == "" {
+			containerName, containerID = ResolveIdentity(clientID, srcIP)
+		}
+		resolvedHostname := b.resolveHostname(silentHost)
+
+		if b.allowAll.Mode() == greyproxy.SilentModeDeny {
+			go b.logRequest(containerName, containerID, silentHost, silentPort, resolvedHostname, methodFromService(o.Service), "blocked", nil, &elapsed)
+			b.log.Debugf("SILENT-DENY %s -> %s:%d (%s)", containerName, silentHost, silentPort, network)
+			return true // block
+		}
+
+		go b.logRequest(containerName, containerID, silentHost, silentPort, resolvedHostname, methodFromService(o.Service), "allowed", nil, &elapsed)
+		b.log.Debugf("SILENT-ALLOW %s -> %s:%d (%s)", containerName, silentHost, silentPort, network)
+		return false // allow
 	}
 
 	host, portStr, err := net.SplitHostPort(addr)

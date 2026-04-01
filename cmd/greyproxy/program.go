@@ -589,6 +589,10 @@ func (p *program) buildGreyproxyService() error {
 		return nil
 	})
 
+	// Create the allow-all manager (in-memory, resets on restart).
+	allowAllManager := greyproxy.NewAllowAllManager(shared.Bus)
+	shared.AllowAll = allowAllManager
+
 	// Initialize Docker resolver if configured.
 	var dockerResolver greyproxy_plugins.ContainerResolver
 	if gaCfg.Docker.Enabled {
@@ -607,7 +611,7 @@ func (p *program) buildGreyproxyService() error {
 	// Create and register gost plugins
 	autherPlugin := greyproxy_plugins.NewAuther()
 	admissionPlugin := greyproxy_plugins.NewAdmission()
-	bypassPlugin := greyproxy_plugins.NewBypass(shared.DB, shared.Cache, shared.Bus, shared.Waiters, shared.ConnTracker, dockerResolver)
+	bypassPlugin := greyproxy_plugins.NewBypass(shared.DB, shared.Cache, shared.Bus, shared.Waiters, shared.ConnTracker, dockerResolver, allowAllManager)
 	resolverPlugin := greyproxy_plugins.NewResolver(shared.Cache)
 
 	registry.AutherRegistry().Register(gaCfg.Auther, autherPlugin)

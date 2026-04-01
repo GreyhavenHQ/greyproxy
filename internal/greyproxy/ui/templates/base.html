@@ -170,6 +170,45 @@
                         class="{{if contains .CurrentPath "/conversations"}}border-primary text-foreground{{else}}border-transparent text-muted-foreground hover:border-border hover:text-foreground{{end}} inline-flex items-center px-1 pt-[2px] border-b-2 text-sm font-medium">
                         Conversations
                     </a>
+                    <!-- Silent Mode button -->
+                    <div class="relative self-center ml-1" id="allowall-menu-container">
+                        <button id="allowall-btn" onclick="toggleAllowAllMenu()"
+                            class="btn-plain p-1.5 rounded-md hover:bg-muted transition-colors relative"
+                            title="Silent Mode">
+                            <svg id="allowall-icon" class="h-5 w-5 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.955 11.955 0 0 1 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
+                            </svg>
+                        </button>
+                        <!-- Dropdown -->
+                        <div id="allowall-dropdown" class="hidden absolute right-0 mt-1 w-56 bg-card border border-border rounded-lg shadow-lg z-50 py-1 text-sm">
+                            <div id="allowall-active-info" class="hidden px-3 py-2 border-b border-border">
+                                <p id="allowall-active-label" class="text-xs font-medium"></p>
+                                <p id="allowall-active-expiry" class="text-xs text-muted-foreground mt-0.5"></p>
+                            </div>
+
+                            <p class="px-3 pt-2 pb-1 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Allow All Connections</p>
+                            <button onclick="enableSilentMode('allow','5m')"  class="w-full text-left px-3 py-1.5 hover:bg-muted transition-colors">For 5 minutes</button>
+                            <button onclick="enableSilentMode('allow','15m')" class="w-full text-left px-3 py-1.5 hover:bg-muted transition-colors">For 15 minutes</button>
+                            <button onclick="enableSilentMode('allow','30m')" class="w-full text-left px-3 py-1.5 hover:bg-muted transition-colors">For 30 minutes</button>
+                            <button onclick="enableSilentMode('allow','1h')"  class="w-full text-left px-3 py-1.5 hover:bg-muted transition-colors">For 1 hour</button>
+                            <button onclick="enableSilentMode('allow','2h')"  class="w-full text-left px-3 py-1.5 hover:bg-muted transition-colors">For 2 hours</button>
+                            <button onclick="enableSilentMode('allow','restart')" class="w-full text-left px-3 py-1.5 hover:bg-muted transition-colors">Until next restart</button>
+
+                            <div class="border-t border-border mt-1"></div>
+
+                            <p class="px-3 pt-2 pb-1 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Deny All Connections</p>
+                            <button onclick="enableSilentMode('deny','5m')"  class="w-full text-left px-3 py-1.5 hover:bg-muted transition-colors">For 5 minutes</button>
+                            <button onclick="enableSilentMode('deny','15m')" class="w-full text-left px-3 py-1.5 hover:bg-muted transition-colors">For 15 minutes</button>
+                            <button onclick="enableSilentMode('deny','30m')" class="w-full text-left px-3 py-1.5 hover:bg-muted transition-colors">For 30 minutes</button>
+                            <button onclick="enableSilentMode('deny','1h')"  class="w-full text-left px-3 py-1.5 hover:bg-muted transition-colors">For 1 hour</button>
+                            <button onclick="enableSilentMode('deny','restart')" class="w-full text-left px-3 py-1.5 hover:bg-muted transition-colors">Until next restart</button>
+
+                            <div class="border-t border-border mt-1 pt-1">
+                                <button id="allowall-stop-btn" onclick="disableAllowAll()" class="hidden w-full text-left px-3 py-1.5 text-destructive hover:bg-muted transition-colors font-medium">Resume Normal Mode</button>
+                            </div>
+                        </div>
+                    </div>
+
                     <a href="{{.Prefix}}/settings"
                         class="{{if contains .CurrentPath "/settings"}}text-foreground{{else}}text-muted-foreground hover:text-foreground{{end}} btn-plain ml-2 p-1.5 self-center rounded-md hover:bg-muted transition-colors"
                         title="Settings">
@@ -212,6 +251,22 @@
             </div>
         </div>
     </nav>
+
+    <!-- Silent Mode banner (hidden by default) -->
+    <div id="allowall-banner" class="hidden text-white">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2 flex items-center justify-between">
+            <div class="flex items-center gap-2 text-sm font-medium">
+                <svg class="h-4 w-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.955 11.955 0 0 1 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
+                </svg>
+                <span id="allowall-banner-text"></span>
+                <span id="allowall-banner-expiry" class="font-normal opacity-90"></span>
+            </div>
+            <button onclick="disableAllowAll()" class="text-white/80 hover:text-white text-sm font-semibold underline ml-4 flex-shrink-0">
+                Resume normal mode
+            </button>
+        </div>
+    </div>
 
     <!-- Main Content -->
     <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
@@ -312,6 +367,9 @@
                         if (msg.type && msg.type.indexOf('session.') === 0) {
                             window.dispatchEvent(new CustomEvent('proxy:session-event', { detail: msg }));
                         }
+                        if (msg.type === 'allowall.changed') {
+                            applyAllowAllState(msg.data);
+                        }
                     } catch (e) {}
                 };
 
@@ -326,6 +384,148 @@
             fetchPendingCount();
             connect();
         })();
+    </script>
+
+    <script>
+        // Silent Mode state
+        var silentModeExpiresAt = null;
+        var silentModeCountdownTimer = null;
+
+        function formatDuration(seconds) {
+            if (seconds <= 0) return '0s';
+            var h = Math.floor(seconds / 3600);
+            var m = Math.floor((seconds % 3600) / 60);
+            var s = seconds % 60;
+            if (h > 0) return h + 'h' + (m > 0 ? ' ' + m + 'm' : '');
+            if (m > 0) return m + 'm' + (s > 0 ? ' ' + s + 's' : '');
+            return s + 's';
+        }
+
+        function updateSilentModeCountdown() {
+            if (!silentModeExpiresAt) return;
+            var remaining = Math.max(0, Math.round((silentModeExpiresAt - Date.now()) / 1000));
+            var text = formatDuration(remaining);
+            var bannerExpiry = document.getElementById('allowall-banner-expiry');
+            var dropdownExpiry = document.getElementById('allowall-active-expiry');
+            if (bannerExpiry) bannerExpiry.textContent = '(' + text + ' remaining)';
+            if (dropdownExpiry) dropdownExpiry.textContent = 'Expires in ' + text;
+            if (remaining <= 0) {
+                clearInterval(silentModeCountdownTimer);
+                silentModeCountdownTimer = null;
+                applyAllowAllState({ active: false });
+            }
+        }
+
+        function applyAllowAllState(state) {
+            var banner     = document.getElementById('allowall-banner');
+            var icon       = document.getElementById('allowall-icon');
+            var activeInfo = document.getElementById('allowall-active-info');
+            var activeLabel = document.getElementById('allowall-active-label');
+            var activeExpiry = document.getElementById('allowall-active-expiry');
+            var stopBtn    = document.getElementById('allowall-stop-btn');
+            var bannerText = document.getElementById('allowall-banner-text');
+            var bannerExpiry = document.getElementById('allowall-banner-expiry');
+
+            if (state.active) {
+                var isAllow = state.mode === 'allow';
+                silentModeExpiresAt = state.expires_at ? new Date(state.expires_at).getTime() : null;
+
+                // Banner color
+                if (banner) {
+                    banner.classList.remove('hidden', 'bg-amber-500', 'dark:bg-amber-600', 'bg-red-600', 'dark:bg-red-700');
+                    if (isAllow) {
+                        banner.classList.add('bg-amber-500', 'dark:bg-amber-600');
+                    } else {
+                        banner.classList.add('bg-red-600', 'dark:bg-red-700');
+                    }
+                }
+
+                // Shield icon color
+                if (icon) {
+                    icon.classList.remove('text-green-500', 'text-amber-500', 'text-red-500');
+                    icon.classList.add(isAllow ? 'text-amber-500' : 'text-red-500');
+                }
+
+                // Dropdown active info
+                if (activeInfo) activeInfo.classList.remove('hidden');
+                if (activeLabel) {
+                    activeLabel.textContent = isAllow ? 'Allow All active' : 'Deny All active';
+                    activeLabel.className = 'text-xs font-medium ' + (isAllow ? 'text-amber-600 dark:text-amber-400' : 'text-red-600 dark:text-red-400');
+                }
+
+                // Banner text
+                if (bannerText) {
+                    bannerText.textContent = isAllow
+                        ? 'Silent Mode — all connections allowed without asking'
+                        : 'Silent Mode — all connections denied without asking';
+                }
+
+                // Expiry
+                if (silentModeExpiresAt) {
+                    updateSilentModeCountdown();
+                    if (!silentModeCountdownTimer) {
+                        silentModeCountdownTimer = setInterval(updateSilentModeCountdown, 1000);
+                    }
+                } else {
+                    if (bannerExpiry) bannerExpiry.textContent = '(until restart)';
+                    if (activeExpiry) activeExpiry.textContent = 'Active until restart';
+                }
+
+                if (stopBtn) stopBtn.classList.remove('hidden');
+
+            } else {
+                silentModeExpiresAt = null;
+                if (silentModeCountdownTimer) {
+                    clearInterval(silentModeCountdownTimer);
+                    silentModeCountdownTimer = null;
+                }
+                if (banner) banner.classList.add('hidden');
+                if (icon) {
+                    icon.classList.remove('text-amber-500', 'text-red-500');
+                    icon.classList.add('text-green-500');
+                }
+                if (activeInfo) activeInfo.classList.add('hidden');
+                if (stopBtn) stopBtn.classList.add('hidden');
+            }
+        }
+
+        function toggleAllowAllMenu() {
+            var dropdown = document.getElementById('allowall-dropdown');
+            if (dropdown) dropdown.classList.toggle('hidden');
+        }
+
+        function enableSilentMode(mode, duration) {
+            document.getElementById('allowall-dropdown').classList.add('hidden');
+            fetch('{{.Prefix}}/api/allowall', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ duration: duration, mode: mode })
+            }).then(function(r) { return r.json(); }).then(function(data) {
+                applyAllowAllState(data);
+            }).catch(function() { showToast('Failed to enable Silent Mode', 'error'); });
+        }
+
+        function disableAllowAll() {
+            document.getElementById('allowall-dropdown').classList.add('hidden');
+            fetch('{{.Prefix}}/api/allowall', { method: 'DELETE' })
+                .then(function(r) { return r.json(); }).then(function(data) {
+                    applyAllowAllState(data);
+                }).catch(function() { showToast('Failed to stop Silent Mode', 'error'); });
+        }
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', function(e) {
+            var container = document.getElementById('allowall-menu-container');
+            if (container && !container.contains(e.target)) {
+                var dropdown = document.getElementById('allowall-dropdown');
+                if (dropdown) dropdown.classList.add('hidden');
+            }
+        });
+
+        // Fetch initial silent mode state on page load
+        fetch('{{.Prefix}}/api/allowall').then(function(r) { return r.json(); }).then(function(data) {
+            applyAllowAllState(data);
+        }).catch(function() {});
     </script>
 
     {{block "scripts" .}}{{end}}

@@ -19,6 +19,9 @@ const (
 
 	// Maintenance events
 	EventMaintenanceProgress = "maintenance.progress"
+
+	// Allow-all mode events
+	EventAllowAllChanged = "allowall.changed"
 )
 
 // Event represents a broadcast event.

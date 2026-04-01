@@ -9,6 +9,13 @@ import (
 	greyproxy "github.com/greyhavenhq/greyproxy/internal/greyproxy"
 )
 
+// AllowAllController is the subset of AllowAllManager used by the API.
+type AllowAllController interface {
+	Status() greyproxy.AllowAllStatus
+	Enable(duration time.Duration, mode string)
+	Disable()
+}
+
 // Shared holds shared state passed to all handlers.
 type Shared struct {
 	DB              *greyproxy.DB
@@ -20,10 +27,11 @@ type Shared struct {
 	Settings        *greyproxy.SettingsManager
 	Assembler       *greyproxy.ConversationAssembler
 	CredentialStore *greyproxy.CredentialStore
+	AllowAll        AllowAllController
 	EncryptionKey   []byte
 	Version         string
 	Ports           map[string]int
-	DataHome        string        
+	DataHome        string
 	ReloadCertFn    func() error
 	CertMtimeFn     func() time.Time
 }
@@ -81,6 +89,10 @@ func NewRouter(s *Shared, pathPrefix string) (*gin.Engine, *gin.RouterGroup) {
 
 		api.GET("/settings", SettingsGetHandler(s))
 		api.PUT("/settings", SettingsUpdateHandler(s))
+
+		api.GET("/allowall", AllowAllStatusHandler(s))
+		api.POST("/allowall", AllowAllEnableHandler(s))
+		api.DELETE("/allowall", AllowAllDisableHandler(s))
 
 		api.GET("/transactions", TransactionsListHandler(s))
 		api.GET("/transactions/:id", TransactionsDetailHandler(s))
