@@ -292,13 +292,17 @@ func (a *ConversationAssembler) loadNewTransactions(sinceID int64) ([]transactio
 			id            int64
 			ts, container, url, method, host string
 			reqBody, respBody []byte
-			respCT        string
-			durationMs    int64
+			respCT        *string
+			durationMsPtr *int64
 		)
 		if err := rows.Scan(&id, &ts, &container, &url, &method, &host,
-			&reqBody, &respBody, &respCT, &durationMs); err != nil {
+			&reqBody, &respBody, &respCT, &durationMsPtr); err != nil {
 			slog.Warn("assembler: failed to scan transaction row", "error", err)
 			continue
+		}
+		var durationMs int64
+		if durationMsPtr != nil {
+			durationMs = *durationMsPtr
 		}
 		scanned++
 		if id > maxID {
@@ -321,7 +325,7 @@ func (a *ConversationAssembler) loadNewTransactions(sinceID int64) ([]transactio
 			Host:          host,
 			RequestBody:   reqBody,
 			ResponseBody:  respBody,
-			ResponseCT:    respCT,
+			ResponseCT:    derefString(respCT),
 			ContainerName: container,
 			DurationMs:    durationMs,
 		})
@@ -395,13 +399,17 @@ func (a *ConversationAssembler) loadTransactionsForSessions(sessionIDs map[strin
 			id            int64
 			ts, container, url, method, host string
 			reqBody, respBody []byte
-			respCT        string
-			durationMs    int64
+			respCT        *string
+			durationMsPtr *int64
 		)
 		if err := rows.Scan(&id, &ts, &container, &url, &method, &host,
-			&reqBody, &respBody, &respCT, &durationMs); err != nil {
+			&reqBody, &respBody, &respCT, &durationMsPtr); err != nil {
 			slog.Warn("assembler: failed to scan session transaction row", "error", err)
 			continue
+		}
+		var durationMs int64
+		if durationMsPtr != nil {
+			durationMs = *durationMsPtr
 		}
 
 		d := dissector.FindDissector(url, method, host)
@@ -416,7 +424,7 @@ func (a *ConversationAssembler) loadTransactionsForSessions(sessionIDs map[strin
 			Host:          host,
 			RequestBody:   reqBody,
 			ResponseBody:  respBody,
-			ResponseCT:    respCT,
+			ResponseCT:    derefString(respCT),
 			ContainerName: container,
 			DurationMs:    durationMs,
 		})
@@ -1397,4 +1405,11 @@ func minTime(a, b time.Time) time.Time {
 		return a
 	}
 	return b
+}
+
+func derefString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
