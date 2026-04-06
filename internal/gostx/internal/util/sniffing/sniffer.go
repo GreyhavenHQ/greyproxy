@@ -1411,7 +1411,7 @@ func (h *h2Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var reqBody *xhttp.Body
-	h2CaptureBody := (h.recorderOptions != nil && h.recorderOptions.HTTPBody) || h.onHTTPRoundTrip != nil
+	h2CaptureBody := (h.recorderOptions != nil && h.recorderOptions.HTTPBody) || h.onHTTPRoundTrip != nil || GlobalMitmRequestMiddlewareHook != nil || GlobalMitmResponseHook != nil
 	if h2CaptureBody {
 		if req.Body != nil {
 			bodySize := DefaultBodySize
@@ -1424,6 +1424,19 @@ func (h *h2Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 			reqBody = xhttp.NewBody(req.Body, bodySize)
 			req.Body = reqBody
+		}
+	}
+
+	// Middleware request hook (HTTP/2 path): can block or rewrite before upstream
+	if mwHook := GlobalMitmRequestMiddlewareHook; mwHook != nil {
+		containerName := string(xctx.ClientIDFromContext(r.Context()))
+		if containerName == "" {
+			containerName = ro.ClientID
+		}
+		if mwErr := mwHook(r.Context(), req, containerName); mwErr != nil {
+			w.WriteHeader(http.StatusForbidden)
+			w.Write([]byte("Request denied by middleware"))
+			return
 		}
 	}
 
@@ -1455,9 +1468,6 @@ func (h *h2Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		log.Trace(string(dump))
 	}
 
-	h.setHeader(w, resp.Header)
-	w.WriteHeader(resp.StatusCode)
-
 	var respBody *xhttp.Body
 	if h2CaptureBody {
 		bodySize := DefaultBodySize
@@ -1470,6 +1480,59 @@ func (h *h2Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		respBody = xhttp.NewBody(resp.Body, bodySize)
 		resp.Body = respBody
 	}
+
+	// Middleware response hook (HTTP/2 path): can block or rewrite before client sees it
+	if mwRespHook := GlobalMitmResponseHook; mwRespHook != nil {
+		containerName := string(xctx.ClientIDFromContext(r.Context()))
+		if containerName == "" {
+			containerName = ro.ClientID
+		}
+		mwInfo := HTTPRoundTripInfo{
+			Host:            r.Host,
+			Method:          r.Method,
+			URI:             r.RequestURI,
+			Proto:           r.Proto,
+			StatusCode:      resp.StatusCode,
+			RequestHeaders:  ro.HTTP.Request.Header,
+			ResponseHeaders: resp.Header,
+			ContainerName:   containerName,
+			DurationMs:      time.Since(ro.Time).Milliseconds(),
+		}
+		if reqBody != nil {
+			mwInfo.RequestBody = reqBody.Content()
+		}
+		if respBody != nil {
+			bodyBuf := new(bytes.Buffer)
+			bodyBuf.ReadFrom(resp.Body)
+			mwInfo.ResponseBody = respBody.Content()
+			resp.Body = io.NopCloser(bodyBuf)
+			resp.ContentLength = int64(bodyBuf.Len())
+		}
+		if decision := mwRespHook(r.Context(), mwInfo); decision != nil {
+			if decision.Block {
+				status := decision.StatusCode
+				if status == 0 {
+					status = http.StatusBadGateway
+				}
+				w.WriteHeader(status)
+				w.Write([]byte(decision.BlockBody))
+				return
+			}
+			if decision.NewStatusCode != 0 {
+				resp.StatusCode = decision.NewStatusCode
+			}
+			if decision.NewBody != nil {
+				resp.Body = io.NopCloser(bytes.NewReader(decision.NewBody))
+				resp.ContentLength = int64(len(decision.NewBody))
+			}
+			for k, v := range decision.NewHeaders {
+				resp.Header[k] = v
+			}
+		}
+	}
+
+	h.setHeader(w, resp.Header)
+	w.WriteHeader(resp.StatusCode)
 
 	io.Copy(w, resp.Body)
 
