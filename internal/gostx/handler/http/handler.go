@@ -619,6 +619,36 @@ func (h *httpHandler) proxyRoundTrip(ctx context.Context, rw io.ReadWriteCloser,
 	ctx = ictx.ContextWithRecorderObject(ctx, ro)
 	ctx = ictx.ContextWithLogger(ctx, log)
 
+	// Middleware request hook: can deny or rewrite before upstream
+	if hook := gostx.GlobalProxyRequestHook; hook != nil {
+		containerName := ro.ClientID
+		if decision := hook(ctx, req, containerName); decision != nil {
+			if decision.Deny {
+				status := decision.StatusCode
+				if status == 0 {
+					status = http.StatusForbidden
+				}
+				denyResp := &http.Response{
+					StatusCode: status,
+					Proto:      "HTTP/1.1",
+					ProtoMajor: 1, ProtoMinor: 1,
+					Header:  http.Header{"Content-Type": {"text/plain"}},
+					Body:    io.NopCloser(strings.NewReader(decision.DenyBody)),
+					Request: req,
+				}
+				denyResp.Write(rw)
+				return
+			}
+			if decision.NewBody != nil {
+				req.Body = io.NopCloser(bytes.NewReader(decision.NewBody))
+				req.ContentLength = int64(len(decision.NewBody))
+			}
+			for k, v := range decision.NewHeaders {
+				req.Header[k] = v
+			}
+		}
+	}
+
 	resp, err := h.transport.RoundTrip(req.WithContext(ctx))
 
 	if reqBody != nil {
@@ -639,6 +669,41 @@ func (h *httpHandler) proxyRoundTrip(ctx context.Context, rw io.ReadWriteCloser,
 	if log.IsLevelEnabled(logger.TraceLevel) {
 		dump, _ := httputil.DumpResponse(resp, false)
 		log.Trace(string(dump))
+	}
+
+	// Middleware response hook: can block or rewrite before writing to client
+	if hook := gostx.GlobalProxyResponseHook; hook != nil {
+		containerName := ro.ClientID
+		if decision := hook(ctx, req, resp, containerName); decision != nil {
+			if decision.Block {
+				status := decision.StatusCode
+				if status == 0 {
+					status = http.StatusBadGateway
+				}
+				resp.Body.Close()
+				resp = &http.Response{
+					StatusCode: status,
+					Proto:      "HTTP/1.1",
+					ProtoMajor: 1, ProtoMinor: 1,
+					Header:  http.Header{"Content-Type": {"text/plain"}},
+					Body:    io.NopCloser(strings.NewReader(decision.BlockBody)),
+					Request: req,
+				}
+				defer resp.Body.Close()
+			} else {
+				if decision.NewStatusCode != 0 {
+					resp.StatusCode = decision.NewStatusCode
+				}
+				if decision.NewBody != nil {
+					resp.Body.Close()
+					resp.Body = io.NopCloser(bytes.NewReader(decision.NewBody))
+					resp.ContentLength = int64(len(decision.NewBody))
+				}
+				for k, v := range decision.NewHeaders {
+					resp.Header[k] = v
+				}
+			}
+		}
 	}
 
 	// HTTP/1.0

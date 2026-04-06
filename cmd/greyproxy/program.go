@@ -5,7 +5,9 @@ import (
 	"compress/flate"
 	"compress/gzip"
 	"context"
+	cryptorand "crypto/rand"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -34,6 +36,7 @@ import (
 	"github.com/greyhavenhq/greyproxy/internal/gostx/registry"
 	greyproxy "github.com/greyhavenhq/greyproxy/internal/greyproxy"
 	greyproxy_api "github.com/greyhavenhq/greyproxy/internal/greyproxy/api"
+	"github.com/greyhavenhq/greyproxy/internal/greyproxy/middleware"
 	greyproxy_plugins "github.com/greyhavenhq/greyproxy/internal/greyproxy/plugins"
 	greyproxy_ui "github.com/greyhavenhq/greyproxy/internal/greyproxy/ui"
 	"github.com/kardianos/service"
@@ -49,6 +52,7 @@ type program struct {
 	cancel          context.CancelFunc
 	assemblerCancel context.CancelFunc
 	credStoreCancel context.CancelFunc
+	mwCancel        context.CancelFunc
 
 	certMtimeMu sync.Mutex
 	certMtime   time.Time // mtime of ca-cert.pem at last successful reload
@@ -313,6 +317,9 @@ func (p *program) Stop(s service.Service) error {
 	if p.srvProfiling != nil {
 		_ = p.srvProfiling.Close()
 		logger.Default().Debug("service @profiling shutdown")
+	}
+	if p.mwCancel != nil {
+		p.mwCancel()
 	}
 	if p.credStoreCancel != nil {
 		p.credStoreCancel()
@@ -669,6 +676,156 @@ func (p *program) buildGreyproxyService() error {
 		return nil
 	})
 
+	// Wire middleware WebSocket client if configured
+	mwURL := middlewareURLFlag
+	if mwURL == "" && gaCfg.Middleware != nil {
+		mwURL = gaCfg.Middleware.URL
+	}
+
+	if mwURL != "" {
+		mwCfg := middleware.Config{
+			URL:          mwURL,
+			TimeoutMs:    2000,
+			OnDisconnect: "allow",
+		}
+		if gaCfg.Middleware != nil {
+			if gaCfg.Middleware.TimeoutMs > 0 {
+				mwCfg.TimeoutMs = gaCfg.Middleware.TimeoutMs
+			}
+			if gaCfg.Middleware.OnDisconnect != "" {
+				mwCfg.OnDisconnect = gaCfg.Middleware.OnDisconnect
+			}
+			mwCfg.AuthHeader = gaCfg.Middleware.AuthHeader
+		}
+
+		mwClient := middleware.New(mwCfg)
+		mwCtx, mwCancel := context.WithCancel(context.Background())
+		p.mwCancel = mwCancel
+		go mwClient.Start(mwCtx)
+
+		// Block briefly for hello exchange so hooks are wired correctly
+		hookSpecs := mwClient.HookSpecs()
+
+		log.Infof("middleware connected: %s, hooks: %d, max_body_bytes: %d",
+			mwURL, len(hookSpecs), mwClient.MaxBodyBytes())
+
+		// Index hook specs by type for fast lookup
+		var reqHook, respHook *middleware.HookSpec
+		for i := range hookSpecs {
+			switch hookSpecs[i].Type {
+			case "http-request":
+				reqHook = &hookSpecs[i]
+			case "http-response":
+				respHook = &hookSpecs[i]
+			}
+		}
+
+		// Helper: truncate body per middleware-declared limit
+		truncateBody := func(body []byte) []byte {
+			max := mwClient.MaxBodyBytes()
+			if max > 0 && int64(len(body)) > max {
+				return nil // sent as null in JSON
+			}
+			return body
+		}
+
+		// Plain HTTP + MITM request hooks
+		if reqHook != nil {
+			rh := *reqHook // capture for closures
+			gostx.GlobalProxyRequestHook = func(ctx context.Context, req *http.Request, container string) *gostx.ProxyRequestDecision {
+				ct := req.Header.Get("Content-Type")
+				if !middleware.MatchesFilter(rh.Filters, req.Host, req.URL.Path, req.Method, ct, container, false) {
+					return nil
+				}
+				body, _ := io.ReadAll(req.Body)
+				req.Body = io.NopCloser(bytes.NewReader(body))
+				msg := middleware.RequestMsg{
+					Type: "http-request", ID: newUUID(),
+					Host: req.Host, Method: req.Method, URI: req.RequestURI,
+					Proto: req.Proto, Headers: req.Header.Clone(),
+					Body: truncateBody(body), Container: container, TLS: false,
+				}
+				d, _ := mwClient.Send(ctx, msg)
+				return mapRequestDecision(d)
+			}
+			// MITM request hook (Step 1.5)
+			gostx.SetGlobalMitmRequestMiddlewareHook(func(ctx context.Context, req *http.Request, container string) error {
+				ct := req.Header.Get("Content-Type")
+				if !middleware.MatchesFilter(rh.Filters, req.Host, req.URL.Path, req.Method, ct, container, true) {
+					return nil
+				}
+				body, _ := io.ReadAll(req.Body)
+				req.Body = io.NopCloser(bytes.NewReader(body))
+				msg := middleware.RequestMsg{
+					Type: "http-request", ID: newUUID(),
+					Host: req.Host, Method: req.Method, URI: req.RequestURI,
+					Proto: req.Proto, Headers: req.Header.Clone(),
+					Body: truncateBody(body), Container: container, TLS: true,
+				}
+				d, _ := mwClient.Send(ctx, msg)
+				switch d.Action {
+				case "deny":
+					return gostx.ErrRequestDenied
+				case "rewrite":
+					if d.Body != nil {
+						req.Body = io.NopCloser(bytes.NewReader(d.Body))
+						req.ContentLength = int64(len(d.Body))
+					}
+					for k, v := range d.Headers {
+						req.Header[k] = v
+					}
+				}
+				return nil
+			})
+		}
+
+		// Plain HTTP + MITM response hooks
+		if respHook != nil {
+			rh := *respHook // capture for closures
+			gostx.GlobalProxyResponseHook = func(ctx context.Context, req *http.Request, resp *http.Response, container string) *gostx.ProxyResponseDecision {
+				respCT := resp.Header.Get("Content-Type")
+				if !middleware.MatchesFilter(rh.Filters, req.Host, req.URL.Path, req.Method, respCT, container, false) {
+					return nil
+				}
+				reqBody := middleware.RequestBodyFromContext(ctx)
+				respBody, _ := io.ReadAll(resp.Body)
+				resp.Body = io.NopCloser(bytes.NewReader(respBody))
+				msg := middleware.ResponseMsg{
+					Type: "http-response", ID: newUUID(),
+					Host: req.Host, Method: req.Method, URI: req.RequestURI,
+					StatusCode:      resp.StatusCode,
+					RequestHeaders:  req.Header.Clone(),
+					RequestBody:     truncateBody(reqBody),
+					ResponseHeaders: resp.Header.Clone(),
+					ResponseBody:    truncateBody(respBody),
+					Container:       container,
+				}
+				d, _ := mwClient.Send(ctx, msg)
+				return mapResponseDecision(d)
+			}
+			// MITM response hook
+			gostx.SetGlobalMitmResponseHook(func(ctx context.Context, info gostx.MitmRoundTripInfo) *gostx.MitmResponseDecision {
+				respCT := info.ResponseHeaders.Get("Content-Type")
+				if !middleware.MatchesFilter(rh.Filters, info.Host, info.URI, info.Method, respCT, info.ContainerName, true) {
+					return nil
+				}
+				msg := middleware.ResponseMsg{
+					Type: "http-response", ID: newUUID(),
+					Host: info.Host, Method: info.Method, URI: info.URI,
+					StatusCode:      info.StatusCode,
+					RequestHeaders:  info.RequestHeaders,
+					RequestBody:     truncateBody(info.RequestBody),
+					ResponseHeaders: info.ResponseHeaders,
+					ResponseBody:    truncateBody(info.ResponseBody),
+					Container:       info.ContainerName,
+					DurationMs:      info.DurationMs,
+				}
+				d, _ := mwClient.Send(ctx, msg)
+				return mapMitmResponseDecision(d)
+			})
+		}
+	}
+
 	// Create the allow-all manager (in-memory, resets on restart).
 	allowAllManager := greyproxy.NewAllowAllManager(shared.Bus)
 	shared.AllowAll = allowAllManager
@@ -886,4 +1043,69 @@ func applyDockerEnvOverrides(cfg *greyproxy.Config) {
 	if v := os.Getenv("GREYPROXY_DOCKER_SOCKET"); v != "" {
 		cfg.Docker.Socket = v
 	}
+}
+
+func mapRequestDecision(d middleware.Decision) *gostx.ProxyRequestDecision {
+	switch d.Action {
+	case "deny":
+		return &gostx.ProxyRequestDecision{
+			Deny:       true,
+			StatusCode: d.StatusCode,
+			DenyBody:   string(d.Body),
+		}
+	case "rewrite":
+		return &gostx.ProxyRequestDecision{
+			NewHeaders: d.Headers,
+			NewBody:    d.Body,
+		}
+	default: // "allow" or empty
+		return nil
+	}
+}
+
+func mapResponseDecision(d middleware.Decision) *gostx.ProxyResponseDecision {
+	switch d.Action {
+	case "block":
+		return &gostx.ProxyResponseDecision{
+			Block:      true,
+			StatusCode: d.StatusCode,
+			BlockBody:  string(d.Body),
+		}
+	case "rewrite":
+		return &gostx.ProxyResponseDecision{
+			NewStatusCode: d.StatusCode,
+			NewHeaders:    d.Headers,
+			NewBody:       d.Body,
+		}
+	default: // "passthrough" or "allow" or empty
+		return nil
+	}
+}
+
+func mapMitmResponseDecision(d middleware.Decision) *gostx.MitmResponseDecision {
+	switch d.Action {
+	case "block":
+		return &gostx.MitmResponseDecision{
+			Block:      true,
+			StatusCode: d.StatusCode,
+			BlockBody:  string(d.Body),
+		}
+	case "rewrite":
+		return &gostx.MitmResponseDecision{
+			NewStatusCode: d.StatusCode,
+			NewHeaders:    d.Headers,
+			NewBody:       d.Body,
+		}
+	default:
+		return nil
+	}
+}
+
+func newUUID() string {
+	var buf [16]byte
+	_, _ = cryptorand.Read(buf[:])
+	buf[6] = (buf[6] & 0x0f) | 0x40 // version 4
+	buf[8] = (buf[8] & 0x3f) | 0x80 // variant 2
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+		buf[0:4], buf[4:6], buf[6:8], buf[8:10], buf[10:16])
 }

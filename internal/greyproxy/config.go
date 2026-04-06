@@ -13,11 +13,20 @@ type Config struct {
 	Resolver      string              `yaml:"resolver" json:"resolver"`
 	Notifications NotificationsConfig `yaml:"notifications" json:"notifications"`
 	Docker        DockerConfig        `yaml:"docker" json:"docker"`
+	Middleware    *MiddlewareConfig   `yaml:"middleware,omitempty" json:"middleware,omitempty"`
 }
 
 // NotificationsConfig controls OS desktop notifications for pending requests.
 type NotificationsConfig struct {
 	Enabled bool `yaml:"enabled" json:"enabled"`
+}
+
+// MiddlewareConfig holds configuration for the external middleware WebSocket service.
+type MiddlewareConfig struct {
+	URL          string `yaml:"url" json:"url"`
+	TimeoutMs    int    `yaml:"timeout_ms" json:"timeout_ms"`
+	OnDisconnect string `yaml:"on_disconnect" json:"on_disconnect"` // "allow"|"deny"
+	AuthHeader   string `yaml:"auth_header" json:"auth_header"`
 }
 
 // DockerConfig enables optional Docker socket integration for resolving container
