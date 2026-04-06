@@ -698,6 +698,8 @@ func (h *httpHandler) proxyRoundTrip(ctx context.Context, rw io.ReadWriteCloser,
 					resp.Body.Close()
 					resp.Body = io.NopCloser(bytes.NewReader(decision.NewBody))
 					resp.ContentLength = int64(len(decision.NewBody))
+					resp.Header.Del("Content-Encoding")
+					resp.Header.Del("Transfer-Encoding")
 				}
 				for k, v := range decision.NewHeaders {
 					resp.Header[k] = v

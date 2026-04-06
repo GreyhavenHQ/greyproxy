@@ -734,6 +734,9 @@ func (h *Sniffer) httpRoundTrip(ctx context.Context, rw, cc io.ReadWriteCloser, 
 			if decision.NewBody != nil {
 				resp.Body = io.NopCloser(bytes.NewReader(decision.NewBody))
 				resp.ContentLength = int64(len(decision.NewBody))
+				resp.Header.Del("Content-Encoding")
+				resp.Header.Del("Transfer-Encoding")
+				resp.Header.Set("Content-Length", fmt.Sprint(len(decision.NewBody)))
 			}
 			for k, v := range decision.NewHeaders {
 				resp.Header[k] = v
@@ -1524,6 +1527,9 @@ func (h *h2Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if decision.NewBody != nil {
 				resp.Body = io.NopCloser(bytes.NewReader(decision.NewBody))
 				resp.ContentLength = int64(len(decision.NewBody))
+				resp.Header.Del("Content-Encoding")
+				resp.Header.Del("Transfer-Encoding")
+				resp.Header.Set("Content-Length", fmt.Sprint(len(decision.NewBody)))
 			}
 			for k, v := range decision.NewHeaders {
 				resp.Header[k] = v
