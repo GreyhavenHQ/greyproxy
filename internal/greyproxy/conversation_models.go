@@ -23,6 +23,7 @@ type Conversation struct {
 	RequestIDsJSON       sql.NullString `json:"-"`
 	Incomplete           bool           `json:"-"`
 	IncompleteReason     sql.NullString `json:"-"`
+	ClientName           sql.NullString `json:"-"`
 	UpdatedAt            sql.NullString `json:"-"`
 
 	// Populated by queries, not stored directly
@@ -48,6 +49,7 @@ type ConversationJSON struct {
 	RequestIDs           any      `json:"request_ids,omitempty"`
 	Incomplete           bool     `json:"incomplete"`
 	IncompleteReason     *string  `json:"incomplete_reason,omitempty"`
+	ClientName           *string  `json:"client_name,omitempty"`
 	FirstPrompt          *string  `json:"first_prompt,omitempty"`
 	Turns                []TurnJSON `json:"turns,omitempty"`
 }
@@ -85,6 +87,9 @@ func (c *Conversation) ToJSON(includeTurns bool) ConversationJSON {
 	}
 	if c.IncompleteReason.Valid {
 		j.IncompleteReason = &c.IncompleteReason.String
+	}
+	if c.ClientName.Valid {
+		j.ClientName = &c.ClientName.String
 	}
 	if c.MetadataJSON.Valid {
 		var v any

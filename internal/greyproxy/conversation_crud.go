@@ -25,6 +25,7 @@ type ConversationUpsertInput struct {
 	RequestIDsJSON       *string
 	Incomplete           bool
 	IncompleteReason     *string
+	ClientName           string
 }
 
 // TurnInput holds data for inserting a turn.
@@ -50,8 +51,8 @@ func UpsertConversation(db *DB, input ConversationUpsertInput) error {
 		 (id, model, container_name, provider, started_at, ended_at, turn_count,
 		  system_prompt, system_prompt_summary, parent_conversation_id,
 		  last_turn_has_response, metadata_json, linked_subagents_json,
-		  request_ids_json, incomplete, incomplete_reason, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+		  request_ids_json, incomplete, incomplete_reason, client_name, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
 		input.ID, nullStr(input.Model), nullStr(input.ContainerName), nullStr(input.Provider),
 		nullStr(input.StartedAt), nullStr(input.EndedAt), input.TurnCount,
 		nullStrPtr(input.SystemPrompt), nullStrPtr(input.SystemPromptSummary),
@@ -60,6 +61,7 @@ func UpsertConversation(db *DB, input ConversationUpsertInput) error {
 		nullStrPtr(input.MetadataJSON), nullStrPtr(input.LinkedSubagentsJSON),
 		nullStrPtr(input.RequestIDsJSON),
 		boolToInt(input.Incomplete), nullStrPtr(input.IncompleteReason),
+		nullStr(input.ClientName),
 	)
 	return err
 }
@@ -188,13 +190,13 @@ func GetConversation(db *DB, id string) (*Conversation, error) {
 		SELECT id, model, container_name, provider, started_at, ended_at,
 		       turn_count, system_prompt, system_prompt_summary, parent_conversation_id,
 		       last_turn_has_response, metadata_json, linked_subagents_json,
-		       request_ids_json, incomplete, incomplete_reason, updated_at
+		       request_ids_json, incomplete, incomplete_reason, client_name, updated_at
 		FROM conversations WHERE id = ?`, id,
 	).Scan(
 		&c.ID, &c.Model, &c.ContainerName, &c.Provider, &c.StartedAt, &c.EndedAt,
 		&c.TurnCount, &c.SystemPrompt, &c.SystemPromptSummary, &c.ParentConversationID,
 		&c.LastTurnHasResponse, &c.MetadataJSON, &c.LinkedSubagentsJSON,
-		&c.RequestIDsJSON, &c.Incomplete, &c.IncompleteReason, &c.UpdatedAt,
+		&c.RequestIDsJSON, &c.Incomplete, &c.IncompleteReason, &c.ClientName, &c.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil

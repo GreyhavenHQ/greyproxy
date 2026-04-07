@@ -176,6 +176,24 @@ var migrations = []string{
 		hostname TEXT NOT NULL,
 		updated_at DATETIME NOT NULL DEFAULT (datetime('now'))
 	);`,
+
+	// Migration 11: Endpoint rules for dynamic URL pattern -> decoder mapping,
+	// and client_name on conversations for detected client identity
+	`CREATE TABLE IF NOT EXISTS endpoint_rules (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		host_pattern TEXT NOT NULL,
+		path_pattern TEXT NOT NULL,
+		method TEXT NOT NULL DEFAULT 'POST',
+		decoder_name TEXT NOT NULL,
+		priority INTEGER NOT NULL DEFAULT 0,
+		enabled INTEGER NOT NULL DEFAULT 1,
+		user_defined INTEGER NOT NULL DEFAULT 0
+	);
+	CREATE INDEX IF NOT EXISTS idx_endpoint_rules_decoder ON endpoint_rules(decoder_name);
+	CREATE UNIQUE INDEX IF NOT EXISTS idx_endpoint_rules_unique
+	    ON endpoint_rules(host_pattern, path_pattern, method, user_defined);
+
+	ALTER TABLE conversations ADD COLUMN client_name TEXT;`,
 }
 
 func runMigrations(db *sql.DB) error {

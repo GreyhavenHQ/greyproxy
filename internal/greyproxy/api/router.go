@@ -102,6 +102,12 @@ func NewRouter(s *Shared, pathPrefix string) (*gin.Engine, *gin.RouterGroup) {
 		api.GET("/conversations/:id", ConversationsDetailHandler(s))
 		api.GET("/conversations/:id/subagents", ConversationsSubagentsHandler(s))
 
+		// Endpoint rules (URL pattern -> decoder mapping)
+		api.GET("/endpoint-rules", EndpointRulesListHandler(s))
+		api.POST("/endpoint-rules", EndpointRulesCreateHandler(s))
+		api.PUT("/endpoint-rules/:id", EndpointRulesUpdateHandler(s))
+		api.DELETE("/endpoint-rules/:id", EndpointRulesDeleteHandler(s))
+
 		// Certificate management
 		api.GET("/cert/status", CertStatusHandler(s))
 		api.POST("/cert/generate", CertGenerateHandler(s))

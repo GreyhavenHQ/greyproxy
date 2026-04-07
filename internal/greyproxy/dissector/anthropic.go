@@ -29,8 +29,6 @@ package dissector
 
 import (
 	"encoding/json"
-	"fmt"
-	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -58,7 +56,7 @@ func (d *AnthropicDissector) CanHandle(url, method, host string) bool {
 }
 
 func (d *AnthropicDissector) Extract(input ExtractionInput) (*ExtractionResult, error) {
-	result := &ExtractionResult{}
+	result := &ExtractionResult{Provider: d.Name()}
 
 	// Parse request body
 	var body struct {
@@ -156,7 +154,7 @@ func parseContentBlock(bmap map[string]any) ContentBlock {
 		if input, ok := bmap["input"]; ok {
 			// Extract summary from full input before truncation
 			if inputMap, ok := input.(map[string]any); ok {
-				cb.ToolSummary = extractToolSummary(cb.Name, inputMap)
+				cb.ToolSummary = ExtractToolSummary(cb.Name, inputMap)
 			}
 			if b, err := json.Marshal(input); err == nil {
 				s := string(b)
@@ -268,94 +266,52 @@ func SystemPromptLength(blocks []SystemBlock) int {
 }
 
 // ClassifyThread determines if a request represents a main conversation,
-// subagent, MCP utility, or plain utility based on system prompt size and tool count.
-func ClassifyThread(systemBlocks []SystemBlock, toolCount int) string {
+// subagent, MCP utility, or plain utility based on provider, system prompt
+// size, and tool list.
+func ClassifyThread(provider string, systemBlocks []SystemBlock, tools []Tool) string {
 	sysLen := SystemPromptLength(systemBlocks)
-	if sysLen > 10000 {
-		return "main"
+	toolCount := len(tools)
+
+	switch provider {
+	case "openai":
+		return classifyOpenAIThread(sysLen, tools)
+	default:
+		// Anthropic / generic heuristic
+		if sysLen > 10000 {
+			return "main"
+		}
+		if sysLen > 1000 {
+			return "subagent"
+		}
+		if sysLen > 100 && toolCount <= 2 {
+			return "mcp"
+		}
+		return "utility"
 	}
-	if sysLen > 1000 {
+}
+
+// classifyOpenAIThread uses OpenCode-specific heuristics.
+// OpenCode main conversations and subagents share the same system prompt length
+// (~7700 chars), so we distinguish by tool list: the main conversation has
+// management tools (task, question, todowrite) that subagents lack.
+func classifyOpenAIThread(sysLen int, tools []Tool) string {
+	toolCount := len(tools)
+
+	if toolCount == 0 {
+		return "utility"
+	}
+
+	// Check for management tools that only the main conversation has
+	for _, t := range tools {
+		switch t.Name {
+		case "task", "question", "todowrite":
+			return "main"
+		}
+	}
+
+	if toolCount > 0 {
 		return "subagent"
-	}
-	if sysLen > 100 && toolCount <= 2 {
-		return "mcp"
 	}
 	return "utility"
 }
 
-// extractToolSummary produces a short human-readable summary from the full
-// tool input map, before any truncation. This ensures the summary is always
-// valid even when input_preview gets cut mid-JSON.
-func extractToolSummary(toolName string, input map[string]any) string {
-	str := func(key string) string {
-		if v, ok := input[key].(string); ok {
-			return v
-		}
-		return ""
-	}
-	switch toolName {
-	case "Read", "Edit", "Write":
-		if fp := str("file_path"); fp != "" {
-			dir := filepath.Base(filepath.Dir(fp))
-			base := filepath.Base(fp)
-			if dir != "." && dir != "/" {
-				return dir + "/" + base
-			}
-			return base
-		}
-	case "Bash":
-		if desc := str("description"); desc != "" {
-			return desc
-		}
-		if cmd := str("command"); cmd != "" {
-			if len(cmd) > 80 {
-				return cmd[:80] + "..."
-			}
-			return cmd
-		}
-	case "Grep":
-		summary := ""
-		if pat := str("pattern"); pat != "" {
-			summary = "pattern: " + pat
-			if p := str("path"); p != "" {
-				summary += " in " + filepath.Base(p)
-			}
-			return summary
-		}
-	case "Glob":
-		if pat := str("pattern"); pat != "" {
-			return pat
-		}
-	case "Agent":
-		if desc := str("description"); desc != "" {
-			return desc
-		}
-	case "ToolSearch":
-		if q := str("query"); q != "" {
-			return q
-		}
-	case "WebFetch":
-		if u := str("url"); u != "" {
-			return u
-		}
-	case "WebSearch":
-		if q := str("query"); q != "" {
-			return q
-		}
-	}
-	// Fallback: list top-level keys with short values
-	var parts []string
-	for k, v := range input {
-		if s, ok := v.(string); ok && len(s) <= 40 {
-			parts = append(parts, fmt.Sprintf("%s=%s", k, s))
-		}
-	}
-	if len(parts) > 0 {
-		s := strings.Join(parts, " ")
-		if len(s) > 80 {
-			return s[:80] + "..."
-		}
-		return s
-	}
-	return ""
-}

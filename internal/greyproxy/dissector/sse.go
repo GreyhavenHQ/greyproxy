@@ -12,10 +12,11 @@ type SSEEvent struct {
 }
 
 // ParseSSE parses Server-Sent Events from a response body string.
-// SSE format is standard across providers (Anthropic, OpenAI, etc.).
+// Handles both event-prefixed format (Anthropic, OpenAI Responses) and
+// data-only format (OpenAI Chat Completions, Google AI).
 func ParseSSE(body string) []SSEEvent {
 	body = strings.TrimSpace(body)
-	if !strings.HasPrefix(body, "event:") {
+	if !strings.HasPrefix(body, "event:") && !strings.HasPrefix(body, "data:") {
 		return nil
 	}
 
@@ -37,7 +38,11 @@ func ParseSSE(body string) []SSEEvent {
 			current.Event = line[7:]
 			hasData = true
 		} else if strings.HasPrefix(line, "data: ") {
-			current.Data = line[6:]
+			data := line[6:]
+			if data == "[DONE]" {
+				continue
+			}
+			current.Data = data
 			hasData = true
 		}
 	}
@@ -45,6 +50,28 @@ func ParseSSE(body string) []SSEEvent {
 		events = append(events, current)
 	}
 	return events
+}
+
+// ParseSSEDataOnly parses SSE streams that use only "data:" lines without
+// "event:" prefixes. Used by OpenAI Chat Completions and Google AI.
+// Returns the raw data strings (excluding [DONE] sentinel).
+func ParseSSEDataOnly(body string) []string {
+	body = strings.TrimSpace(body)
+	var results []string
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := line[6:]
+		if data == "[DONE]" {
+			break
+		}
+		if data != "" {
+			results = append(results, data)
+		}
+	}
+	return results
 }
 
 // ExtractResponseFromSSE builds an SSEResponseData from SSE events.

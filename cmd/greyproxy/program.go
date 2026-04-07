@@ -638,7 +638,8 @@ func (p *program) buildGreyproxyService() error {
 	// Start conversation assembler (dissects LLM API transactions into conversations)
 	assemblerCtx, assemblerCancel := context.WithCancel(context.Background())
 	p.assemblerCancel = assemblerCancel
-	assembler := greyproxy.NewConversationAssembler(shared.DB, shared.Bus)
+	endpointRegistry := greyproxy.NewEndpointRegistry(shared.DB)
+	assembler := greyproxy.NewConversationAssembler(shared.DB, shared.Bus, endpointRegistry)
 	shared.Assembler = assembler
 	go assembler.Start(assemblerCtx)
 

@@ -2,6 +2,7 @@ package dissector
 
 import (
 	"encoding/json"
+	"net/http"
 	"os"
 	"testing"
 )
@@ -12,7 +13,10 @@ type testFixture struct {
 	URL                 string `json:"url"`
 	Method              string `json:"method"`
 	DestinationHost     string `json:"destination_host"`
+	RequestHeaders      string `json:"request_headers"`
 	RequestBody         string `json:"request_body"`
+	RequestBodySize     int    `json:"request_body_size"`
+	RequestContentType  string `json:"request_content_type"`
 	ResponseBody        string `json:"response_body"`
 	ResponseContentType string `json:"response_content_type"`
 	DurationMs          int64  `json:"duration_ms"`
@@ -29,6 +33,41 @@ func loadFixture(t *testing.T, id string) testFixture {
 		t.Fatalf("parse fixture %s: %v", id, err)
 	}
 	return f
+}
+
+// fixtureHeaders parses the request_headers JSON string from a fixture
+// into an http.Header. Returns nil if empty or unparseable.
+func fixtureHeaders(f testFixture) http.Header {
+	if f.RequestHeaders == "" {
+		return nil
+	}
+	var multi map[string][]string
+	if json.Unmarshal([]byte(f.RequestHeaders), &multi) == nil && len(multi) > 0 {
+		return http.Header(multi)
+	}
+	return nil
+}
+
+// extractFromFixture is a convenience helper that runs a dissector on a fixture.
+func extractFromFixture(t *testing.T, d Dissector, f testFixture) *ExtractionResult {
+	t.Helper()
+	result, err := d.Extract(ExtractionInput{
+		TransactionID:  int64(f.ID),
+		URL:            f.URL,
+		Method:         f.Method,
+		Host:           f.DestinationHost,
+		RequestBody:    []byte(f.RequestBody),
+		ResponseBody:   []byte(f.ResponseBody),
+		RequestCT:      f.RequestContentType,
+		ResponseCT:     f.ResponseContentType,
+		RequestHeaders: fixtureHeaders(f),
+		ContainerName:  f.ContainerName,
+		DurationMs:     f.DurationMs,
+	})
+	if err != nil {
+		t.Fatalf("Extract error: %v", err)
+	}
+	return result
 }
 
 func TestAnthropicCanHandle(t *testing.T) {
@@ -161,7 +200,7 @@ func TestAnthropicExtractSystemPrompt(t *testing.T) {
 		t.Errorf("expected system prompt >10K chars (main conversation), got %d", sysLen)
 	}
 
-	threadType := ClassifyThread(result.SystemBlocks, len(result.Tools))
+	threadType := ClassifyThread("anthropic", result.SystemBlocks, result.Tools)
 	if threadType != "main" {
 		t.Errorf("expected thread type 'main', got %q", threadType)
 	}

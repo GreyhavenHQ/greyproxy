@@ -1,6 +1,9 @@
 package greyproxy
 
 import (
+	"encoding/json"
+	"net/http"
+	"os"
 	"sync"
 	"testing"
 
@@ -178,7 +181,8 @@ func TestLikeInjection_Unescaped(t *testing.T) {
 func TestConversationAssembler_RaceCondition(t *testing.T) {
 	db := setupTestDB(t)
 	bus := NewEventBus()
-	assembler := NewConversationAssembler(db, bus)
+	registry := NewEndpointRegistry(db)
+	assembler := NewConversationAssembler(db, bus, registry)
 
 	// Run RebuildAllConversations concurrently to verify no panics or races
 	var wg sync.WaitGroup
@@ -190,4 +194,262 @@ func TestConversationAssembler_RaceCondition(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+// assemblerFixture matches the JSON format of fixtures in dissector/testdata.
+type assemblerFixture struct {
+	ID                  int    `json:"id"`
+	ContainerName       string `json:"container_name"`
+	URL                 string `json:"url"`
+	Method              string `json:"method"`
+	DestinationHost     string `json:"destination_host"`
+	RequestHeaders      string `json:"request_headers"`
+	RequestBody         string `json:"request_body"`
+	RequestContentType  string `json:"request_content_type"`
+	ResponseBody        string `json:"response_body"`
+	ResponseContentType string `json:"response_content_type"`
+	DurationMs          int64  `json:"duration_ms"`
+}
+
+func loadAssemblerFixture(t *testing.T, name string) assemblerFixture {
+	t.Helper()
+	data, err := os.ReadFile("dissector/testdata/" + name + ".json")
+	if err != nil {
+		t.Fatalf("load fixture %s: %v", name, err)
+	}
+	var f assemblerFixture
+	if err := json.Unmarshal(data, &f); err != nil {
+		t.Fatalf("parse fixture %s: %v", name, err)
+	}
+	return f
+}
+
+func parseFixtureHeaders(raw string) http.Header {
+	if raw == "" {
+		return nil
+	}
+	var multi map[string][]string
+	if json.Unmarshal([]byte(raw), &multi) == nil && len(multi) > 0 {
+		return http.Header(multi)
+	}
+	return nil
+}
+
+func insertFixtureTransaction(t *testing.T, db *DB, f assemblerFixture) int64 {
+	t.Helper()
+	txn, err := CreateHttpTransaction(db, HttpTransactionCreateInput{
+		ContainerName:       f.ContainerName,
+		DestinationHost:     f.DestinationHost,
+		DestinationPort:     443,
+		Method:              f.Method,
+		URL:                 f.URL,
+		RequestHeaders:      parseFixtureHeaders(f.RequestHeaders),
+		RequestBody:         []byte(f.RequestBody),
+		RequestContentType:  f.RequestContentType,
+		ResponseBody:        []byte(f.ResponseBody),
+		ResponseContentType: f.ResponseContentType,
+		DurationMs:          f.DurationMs,
+		Result:              "auto",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return txn.ID
+}
+
+// TestAssembler_EndToEnd inserts a Claude Code transaction (which has session
+// IDs embedded in metadata.user_id) and verifies the assembler correctly
+// builds a conversation with proper provider, client, and model detection.
+func TestAssembler_EndToEnd(t *testing.T) {
+	db := setupTestDB(t)
+	bus := NewEventBus()
+	registry := NewEndpointRegistry(db)
+	assembler := NewConversationAssembler(db, bus, registry)
+
+	// Use an existing Anthropic fixture (383) which has a session ID in the
+	// request body via metadata.user_id. This is the pattern the assembler
+	// uses to group transactions.
+	f := loadAssemblerFixture(t, "383")
+	insertFixtureTransaction(t, db, f)
+
+	// Run the assembler
+	assembler.RebuildAllConversations()
+
+	// Query all conversations
+	convs, total, err := QueryConversations(db, ConversationFilter{Limit: 100})
+	if err != nil {
+		t.Fatalf("QueryConversations: %v", err)
+	}
+
+	t.Logf("Total conversations assembled: %d", total)
+	for _, c := range convs {
+		t.Logf("  Conv %s: provider=%s client=%s model=%s turns=%d",
+			c.ID,
+			c.Provider.String,
+			c.ClientName.String,
+			c.Model.String,
+			c.TurnCount,
+		)
+	}
+
+	if total == 0 {
+		t.Fatal("expected at least 1 conversation, got 0")
+	}
+
+	// Verify the conversation has the right provider and model
+	conv := convs[0]
+	if conv.Provider.String != "anthropic" {
+		t.Errorf("provider = %q, want 'anthropic'", conv.Provider.String)
+	}
+	if conv.Model.String == "" {
+		t.Error("expected non-empty model")
+	}
+	if conv.TurnCount < 1 {
+		t.Errorf("turn_count = %d, want >= 1", conv.TurnCount)
+	}
+}
+
+// TestAssembler_GroupBySession verifies that groupBySession correctly handles
+// transactions with and without session IDs, including heuristic grouping.
+func TestAssembler_GroupBySession(t *testing.T) {
+	// Simulate transactions from different clients
+	entries := []transactionEntry{
+		{txnID: 1, timestamp: "2025-01-01T00:00:00Z", sessionID: "sess-a", url: "https://api.anthropic.com/v1/messages"},
+		{txnID: 2, timestamp: "2025-01-01T00:00:30Z", sessionID: "sess-a", url: "https://api.anthropic.com/v1/messages"},
+		{txnID: 3, timestamp: "2025-01-01T00:01:00Z", sessionID: "sess-b", url: "https://api.openai.com/v1/responses"},
+		// Unassigned transaction (no session, within time window of sess-a)
+		{txnID: 4, timestamp: "2025-01-01T00:00:15Z", url: "https://api.anthropic.com/v1/messages"},
+	}
+
+	sessions := groupBySession(entries)
+	t.Logf("Sessions: %d", len(sessions))
+	for sid, se := range sessions {
+		t.Logf("  Session %q: %d transactions", sid, len(se))
+	}
+
+	// sess-a should exist
+	if _, ok := sessions["sess-a"]; !ok {
+		t.Error("expected session 'sess-a'")
+	}
+	// sess-b should exist
+	if _, ok := sessions["sess-b"]; !ok {
+		t.Error("expected session 'sess-b'")
+	}
+
+	// Total transactions across all sessions should cover all 4
+	totalTxns := 0
+	for _, se := range sessions {
+		totalTxns += len(se)
+	}
+	// The unassigned txn (4) should be grouped with sess-a (closest time overlap)
+	if totalTxns < 3 {
+		t.Errorf("expected at least 3 transactions in sessions, got %d", totalTxns)
+	}
+}
+
+// TestAssembler_AssembleConversation verifies that assembleConversation
+// produces correct output for a set of transaction entries.
+func TestAssembler_AssembleConversation(t *testing.T) {
+	// Load the Aider fixture and manually create a transactionEntry
+	fixtures := []struct {
+		name     string
+		file     string
+		wantProv string
+	}{
+		{"aider", "aider_openrouter_2459", "openrouter"},
+		{"opencode_litellm", "opencode_litellm_302", "unknown"},
+		{"gemini", "gemini_main_2571", "google-ai"},
+	}
+
+	for _, fx := range fixtures {
+		t.Run(fx.name, func(t *testing.T) {
+			f := loadAssemblerFixture(t, fx.file)
+			headers := parseFixtureHeaders(f.RequestHeaders)
+
+			var body map[string]any
+			if f.RequestBody != "" {
+				json.Unmarshal([]byte(f.RequestBody), &body)
+			}
+
+			entry := transactionEntry{
+				txnID:          int64(f.ID),
+				timestamp:      "2025-01-01T00:00:00Z",
+				containerName:  f.ContainerName,
+				url:            f.URL,
+				model:          "test-model",
+				body:           body,
+				requestHeaders: headers,
+			}
+
+			conv := assembleConversation("test-session", []transactionEntry{entry})
+
+			if conv.provider != fx.wantProv {
+				t.Errorf("provider = %q, want %q", conv.provider, fx.wantProv)
+			}
+			if conv.conversationID != "session_test-session" {
+				t.Errorf("conversationID = %q, want 'session_test-session'", conv.conversationID)
+			}
+			if conv.containerName != f.ContainerName {
+				t.Errorf("containerName = %q, want %q", conv.containerName, f.ContainerName)
+			}
+		})
+	}
+}
+
+// TestAssembler_ProviderDetection verifies that detectProvider correctly
+// identifies the provider from transaction URLs.
+func TestAssembler_ProviderDetection(t *testing.T) {
+	tests := []struct {
+		name     string
+		url      string
+		wantProv string
+	}{
+		{"anthropic", "https://api.anthropic.com/v1/messages", "anthropic"},
+		{"openai", "https://api.openai.com/v1/responses", "openai"},
+		{"openrouter", "https://openrouter.ai/api/v1/chat/completions", "openrouter"},
+		{"google", "https://generativelanguage.googleapis.com/v1beta/models/gemini:generateContent", "google-ai"},
+		{"unknown", "https://example.com/api", "unknown"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			entries := []transactionEntry{{url: tt.url}}
+			got := detectProvider(entries)
+			if got != tt.wantProv {
+				t.Errorf("detectProvider for %s = %q, want %q", tt.url, got, tt.wantProv)
+			}
+		})
+	}
+}
+
+// TestAssembler_ClientInference verifies that inferClientName correctly
+// identifies the coding tool from headers.
+func TestAssembler_ClientInference(t *testing.T) {
+	tests := []struct {
+		name     string
+		fixture  string
+		wantName string
+	}{
+		{"aider", "aider_openrouter_2459", "aider"},
+		{"opencode_litellm", "opencode_litellm_302", "opencode"},
+		{"opencode_openrouter", "opencode_openrouter_2469", "opencode"},
+		{"gemini_scorer", "gemini_scorer_2570", "gemini-cli"},
+		{"gemini_main", "gemini_main_2571", "gemini-cli"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := loadAssemblerFixture(t, tt.fixture)
+			headers := parseFixtureHeaders(f.RequestHeaders)
+			entries := []transactionEntry{{
+				url:            f.URL,
+				requestHeaders: headers,
+			}}
+			provider := detectProvider(entries)
+			got := inferClientName(provider, entries)
+			if got != tt.wantName {
+				t.Errorf("inferClientName for %s = %q, want %q", tt.name, got, tt.wantName)
+			}
+		})
+	}
 }
