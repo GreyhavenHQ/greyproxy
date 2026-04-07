@@ -20,7 +20,7 @@
             hx-sync="this:replace"
             hx-indicator="#activity-filter-spinner"
             class="space-y-3">
-            <div class="grid grid-cols-1 md:grid-cols-6 gap-3">
+            <div class="grid grid-cols-1 md:grid-cols-7 gap-3">
                 <div>
                     <label for="a-kind" class="block text-xs font-medium text-foreground mb-1">Type</label>
                     <select id="a-kind" name="kind"
@@ -51,6 +51,18 @@
                     <label for="a-destination" class="block text-xs font-medium text-foreground mb-1">Destination</label>
                     <input type="text" id="a-destination" name="destination" placeholder="e.g., api.anthropic.com"
                         class="mt-1 block w-full px-2 py-1.5 text-xs border border-border rounded-md shadow-sm focus:outline-none focus:ring-ring focus:border-ring bg-background">
+                </div>
+                <div>
+                    <label for="a-intent" class="block text-xs font-medium text-foreground mb-1">Intent</label>
+                    <select id="a-intent" name="intent"
+                        class="mt-1 block w-full pl-2 pr-8 py-1.5 text-xs border-border focus:outline-none focus:ring-ring focus:border-ring rounded-md bg-background">
+                        <option value="">All</option>
+                        <option value="file-read">file-read</option>
+                        <option value="code-gen">code-gen</option>
+                        <option value="web-fetch">web-fetch</option>
+                        <option value="exec">exec</option>
+                        <option value="subagent">subagent</option>
+                    </select>
                 </div>
                 <div>
                     <label for="a-limit" class="block text-xs font-medium text-foreground mb-1">Limit</label>
@@ -131,6 +143,7 @@
         document.getElementById('a-container').value = '';
         document.getElementById('a-result').value = '';
         document.getElementById('a-destination').value = '';
+        document.getElementById('a-intent').value = '';
         document.getElementById('a-limit').value = '50';
         updateActivityResetButton();
         loadActivityTable();
@@ -141,6 +154,7 @@
                          document.getElementById('a-container').value !== '' ||
                          document.getElementById('a-result').value !== '' ||
                          document.getElementById('a-destination').value !== '' ||
+                         document.getElementById('a-intent').value !== '' ||
                          document.getElementById('a-limit').value !== '50';
         document.getElementById('a-reset-filters-btn').classList.toggle('hidden', !hasFilters);
     }

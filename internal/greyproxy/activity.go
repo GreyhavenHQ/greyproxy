@@ -27,6 +27,7 @@ type ActivityItem struct {
 	DurationMs             sql.NullInt64
 	ConversationID         sql.NullString
 	SubstitutedCredentials sql.NullString
+	Intent                 sql.NullString
 }
 
 // ActivityFilter specifies filters for the unified activity query.
@@ -35,6 +36,7 @@ type ActivityFilter struct {
 	Destination string
 	Kind        string // "", "connection", "http"
 	Result      string // "", "allowed", "blocked"
+	Intent      string // "", "file-read", "code-gen", "web-fetch", "exec", "subagent"
 	FromDate    *time.Time
 	ToDate      *time.Time
 	Limit  int
@@ -54,6 +56,10 @@ func QueryActivity(db *DB, f ActivityFilter) ([]ActivityItem, int, error) {
 	if f.Result != "" && f.Kind == "" {
 		includeHTTP = false
 	}
+	// When filtering by intent, only HTTP transactions can have intent
+	if f.Intent != "" {
+		includeConn = false
+	}
 
 	var unionParts []string
 	var queryArgs []any
@@ -67,7 +73,7 @@ func QueryActivity(db *DB, f ActivityFilter) ([]ActivityItem, int, error) {
 			l.resolved_hostname, l.rule_id, r.destination_pattern as rule_summary,
 			l.mitm_skip_reason,
 			NULL as method, NULL as url, NULL as status_code, NULL as duration_ms,
-			NULL as conversation_id, NULL as substituted_credentials
+			NULL as conversation_id, NULL as substituted_credentials, NULL as intent
 			FROM request_logs l LEFT JOIN rules r ON l.rule_id = r.id
 			WHERE %s`, where)
 		unionParts = append(unionParts, q)
@@ -105,7 +111,7 @@ func QueryActivity(db *DB, f ActivityFilter) ([]ActivityItem, int, error) {
 			))) as rule_summary,
 			NULL as mitm_skip_reason,
 			t.method, t.url, t.status_code, t.duration_ms, t.conversation_id,
-			t.substituted_credentials
+			t.substituted_credentials, t.intent
 			FROM http_transactions t
 			WHERE %s`, where)
 		unionParts = append(unionParts, q)
@@ -147,7 +153,7 @@ func QueryActivity(db *DB, f ActivityFilter) ([]ActivityItem, int, error) {
 			&item.ResolvedHostname, &item.RuleID, &item.RuleSummary,
 			&item.MitmSkipReason,
 			&item.Method, &item.URL, &item.StatusCode, &item.DurationMs,
-			&item.ConversationID, &item.SubstitutedCredentials,
+			&item.ConversationID, &item.SubstitutedCredentials, &item.Intent,
 		)
 		if err != nil {
 			return nil, 0, fmt.Errorf("scan activity: %w", err)
@@ -206,6 +212,10 @@ func buildActivityHTTPWhere(f ActivityFilter) (string, []any) {
 		args = append(args, "%"+f.Destination+"%", "%"+f.Destination+"%")
 	}
 	// Result filter doesn't apply to HTTP transactions (they use "auto" result)
+	if f.Intent != "" {
+		conds = append(conds, "t.intent = ?")
+		args = append(args, f.Intent)
+	}
 	if f.FromDate != nil {
 		conds = append(conds, "t.timestamp >= ?")
 		args = append(args, f.FromDate.UTC().Format("2006-01-02 15:04:05"))

@@ -249,6 +249,51 @@ func UpdateTransactionConversationID(db *DB, txnID int64, convID string) error {
 	return err
 }
 
+// UpdateTransactionIntent sets the intent label on an http_transaction.
+func UpdateTransactionIntent(db *DB, txnID int64, intent string) error {
+	if intent == "" {
+		return nil
+	}
+	db.Lock()
+	defer db.Unlock()
+	_, err := db.WriteDB().Exec(
+		"UPDATE http_transactions SET intent = ? WHERE id = ?",
+		intent, txnID,
+	)
+	return err
+}
+
+// ClassifyIntentFromSteps derives a short intent label from the tool calls in a
+// turn's steps. Returns "" if no recognisable tool calls are present.
+func ClassifyIntentFromSteps(steps []map[string]any) string {
+	seen := map[string]bool{}
+	for _, step := range steps {
+		calls, ok := step["tool_calls"].([]map[string]any)
+		if !ok {
+			continue
+		}
+		for _, tc := range calls {
+			if tool, ok := tc["tool"].(string); ok {
+				seen[tool] = true
+			}
+		}
+	}
+	switch {
+	case seen["WebFetch"] || seen["WebSearch"]:
+		return "web-fetch"
+	case seen["Bash"]:
+		return "exec"
+	case seen["Write"] || seen["Edit"] || seen["NotebookEdit"]:
+		return "code-gen"
+	case seen["Read"] || seen["Glob"] || seen["Grep"]:
+		return "file-read"
+	case seen["Agent"]:
+		return "subagent"
+	default:
+		return ""
+	}
+}
+
 // GetTransactionsByConversationID returns transaction IDs linked to a conversation.
 func GetTransactionsByConversationID(db *DB, convID string) ([]int64, error) {
 	rows, err := db.ReadDB().Query(

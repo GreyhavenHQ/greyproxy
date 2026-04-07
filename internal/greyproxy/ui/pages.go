@@ -112,6 +112,22 @@ var funcMap = template.FuncMap{
 		}
 		return s[:n]
 	},
+	"intentBadgeClass": func(intent string) string {
+		switch intent {
+		case "web-fetch":
+			return "bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300 border border-blue-200 dark:border-blue-800 cursor-pointer hover:opacity-80"
+		case "exec":
+			return "bg-orange-100 dark:bg-orange-900/30 text-orange-800 dark:text-orange-300 border border-orange-200 dark:border-orange-800 cursor-pointer hover:opacity-80"
+		case "code-gen":
+			return "bg-purple-100 dark:bg-purple-900/30 text-purple-800 dark:text-purple-300 border border-purple-200 dark:border-purple-800 cursor-pointer hover:opacity-80"
+		case "file-read":
+			return "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 cursor-pointer hover:opacity-80"
+		case "subagent":
+			return "bg-cyan-100 dark:bg-cyan-900/30 text-cyan-800 dark:text-cyan-300 border border-cyan-200 dark:border-cyan-800 cursor-pointer hover:opacity-80"
+		default:
+			return "bg-muted text-muted-foreground border border-border cursor-pointer hover:opacity-80"
+		}
+	},
 	"mitmSkipReasonLabel": func(reason string) string {
 		switch reason {
 		case "no_cert":
@@ -913,12 +929,14 @@ func RegisterHTMXRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 		destination := c.Query("destination")
 		kind := c.Query("kind")
 		result := c.Query("result")
+		intent := c.Query("intent")
 
 		f := greyproxy.ActivityFilter{
 			Container:   container,
 			Destination: destination,
 			Kind:        kind,
 			Result:      result,
+			Intent:      intent,
 			Limit:       limit,
 			Offset:      offset,
 		}
@@ -938,7 +956,7 @@ func RegisterHTMXRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 			pages = int(math.Ceil(float64(total) / float64(limit)))
 		}
 
-		hasFilters := container != "" || destination != "" || kind != "" || result != ""
+		hasFilters := container != "" || destination != "" || kind != "" || result != "" || intent != ""
 
 		c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
 		activityTableTmpl.Execute(c.Writer, gin.H{

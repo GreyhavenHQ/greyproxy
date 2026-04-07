@@ -176,6 +176,10 @@ var migrations = []string{
 		hostname TEXT NOT NULL,
 		updated_at DATETIME NOT NULL DEFAULT (datetime('now'))
 	);`,
+
+	// Migration 11: Add intent column to http_transactions for agent behaviour classification
+	`ALTER TABLE http_transactions ADD COLUMN intent TEXT DEFAULT NULL;
+	CREATE INDEX IF NOT EXISTS idx_http_transactions_intent ON http_transactions(intent);`,
 }
 
 func runMigrations(db *sql.DB) error {

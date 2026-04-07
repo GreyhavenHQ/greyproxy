@@ -1160,9 +1160,19 @@ func (a *ConversationAssembler) upsertConversation(conv assembledConversation) e
 		return fmt.Errorf("upsert turns: %w", err)
 	}
 
-	// Update http_transactions with conversation_id link
+	// Build a per-transaction intent map from turn steps
+	txnIntents := map[int64]string{}
+	for _, t := range conv.turns {
+		intent := ClassifyIntentFromSteps(t.steps)
+		for _, txnID := range t.requestIDs {
+			txnIntents[txnID] = intent
+		}
+	}
+
+	// Update http_transactions with conversation_id and intent
 	for _, txnID := range conv.requestIDs {
 		UpdateTransactionConversationID(a.db, txnID, conv.conversationID)
+		UpdateTransactionIntent(a.db, txnID, txnIntents[txnID])
 	}
 
 	return nil
