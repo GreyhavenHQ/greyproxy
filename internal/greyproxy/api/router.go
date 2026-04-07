@@ -123,6 +123,9 @@ func NewRouter(s *Shared, pathPrefix string) (*gin.Engine, *gin.RouterGroup) {
 		api.GET("/credentials", CredentialsListHandler(s))
 		api.POST("/credentials", CredentialsCreateHandler(s))
 		api.DELETE("/credentials/:id", CredentialsDeleteHandler(s))
+
+		// PII filtering
+		api.GET("/pii/stats", PIIStatsHandler(s))
 	}
 
 	// WebSocket

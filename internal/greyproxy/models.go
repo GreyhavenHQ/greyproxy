@@ -206,6 +206,8 @@ type HttpTransaction struct {
 	Result                 string         `json:"result"`
 	SubstitutedCredentials sql.NullString `json:"-"`
 	SessionID              sql.NullString `json:"-"`
+	PIIRedacted            sql.NullString `json:"-"`
+	PIIRedactCount         int            `json:"-"`
 }
 
 type HttpTransactionJSON struct {
@@ -230,6 +232,8 @@ type HttpTransactionJSON struct {
 	Result                 string   `json:"result"`
 	SubstitutedCredentials []string `json:"substituted_credentials,omitempty"`
 	SessionID              *string  `json:"session_id,omitempty"`
+	PIIRedacted            []string `json:"pii_redacted,omitempty"`
+	PIIRedactCount         int      `json:"pii_redact_count,omitempty"`
 }
 
 func (t *HttpTransaction) ToJSON(includeBody bool) HttpTransactionJSON {
@@ -295,6 +299,10 @@ func (t *HttpTransaction) ToJSON(includeBody bool) HttpTransactionJSON {
 	if t.SessionID.Valid {
 		j.SessionID = &t.SessionID.String
 	}
+	if t.PIIRedacted.Valid {
+		json.Unmarshal([]byte(t.PIIRedacted.String), &j.PIIRedacted)
+	}
+	j.PIIRedactCount = t.PIIRedactCount
 	return j
 }
 
@@ -317,19 +325,23 @@ type HttpTransactionCreateInput struct {
 	Result                 string
 	SubstitutedCredentials []string
 	SessionID              string
+	PIIRedacted            []string
+	PIIRedactCount         int
 }
 
 // DashboardStats holds aggregated data for the dashboard.
 type DashboardStats struct {
-	Period        Period                   `json:"period"`
-	TotalRequests int                      `json:"total_requests"`
-	Allowed       int                      `json:"allowed"`
-	Blocked       int                      `json:"blocked"`
-	AllowRate     float64                  `json:"allow_rate"`
-	ByContainer   []ContainerStatsItem     `json:"by_container"`
-	TopBlocked    []BlockedDestinationItem `json:"top_blocked"`
-	Timeline      []TimelinePoint          `json:"timeline"`
-	Recent        []RequestLogJSON         `json:"recent"`
+	Period           Period                   `json:"period"`
+	TotalRequests    int                      `json:"total_requests"`
+	Allowed          int                      `json:"allowed"`
+	Blocked          int                      `json:"blocked"`
+	AllowRate        float64                  `json:"allow_rate"`
+	ByContainer      []ContainerStatsItem     `json:"by_container"`
+	TopBlocked       []BlockedDestinationItem `json:"top_blocked"`
+	Timeline         []TimelinePoint          `json:"timeline"`
+	Recent           []RequestLogJSON         `json:"recent"`
+	PIIRedactedTotal int                      `json:"pii_redacted_total"`
+	PIIByType        map[string]int           `json:"pii_by_type"`
 }
 
 type Period struct {

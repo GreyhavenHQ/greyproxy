@@ -23,7 +23,12 @@ type MitmRoundTripInfo struct {
 	DurationMs             int64
 	SubstitutedCredentials []string
 	SessionID              string
+	PIIRedacted            []string
+	PIIRedactCount         int
 }
+
+// PIIFilterResult re-exports the internal sniffing PII filter result type.
+type PIIFilterResult = sniffing.PIIFilterResult
 
 // CredentialSubstitutionInfo holds the result of a credential substitution pass.
 // Re-exports the internal sniffing type.
@@ -88,6 +93,8 @@ func SetGlobalMitmHook(hook func(info MitmRoundTripInfo)) {
 			DurationMs:             info.DurationMs,
 			SubstitutedCredentials: info.SubstitutedCredentials,
 			SessionID:              info.SessionID,
+			PIIRedacted:            info.PIIRedacted,
+			PIIRedactCount:         info.PIIRedactCount,
 		})
 	}
 }
@@ -99,6 +106,13 @@ func SetGlobalMitmHook(hook func(info MitmRoundTripInfo)) {
 // Access is synchronized via atomic.Pointer (safe to call while requests are in flight).
 func SetGlobalCredentialSubstituter(hook func(req *http.Request) *CredentialSubstitutionInfo) {
 	sniffing.SetGlobalCredentialSubstituter(hook)
+}
+
+// SetGlobalPIIFilter sets a global callback that scans and redacts PII from HTTP request bodies
+// before they are forwarded upstream. The hook receives the raw body and content type, and returns
+// a result with the redacted body, or an error to block the request entirely.
+func SetGlobalPIIFilter(hook func(body []byte, contentType string) (*PIIFilterResult, error)) {
+	sniffing.SetGlobalPIIFilter(hook)
 }
 
 // SetGlobalMitmHoldHook sets a global callback that fires BEFORE forwarding a MITM-intercepted

@@ -13,7 +13,11 @@ type UserSettings struct {
 	Theme                *string  `json:"theme,omitempty"`
 	NotificationsEnabled *bool    `json:"notificationsEnabled,omitempty"`
 	MitmEnabled          *bool    `json:"mitmEnabled,omitempty"`
-	RedactedHeaders      []string `json:"redactedHeaders,omitempty"`
+	RedactedHeaders      []string         `json:"redactedHeaders,omitempty"`
+	PIIEnabled           *bool            `json:"piiEnabled,omitempty"`
+	PIIAction            *string          `json:"piiAction,omitempty"`
+	PIITypes             map[string]*bool `json:"piiTypes,omitempty"`
+	PIIAllowlist         []string         `json:"piiAllowlist,omitempty"`
 }
 
 // ResolvedSettings is the fully resolved settings with defaults applied.
@@ -21,7 +25,11 @@ type ResolvedSettings struct {
 	Theme                string   `json:"theme"`
 	NotificationsEnabled bool     `json:"notificationsEnabled"`
 	MitmEnabled          bool     `json:"mitmEnabled"`
-	RedactedHeaders      []string `json:"redactedHeaders"`
+	RedactedHeaders      []string        `json:"redactedHeaders"`
+	PIIEnabled           bool            `json:"piiEnabled"`
+	PIIAction            string          `json:"piiAction"`
+	PIITypes             map[string]bool `json:"piiTypes"`
+	PIIAllowlist         []string        `json:"piiAllowlist"`
 }
 
 // SettingsManager handles loading and saving user settings, merging
@@ -36,6 +44,7 @@ type SettingsManager struct {
 
 	onNotificationsChanged func(bool)
 	onMitmChanged          func(bool)
+	onPIIChanged           func(ResolvedSettings)
 
 	redactor *HeaderRedactor
 }
@@ -58,6 +67,13 @@ func (m *SettingsManager) OnNotificationsChanged(fn func(bool)) {
 // OnMitmChanged sets a callback invoked when the MITM enabled state changes.
 func (m *SettingsManager) OnMitmChanged(fn func(bool)) {
 	m.onMitmChanged = fn
+}
+
+// OnPIIChanged sets a callback invoked when PII settings change.
+func (m *SettingsManager) OnPIIChanged(fn func(ResolvedSettings)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onPIIChanged = fn
 }
 
 // Load reads user settings from disk. If the file doesn't exist,
@@ -111,6 +127,33 @@ func (m *SettingsManager) resolve() ResolvedSettings {
 	if m.user.RedactedHeaders != nil {
 		s.RedactedHeaders = append(DefaultRedactedHeaders, m.user.RedactedHeaders...)
 	}
+
+	s.PIIAction = "redact"
+	s.PIITypes = map[string]bool{
+		"email":       true,
+		"phone":       true,
+		"ssn":         true,
+		"credit_card": true,
+		"ip_address":  true,
+	}
+
+	if m.user.PIIEnabled != nil {
+		s.PIIEnabled = *m.user.PIIEnabled
+	}
+	if m.user.PIIAction != nil {
+		s.PIIAction = *m.user.PIIAction
+	}
+	if m.user.PIITypes != nil {
+		for k, v := range m.user.PIITypes {
+			if v != nil {
+				s.PIITypes[k] = *v
+			}
+		}
+	}
+	if m.user.PIIAllowlist != nil {
+		s.PIIAllowlist = m.user.PIIAllowlist
+	}
+
 	return s
 }
 
@@ -151,6 +194,26 @@ func (m *SettingsManager) Update(patch UserSettings) (ResolvedSettings, error) {
 		m.rebuildRedactor()
 	}
 
+	oldResolved := m.resolve()
+
+	if patch.PIIEnabled != nil {
+		m.user.PIIEnabled = patch.PIIEnabled
+	}
+	if patch.PIIAction != nil {
+		m.user.PIIAction = patch.PIIAction
+	}
+	if patch.PIITypes != nil {
+		if m.user.PIITypes == nil {
+			m.user.PIITypes = make(map[string]*bool)
+		}
+		for k, v := range patch.PIITypes {
+			m.user.PIITypes[k] = v
+		}
+	}
+	if patch.PIIAllowlist != nil {
+		m.user.PIIAllowlist = patch.PIIAllowlist
+	}
+
 	if err := m.save(); err != nil {
 		return ResolvedSettings{}, err
 	}
@@ -164,11 +227,18 @@ func (m *SettingsManager) Update(patch UserSettings) (ResolvedSettings, error) {
 		m.onMitmChanged(resolved.MitmEnabled)
 	}
 
+	piiChanged := (oldResolved.PIIEnabled != resolved.PIIEnabled ||
+		oldResolved.PIIAction != resolved.PIIAction)
+	if piiChanged && m.onPIIChanged != nil {
+		go m.onPIIChanged(resolved)
+	}
+
 	return resolved, nil
 }
 
 func (m *SettingsManager) save() error {
-	if m.user.Theme == nil && m.user.NotificationsEnabled == nil && m.user.MitmEnabled == nil && m.user.RedactedHeaders == nil {
+	if m.user.Theme == nil && m.user.NotificationsEnabled == nil && m.user.MitmEnabled == nil && m.user.RedactedHeaders == nil &&
+		m.user.PIIEnabled == nil && m.user.PIIAction == nil && m.user.PIITypes == nil && m.user.PIIAllowlist == nil {
 		return nil
 	}
 

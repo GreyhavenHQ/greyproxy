@@ -176,6 +176,10 @@ var migrations = []string{
 		hostname TEXT NOT NULL,
 		updated_at DATETIME NOT NULL DEFAULT (datetime('now'))
 	);`,
+
+	// Migration 11: PII redaction tracking
+	`ALTER TABLE http_transactions ADD COLUMN pii_redacted TEXT DEFAULT NULL;
+	ALTER TABLE http_transactions ADD COLUMN pii_redact_count INTEGER DEFAULT 0;`,
 }
 
 func runMigrations(db *sql.DB) error {

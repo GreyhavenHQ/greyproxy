@@ -12,6 +12,14 @@ type settingsResponse struct {
 	Notifications   notificationSettingsResp `json:"notifications"`
 	Mitm            mitmSettingsResp         `json:"mitm"`
 	RedactedHeaders []string                 `json:"redactedHeaders"`
+	PII             piiSettingsResp          `json:"pii"`
+}
+
+type piiSettingsResp struct {
+	Enabled   bool            `json:"enabled"`
+	Action    string          `json:"action"`
+	Types     map[string]bool `json:"types"`
+	Allowlist []string        `json:"allowlist"`
 }
 
 type mitmSettingsResp struct {
@@ -60,6 +68,12 @@ func buildSettingsResponse(s *Shared) settingsResponse {
 			SupportsActions: info.SupportsActions,
 		},
 		Mitm: mitm,
+		PII: piiSettingsResp{
+			Enabled:   resolved.PIIEnabled,
+			Action:    resolved.PIIAction,
+			Types:     resolved.PIITypes,
+			Allowlist: resolved.PIIAllowlist,
+		},
 	}
 }
 
@@ -80,6 +94,12 @@ func SettingsUpdateHandler(s *Shared) gin.HandlerFunc {
 				Enabled *bool `json:"enabled"`
 			} `json:"mitm"`
 			RedactedHeaders []string `json:"redactedHeaders"`
+			PII             *struct {
+				Enabled   *bool            `json:"enabled"`
+				Action    *string          `json:"action"`
+				Types     map[string]*bool `json:"types"`
+				Allowlist []string         `json:"allowlist"`
+			} `json:"pii"`
 		}
 		if err := c.ShouldBindJSON(&body); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -103,6 +123,25 @@ func SettingsUpdateHandler(s *Shared) gin.HandlerFunc {
 		}
 		if body.RedactedHeaders != nil {
 			patch.RedactedHeaders = body.RedactedHeaders
+		}
+		if body.PII != nil {
+			if body.PII.Enabled != nil {
+				patch.PIIEnabled = body.PII.Enabled
+			}
+			if body.PII.Action != nil {
+				a := *body.PII.Action
+				if a != "redact" && a != "block" {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "pii action must be redact or block"})
+					return
+				}
+				patch.PIIAction = &a
+			}
+			if body.PII.Types != nil {
+				patch.PIITypes = body.PII.Types
+			}
+			if body.PII.Allowlist != nil {
+				patch.PIIAllowlist = body.PII.Allowlist
+			}
 		}
 
 		if _, err := s.Settings.Update(patch); err != nil {

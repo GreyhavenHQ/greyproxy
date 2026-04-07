@@ -1,6 +1,6 @@
 {{$stats := .Stats}}
 <!-- Summary Cards -->
-<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
     <div class="bg-card rounded-lg border border-border shadow-sm p-6">
         <div class="text-sm font-medium text-muted-foreground">Total Requests</div>
         <div class="text-3xl font-bold text-foreground mt-2">{{formatNumber $stats.TotalRequests}}</div>
@@ -16,6 +16,10 @@
     <div class="bg-card rounded-lg border border-border shadow-sm p-6">
         <div class="text-sm font-medium text-muted-foreground">Allow Rate</div>
         <div class="text-3xl font-bold text-foreground mt-2">{{formatFloat $stats.AllowRate}}%</div>
+    </div>
+    <div class="bg-card rounded-lg border border-border shadow-sm p-6">
+        <div class="text-sm font-medium text-muted-foreground">PII Redacted</div>
+        <div class="text-3xl font-bold text-amber-500 mt-2">{{formatNumber .PIIRedactedTotal}}</div>
     </div>
 </div>
 

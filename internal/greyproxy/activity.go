@@ -27,6 +27,8 @@ type ActivityItem struct {
 	DurationMs             sql.NullInt64
 	ConversationID         sql.NullString
 	SubstitutedCredentials sql.NullString
+	PIIRedacted            sql.NullString
+	PIIRedactCount         int
 }
 
 // ActivityFilter specifies filters for the unified activity query.
@@ -67,7 +69,8 @@ func QueryActivity(db *DB, f ActivityFilter) ([]ActivityItem, int, error) {
 			l.resolved_hostname, l.rule_id, r.destination_pattern as rule_summary,
 			l.mitm_skip_reason,
 			NULL as method, NULL as url, NULL as status_code, NULL as duration_ms,
-			NULL as conversation_id, NULL as substituted_credentials
+			NULL as conversation_id, NULL as substituted_credentials,
+			NULL as pii_redacted, 0 as pii_redact_count
 			FROM request_logs l LEFT JOIN rules r ON l.rule_id = r.id
 			WHERE %s`, where)
 		unionParts = append(unionParts, q)
@@ -105,7 +108,8 @@ func QueryActivity(db *DB, f ActivityFilter) ([]ActivityItem, int, error) {
 			))) as rule_summary,
 			NULL as mitm_skip_reason,
 			t.method, t.url, t.status_code, t.duration_ms, t.conversation_id,
-			t.substituted_credentials
+			t.substituted_credentials,
+			t.pii_redacted, t.pii_redact_count
 			FROM http_transactions t
 			WHERE %s`, where)
 		unionParts = append(unionParts, q)
@@ -148,6 +152,7 @@ func QueryActivity(db *DB, f ActivityFilter) ([]ActivityItem, int, error) {
 			&item.MitmSkipReason,
 			&item.Method, &item.URL, &item.StatusCode, &item.DurationMs,
 			&item.ConversationID, &item.SubstitutedCredentials,
+			&item.PIIRedacted, &item.PIIRedactCount,
 		)
 		if err != nil {
 			return nil, 0, fmt.Errorf("scan activity: %w", err)

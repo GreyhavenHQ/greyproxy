@@ -22,6 +22,9 @@ const (
 
 	// Allow-all mode events
 	EventAllowAllChanged = "allowall.changed"
+
+	// PII events
+	EventPIIRedacted = "pii.redacted"
 )
 
 // Event represents a broadcast event.

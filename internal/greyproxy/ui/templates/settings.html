@@ -18,6 +18,10 @@
             class="settings-tab flex-1 px-4 py-2 text-sm font-medium transition-colors border-l border-border text-muted-foreground hover:bg-muted">
             Credentials
         </button>
+        <button type="button" onclick="switchTab('pii')" data-tab="pii"
+            class="settings-tab flex-1 px-4 py-2 text-sm font-medium transition-colors border-l border-border text-muted-foreground hover:bg-muted">
+            PII Filter
+        </button>
     </div>
 
     <!-- ==================== General Tab ==================== -->
@@ -309,6 +313,92 @@
 
     </div><!-- end tab-credentials -->
 
+    <!-- ==================== PII Filter Tab ==================== -->
+    <div id="tab-pii" class="hidden">
+
+    <!-- Info block -->
+    <div class="flex gap-3 p-4 mb-6 rounded-lg border border-amber-200 dark:border-amber-800/50 bg-amber-50/50 dark:bg-amber-950/20">
+        <svg class="h-5 w-5 text-amber-500 dark:text-amber-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 0 0 1.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.451 10.451 0 0 1 12 4.5c4.756 0 8.773 3.162 10.065 7.498a10.522 10.522 0 0 1-4.293 5.774M6.228 6.228 3 3m3.228 3.228 3.65 3.65m7.894 7.894L21 21m-3.228-3.228-3.65-3.65m0 0a3 3 0 1 0-4.243-4.243m4.242 4.242L9.88 9.88" />
+        </svg>
+        <p class="text-sm text-amber-900 dark:text-amber-200">PII filtering automatically detects and redacts personally identifiable information (emails, phone numbers, SSNs, credit cards, IP addresses) from HTTP request bodies before they leave your machine. Agents keep working with placeholder tokens like [PII_EMAIL_1].</p>
+    </div>
+
+    <!-- Enable/Disable -->
+    <div class="bg-card border border-border rounded-lg p-6 mb-6">
+        <h2 class="text-lg font-semibold mb-4">PII Filter</h2>
+        <div class="flex items-center justify-between mb-6">
+            <div>
+                <p class="font-medium">Enable PII Filtering</p>
+                <p class="text-sm text-muted-foreground">Scan outgoing HTTP request bodies for PII and redact or block</p>
+            </div>
+            <button id="pii-toggle-btn" type="button" onclick="togglePIISetting()"
+                class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-background cursor-pointer bg-muted"
+                role="switch" aria-checked="false">
+                <span id="pii-toggle-dot"
+                    class="inline-block h-4 w-4 transform rounded-full bg-white transition-transform translate-x-1"></span>
+            </button>
+        </div>
+
+        <!-- Action mode -->
+        <div class="mb-6">
+            <p class="font-medium mb-2">Action</p>
+            <div class="flex gap-4">
+                <label class="flex items-center gap-2 cursor-pointer">
+                    <input type="radio" name="pii-action" value="redact" checked class="text-primary" onchange="updatePIIAction('redact')">
+                    <span class="text-sm">Redact</span>
+                    <span class="text-xs text-muted-foreground">Replace PII with placeholders</span>
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer">
+                    <input type="radio" name="pii-action" value="block" class="text-primary" onchange="updatePIIAction('block')">
+                    <span class="text-sm">Block</span>
+                    <span class="text-xs text-muted-foreground">Block the entire request</span>
+                </label>
+            </div>
+        </div>
+
+        <!-- PII Types -->
+        <div class="mb-6">
+            <p class="font-medium mb-2">Detection Types</p>
+            <div class="grid grid-cols-2 gap-2">
+                <label class="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" id="pii-type-email" checked onchange="updatePIITypes()" class="rounded text-primary">
+                    <span class="text-sm">Email addresses</span>
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" id="pii-type-phone" checked onchange="updatePIITypes()" class="rounded text-primary">
+                    <span class="text-sm">Phone numbers</span>
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" id="pii-type-ssn" checked onchange="updatePIITypes()" class="rounded text-primary">
+                    <span class="text-sm">Social Security Numbers</span>
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" id="pii-type-credit_card" checked onchange="updatePIITypes()" class="rounded text-primary">
+                    <span class="text-sm">Credit card numbers</span>
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" id="pii-type-ip_address" checked onchange="updatePIITypes()" class="rounded text-primary">
+                    <span class="text-sm">IP addresses</span>
+                </label>
+            </div>
+        </div>
+
+        <!-- Allowlist -->
+        <div>
+            <p class="font-medium mb-2">Allowlist</p>
+            <p class="text-sm text-muted-foreground mb-2">Values that should not be redacted (e.g. your company email domain)</p>
+            <div class="flex gap-2 mb-2">
+                <input id="pii-allowlist-input" type="text" placeholder="e.g. admin@example.com"
+                    class="flex-1 px-3 py-1.5 text-sm bg-background border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary">
+                <button onclick="addPIIAllowlistEntry()" class="px-4 py-1.5 text-sm font-medium text-primary-foreground bg-primary rounded-md hover:bg-primary/90">Add</button>
+            </div>
+            <div id="pii-allowlist-items" class="space-y-1"></div>
+        </div>
+    </div>
+
+    </div><!-- end tab-pii -->
+
 </div>
 {{end}}
 
@@ -331,7 +421,7 @@
                 btn.classList.add('text-muted-foreground', 'hover:bg-muted');
             }
         });
-        ['general', 'mitm', 'credentials'].forEach(function(t) {
+        ['general', 'mitm', 'credentials', 'pii'].forEach(function(t) {
             var panel = document.getElementById('tab-' + t);
             if (t === tab) {
                 panel.classList.remove('hidden');
@@ -344,7 +434,7 @@
 
     // Restore tab from URL hash
     var hash = window.location.hash.replace('#', '');
-    if (['general', 'mitm', 'credentials'].indexOf(hash) !== -1) {
+    if (['general', 'mitm', 'credentials', 'pii'].indexOf(hash) !== -1) {
         switchTab(hash);
     }
 
@@ -965,6 +1055,7 @@
             updateNotifToggle(data.notifications.enabled, data.notifications.available);
             updateNotifStatus(data.notifications);
             updateMitmToggle(data.mitm.enabled);
+            if (data.pii) updatePIIUI(data.pii);
         })
         .catch(function() {});
 
@@ -974,6 +1065,111 @@
             applyTheme('system');
         }
     });
+
+    // --- PII Filter ---
+    var piiEnabled = false;
+    var piiAction = 'redact';
+    var piiTypes = { email: true, phone: true, ssn: true, credit_card: true, ip_address: true };
+    var piiAllowlist = [];
+
+    function updatePIIToggle(enabled) {
+        piiEnabled = enabled;
+        var btn = document.getElementById('pii-toggle-btn');
+        var dot = document.getElementById('pii-toggle-dot');
+        if (!btn) return;
+        btn.setAttribute('aria-checked', String(enabled));
+        if (enabled) {
+            btn.classList.add('bg-primary');
+            btn.classList.remove('bg-muted');
+            dot.classList.add('translate-x-5');
+            dot.classList.remove('translate-x-1');
+        } else {
+            btn.classList.remove('bg-primary');
+            btn.classList.add('bg-muted');
+            dot.classList.remove('translate-x-5');
+            dot.classList.add('translate-x-1');
+        }
+    }
+
+    function updatePIIUI(data) {
+        updatePIIToggle(data.enabled);
+        piiAction = data.action || 'redact';
+        piiTypes = data.types || { email: true, phone: true, ssn: true, credit_card: true, ip_address: true };
+        piiAllowlist = data.allowlist || [];
+
+        document.querySelectorAll('input[name="pii-action"]').forEach(function(r) {
+            r.checked = r.value === piiAction;
+        });
+        ['email', 'phone', 'ssn', 'credit_card', 'ip_address'].forEach(function(t) {
+            var cb = document.getElementById('pii-type-' + t);
+            if (cb) cb.checked = piiTypes[t] !== false;
+        });
+        renderPIIAllowlist();
+    }
+
+    function renderPIIAllowlist() {
+        var el = document.getElementById('pii-allowlist-items');
+        if (!el) return;
+        if (!piiAllowlist || piiAllowlist.length === 0) {
+            el.innerHTML = '<p class="text-xs text-muted-foreground">No allowlist entries</p>';
+            return;
+        }
+        var html = '';
+        piiAllowlist.forEach(function(item, i) {
+            html += '<div class="flex items-center justify-between px-2 py-1 bg-muted rounded border border-border">';
+            html += '<span class="text-sm font-mono">' + escapeHtml(item) + '</span>';
+            html += '<button onclick="removePIIAllowlistEntry(' + i + ')" class="text-xs text-muted-foreground hover:text-destructive">Remove</button>';
+            html += '</div>';
+        });
+        el.innerHTML = html;
+    }
+
+    window.togglePIISetting = function() {
+        var newState = !piiEnabled;
+        savePIISettings({ enabled: newState });
+    };
+
+    window.updatePIIAction = function(action) {
+        piiAction = action;
+        savePIISettings({ action: action });
+    };
+
+    window.updatePIITypes = function() {
+        var types = {};
+        ['email', 'phone', 'ssn', 'credit_card', 'ip_address'].forEach(function(t) {
+            var cb = document.getElementById('pii-type-' + t);
+            types[t] = cb ? cb.checked : true;
+        });
+        piiTypes = types;
+        savePIISettings({ types: types });
+    };
+
+    window.addPIIAllowlistEntry = function() {
+        var input = document.getElementById('pii-allowlist-input');
+        var val = input.value.trim();
+        if (!val) return;
+        piiAllowlist.push(val);
+        input.value = '';
+        savePIISettings({ allowlist: piiAllowlist });
+    };
+
+    window.removePIIAllowlistEntry = function(index) {
+        piiAllowlist.splice(index, 1);
+        savePIISettings({ allowlist: piiAllowlist });
+    };
+
+    function savePIISettings(partial) {
+        fetch(prefix + '/api/settings', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pii: partial })
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.pii) updatePIIUI(data.pii);
+        })
+        .catch(function() {});
+    }
 })();
 </script>
 {{end}}

@@ -118,6 +118,40 @@ type HTTPRoundTripInfo struct {
 	DurationMs             int64
 	SubstitutedCredentials []string
 	SessionID              string
+	PIIRedacted            []string
+	PIIRedactCount         int
+}
+
+// PIIFilterResult holds the result of a PII filter scan.
+type PIIFilterResult struct {
+	RedactedBody []byte
+	MatchCount   int
+	TypeLabels   []string // e.g. ["email", "ssn", "phone"]
+}
+
+// piiFilterType is the function signature for the PII filter hook.
+type piiFilterType = func(body []byte, contentType string) (*PIIFilterResult, error)
+
+// globalPIIFilter is called (if set) before forwarding a request upstream.
+// It scans and redacts PII from request bodies.
+var globalPIIFilter atomic.Pointer[piiFilterType]
+
+// SetGlobalPIIFilter atomically sets the PII filter hook.
+func SetGlobalPIIFilter(hook piiFilterType) {
+	if hook == nil {
+		globalPIIFilter.Store(nil)
+	} else {
+		globalPIIFilter.Store(&hook)
+	}
+}
+
+// getGlobalPIIFilter atomically loads the PII filter hook.
+func getGlobalPIIFilter() piiFilterType {
+	p := globalPIIFilter.Load()
+	if p == nil {
+		return nil
+	}
+	return *p
 }
 
 // GlobalHTTPRoundTripHook is called (if set) after each MITM-intercepted HTTP round-trip.
@@ -443,7 +477,7 @@ func (h *Sniffer) httpRoundTrip(ctx context.Context, rw, cc io.ReadWriteCloser, 
 	}
 
 	var reqBody *xhttp.Body
-	captureBody := (h.RecorderOptions != nil && h.RecorderOptions.HTTPBody) || h.OnHTTPRoundTrip != nil || GlobalHTTPRequestHoldHook != nil
+	captureBody := (h.RecorderOptions != nil && h.RecorderOptions.HTTPBody) || h.OnHTTPRoundTrip != nil || GlobalHTTPRequestHoldHook != nil || getGlobalPIIFilter() != nil
 	if captureBody {
 		if req.Body != nil {
 			bodySize := DefaultBodySize
@@ -500,6 +534,42 @@ func (h *Sniffer) httpRoundTrip(ctx context.Context, rw, cc io.ReadWriteCloser, 
 			denyResp.Write(rw)
 			close = true
 			return
+		}
+	}
+
+	// PII filter: scan and redact PII from request body before forwarding.
+	var piiResult *PIIFilterResult
+	if piiHook := getGlobalPIIFilter(); piiHook != nil {
+		var bodyBytes []byte
+		if reqBody != nil {
+			bodyBytes = reqBody.Content()
+		}
+		if len(bodyBytes) > 0 {
+			contentType := req.Header.Get("Content-Type")
+			result, piiErr := piiHook(bodyBytes, contentType)
+			if piiErr != nil {
+				// Block mode: return 403
+				denyResp := &http.Response{
+					StatusCode: http.StatusForbidden,
+					Proto:      req.Proto,
+					ProtoMajor: req.ProtoMajor,
+					ProtoMinor: req.ProtoMinor,
+					Header:     http.Header{"Content-Type": {"text/plain"}},
+					Body:       io.NopCloser(strings.NewReader("Request blocked: PII detected")),
+				}
+				denyResp.ContentLength = 29
+				denyResp.Write(rw)
+				close = true
+				return
+			}
+			if result != nil && result.RedactedBody != nil {
+				req.Body = io.NopCloser(bytes.NewReader(result.RedactedBody))
+				req.ContentLength = int64(len(result.RedactedBody))
+				piiResult = result
+			} else {
+				req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+				req.ContentLength = int64(len(bodyBytes))
+			}
 		}
 	}
 
@@ -609,7 +679,13 @@ func (h *Sniffer) httpRoundTrip(ctx context.Context, rw, cc io.ReadWriteCloser, 
 			info.SubstitutedCredentials = subInfo.Labels
 			info.SessionID = subInfo.SessionID
 		}
-		if reqBody != nil {
+		if piiResult != nil {
+			info.PIIRedacted = piiResult.TypeLabels
+			info.PIIRedactCount = piiResult.MatchCount
+		}
+		if piiResult != nil && piiResult.RedactedBody != nil {
+			info.RequestBody = piiResult.RedactedBody
+		} else if reqBody != nil {
 			info.RequestBody = reqBody.Content()
 		}
 		if respBody != nil {

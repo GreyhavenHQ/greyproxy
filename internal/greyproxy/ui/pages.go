@@ -176,6 +176,11 @@ var funcMap = template.FuncMap{
 		json.Unmarshal([]byte(raw), &labels)
 		return labels
 	},
+	"piiLabels": func(raw string) []string {
+		var labels []string
+		json.Unmarshal([]byte(raw), &labels)
+		return labels
+	},
 	"derefStr": func(s *string) string {
 		if s == nil {
 			return ""
@@ -576,11 +581,14 @@ func RegisterHTMXRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 			return
 		}
 
+		piiTotal, _, _ := greyproxy.GetPIIStats(db, fromDate, toDate)
+
 		c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
 		dashboardStatsTmpl.Execute(c.Writer, gin.H{
-			"Prefix": prefix,
-			"Stats":  stats,
-			"Period": period,
+			"Prefix":           prefix,
+			"Stats":            stats,
+			"Period":           period,
+			"PIIRedactedTotal": piiTotal,
 		})
 	})
 

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"compress/flate"
+	"fmt"
 	"compress/gzip"
 	"context"
 	"errors"
@@ -456,6 +457,42 @@ func (p *program) buildGreyproxyService() error {
 		}
 	}
 
+	// Wire PII filter into the MITM pipeline
+	piiFilter := greyproxy.NewPIIFilter(greyproxy.PIIFilterConfig{
+		Enabled:   resolvedSettings.PIIEnabled,
+		Action:    resolvedSettings.PIIAction,
+		Types:     resolvedSettings.PIITypes,
+		Allowlist: resolvedSettings.PIIAllowlist,
+	})
+	shared.Settings.OnPIIChanged(func(s greyproxy.ResolvedSettings) {
+		piiFilter.UpdateConfig(greyproxy.PIIFilterConfig{
+			Enabled:   s.PIIEnabled,
+			Action:    s.PIIAction,
+			Types:     s.PIITypes,
+			Allowlist: s.PIIAllowlist,
+		})
+	})
+	gostx.SetGlobalPIIFilter(func(body []byte, contentType string) (*gostx.PIIFilterResult, error) {
+		result, err := piiFilter.ScanAndRedact(body, contentType)
+		if err != nil {
+			return nil, err
+		}
+		if result == nil {
+			return nil, nil
+		}
+		if result.Blocked {
+			return nil, fmt.Errorf("PII detected in request body")
+		}
+		if result.MatchCount == 0 {
+			return nil, nil
+		}
+		return &gostx.PIIFilterResult{
+			RedactedBody: result.RedactedBody,
+			MatchCount:   result.MatchCount,
+			TypeLabels:   result.TypeLabels,
+		}, nil
+	})
+
 	shared.ReloadCertFn = p.reloadConfig
 	shared.CertMtimeFn = func() time.Time {
 		p.certMtimeMu.Lock()
@@ -531,6 +568,8 @@ func (p *program) buildGreyproxyService() error {
 				Result:                 "auto",
 				SubstitutedCredentials: info.SubstitutedCredentials,
 				SessionID:              info.SessionID,
+				PIIRedacted:            info.PIIRedacted,
+				PIIRedactCount:         info.PIIRedactCount,
 			})
 			if err != nil {
 				log.Warnf("failed to store HTTP transaction: %v", err)
@@ -540,6 +579,15 @@ func (p *program) buildGreyproxyService() error {
 				Type: greyproxy.EventTransactionNew,
 				Data: txn.ToJSON(false),
 			})
+			if len(info.PIIRedacted) > 0 {
+				shared.Bus.Publish(greyproxy.Event{
+					Type: greyproxy.EventPIIRedacted,
+					Data: map[string]any{
+						"types": info.PIIRedacted,
+						"count": info.PIIRedactCount,
+					},
+				})
+			}
 		}()
 	})
 
