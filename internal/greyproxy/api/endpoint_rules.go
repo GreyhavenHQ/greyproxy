@@ -39,6 +39,37 @@ func validateEndpointRule(hostPattern, pathPattern, method, decoderName string) 
 	return ""
 }
 
+// endpointRuleInput is the shared JSON input for create/update handlers.
+type endpointRuleInput struct {
+	HostPattern string `json:"host_pattern" binding:"required"`
+	PathPattern string `json:"path_pattern" binding:"required"`
+	Method      string `json:"method"`
+	DecoderName string `json:"decoder_name" binding:"required"`
+	Priority    int    `json:"priority"`
+	Enabled     *bool  `json:"enabled"`
+}
+
+func (in *endpointRuleInput) toRule() (greyproxy.EndpointRule, string) {
+	if in.Method == "" {
+		in.Method = "POST"
+	}
+	if errMsg := validateEndpointRule(in.HostPattern, in.PathPattern, in.Method, in.DecoderName); errMsg != "" {
+		return greyproxy.EndpointRule{}, errMsg
+	}
+	enabled := true
+	if in.Enabled != nil {
+		enabled = *in.Enabled
+	}
+	return greyproxy.EndpointRule{
+		HostPattern: in.HostPattern,
+		PathPattern: in.PathPattern,
+		Method:      in.Method,
+		DecoderName: in.DecoderName,
+		Priority:    in.Priority,
+		Enabled:     enabled,
+	}, ""
+}
+
 // EndpointRulesListHandler returns all endpoint rules.
 func EndpointRulesListHandler(s *Shared) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -54,37 +85,15 @@ func EndpointRulesListHandler(s *Shared) gin.HandlerFunc {
 // EndpointRulesCreateHandler creates a user-defined endpoint rule.
 func EndpointRulesCreateHandler(s *Shared) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		var input struct {
-			HostPattern string `json:"host_pattern" binding:"required"`
-			PathPattern string `json:"path_pattern" binding:"required"`
-			Method      string `json:"method"`
-			DecoderName string `json:"decoder_name" binding:"required"`
-			Priority    int    `json:"priority"`
-			Enabled     *bool  `json:"enabled"`
-		}
+		var input endpointRuleInput
 		if err := c.ShouldBindJSON(&input); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		if input.Method == "" {
-			input.Method = "POST"
-		}
-		if errMsg := validateEndpointRule(input.HostPattern, input.PathPattern, input.Method, input.DecoderName); errMsg != "" {
+		rule, errMsg := input.toRule()
+		if errMsg != "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
 			return
-		}
-		enabled := true
-		if input.Enabled != nil {
-			enabled = *input.Enabled
-		}
-
-		rule := greyproxy.EndpointRule{
-			HostPattern: input.HostPattern,
-			PathPattern: input.PathPattern,
-			Method:      input.Method,
-			DecoderName: input.DecoderName,
-			Priority:    input.Priority,
-			Enabled:     enabled,
 		}
 		id, err := s.Assembler.Registry.CreateRule(rule)
 		if err != nil {
@@ -105,37 +114,15 @@ func EndpointRulesUpdateHandler(s *Shared) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
 			return
 		}
-		var input struct {
-			HostPattern string `json:"host_pattern" binding:"required"`
-			PathPattern string `json:"path_pattern" binding:"required"`
-			Method      string `json:"method"`
-			DecoderName string `json:"decoder_name" binding:"required"`
-			Priority    int    `json:"priority"`
-			Enabled     *bool  `json:"enabled"`
-		}
+		var input endpointRuleInput
 		if err := c.ShouldBindJSON(&input); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		if input.Method == "" {
-			input.Method = "POST"
-		}
-		if errMsg := validateEndpointRule(input.HostPattern, input.PathPattern, input.Method, input.DecoderName); errMsg != "" {
+		rule, errMsg := input.toRule()
+		if errMsg != "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
 			return
-		}
-		enabled := true
-		if input.Enabled != nil {
-			enabled = *input.Enabled
-		}
-
-		rule := greyproxy.EndpointRule{
-			HostPattern: input.HostPattern,
-			PathPattern: input.PathPattern,
-			Method:      input.Method,
-			DecoderName: input.DecoderName,
-			Priority:    input.Priority,
-			Enabled:     enabled,
 		}
 		if err := s.Assembler.Registry.UpdateRule(id, rule); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

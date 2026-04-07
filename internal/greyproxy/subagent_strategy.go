@@ -1,8 +1,6 @@
 package greyproxy
 
 import (
-	"regexp"
-
 	"github.com/greyhavenhq/greyproxy/internal/greyproxy/dissector"
 )
 
@@ -64,7 +62,7 @@ func (s *ClaudeCodeSubagentStrategy) SplitInvocations(entries []transactionEntry
 
 type OpenCodeSubagentStrategy struct{}
 
-var taskIDRe = regexp.MustCompile(`task_id:\s*(ses_[A-Za-z0-9_]+)`)
+
 
 func (s *OpenCodeSubagentStrategy) AgentToolNames() []string {
 	return []string{"task"}
@@ -85,7 +83,7 @@ func (s *OpenCodeSubagentStrategy) ExtractReferencedSessions(messages []dissecto
 }
 
 func (s *OpenCodeSubagentStrategy) LinkSubagentID(content string) string {
-	m := taskIDRe.FindStringSubmatch(content)
+	m := taskIDPattern.FindStringSubmatch(content)
 	if len(m) >= 2 {
 		return m[1]
 	}

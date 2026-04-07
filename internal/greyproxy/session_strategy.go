@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
-	"strings"
 	"time"
 
 	"github.com/greyhavenhq/greyproxy/internal/greyproxy/dissector"
@@ -206,11 +205,3 @@ func (s *CompositeStrategy) InferSession(entries []transactionEntry) map[int64]s
 	return nil
 }
 
-// --- helpers ---
-
-func headerContains(headers http.Header, key, substr string) bool {
-	if headers == nil {
-		return false
-	}
-	return strings.Contains(headers.Get(key), substr)
-}

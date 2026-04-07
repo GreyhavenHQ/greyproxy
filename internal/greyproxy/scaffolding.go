@@ -113,11 +113,10 @@ func (cfg *ScaffoldingConfig) GetUserText(msg dissector.Message) *string {
 	return &joined
 }
 
-// --- Built-in scaffolding configs ---
+// --- Built-in scaffolding configs (singleton instances) ---
 
-// ClaudeCodeScaffolding returns the scaffolding config for Claude Code.
-func ClaudeCodeScaffolding() *ScaffoldingConfig {
-	return &ScaffoldingConfig{
+var (
+	claudeCodeScaffolding = &ScaffoldingConfig{
 		ExactTexts: map[string]bool{
 			"Tool loaded.":                  true,
 			"[Request interrupted by user]": true,
@@ -136,21 +135,14 @@ func ClaudeCodeScaffolding() *ScaffoldingConfig {
 			regexp.MustCompile(`(?s)<local-command-stdout>.*?</local-command-stdout>`),
 		},
 	}
-}
 
-// OpenCodeScaffolding returns the scaffolding config for OpenCode.
-// OpenCode has minimal scaffolding.
-func OpenCodeScaffolding() *ScaffoldingConfig {
-	return &ScaffoldingConfig{
+	openCodeScaffolding = &ScaffoldingConfig{
 		ExactTexts:     map[string]bool{},
 		PrefixPatterns: nil,
 		XMLTagPatterns: nil,
 	}
-}
 
-// CodexScaffolding returns the scaffolding config for Codex CLI.
-func CodexScaffolding() *ScaffoldingConfig {
-	return &ScaffoldingConfig{
+	codexScaffolding = &ScaffoldingConfig{
 		ExactTexts: map[string]bool{},
 		PrefixPatterns: []string{
 			"<environment_context>",
@@ -161,11 +153,8 @@ func CodexScaffolding() *ScaffoldingConfig {
 			regexp.MustCompile(`(?s)<permissions>.*?</permissions>`),
 		},
 	}
-}
 
-// GeminiCLIScaffolding returns the scaffolding config for Gemini CLI.
-func GeminiCLIScaffolding() *ScaffoldingConfig {
-	return &ScaffoldingConfig{
+	geminiCLIScaffolding = &ScaffoldingConfig{
 		ExactTexts: map[string]bool{},
 		PrefixPatterns: []string{
 			"<session_context>",
@@ -176,31 +165,43 @@ func GeminiCLIScaffolding() *ScaffoldingConfig {
 			regexp.MustCompile(`(?s)<loaded_context>.*?</loaded_context>`),
 		},
 	}
-}
 
-// GenericScaffolding returns an empty scaffolding config (no filtering).
-func GenericScaffolding() *ScaffoldingConfig {
-	return &ScaffoldingConfig{
+	genericScaffolding = &ScaffoldingConfig{
 		ExactTexts:     map[string]bool{},
 		PrefixPatterns: nil,
 		XMLTagPatterns: nil,
 	}
-}
+)
+
+// ClaudeCodeScaffolding returns the scaffolding config for Claude Code.
+func ClaudeCodeScaffolding() *ScaffoldingConfig { return claudeCodeScaffolding }
+
+// OpenCodeScaffolding returns the scaffolding config for OpenCode.
+func OpenCodeScaffolding() *ScaffoldingConfig { return openCodeScaffolding }
+
+// CodexScaffolding returns the scaffolding config for Codex CLI.
+func CodexScaffolding() *ScaffoldingConfig { return codexScaffolding }
+
+// GeminiCLIScaffolding returns the scaffolding config for Gemini CLI.
+func GeminiCLIScaffolding() *ScaffoldingConfig { return geminiCLIScaffolding }
+
+// GenericScaffolding returns an empty scaffolding config (no filtering).
+func GenericScaffolding() *ScaffoldingConfig { return genericScaffolding }
 
 // ScaffoldingForClient returns the scaffolding config for a given client name.
 func ScaffoldingForClient(clientName string) *ScaffoldingConfig {
 	switch clientName {
 	case "claude-code":
-		return ClaudeCodeScaffolding()
+		return claudeCodeScaffolding
 	case "opencode":
-		return OpenCodeScaffolding()
+		return openCodeScaffolding
 	case "codex":
-		return CodexScaffolding()
+		return codexScaffolding
 	case "gemini-cli":
-		return GeminiCLIScaffolding()
+		return geminiCLIScaffolding
 	case "aider":
-		return GenericScaffolding()
+		return genericScaffolding
 	default:
-		return ClaudeCodeScaffolding() // default: apply Claude Code filtering for backward compat
+		return claudeCodeScaffolding // default: apply Claude Code filtering for backward compat
 	}
 }

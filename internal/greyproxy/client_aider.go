@@ -3,6 +3,7 @@ package greyproxy
 import (
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/greyhavenhq/greyproxy/internal/greyproxy/dissector"
 )
@@ -37,7 +38,7 @@ func (a *AiderAdapter) ClassifyThread(_ *dissector.ExtractionResult) string {
 }
 
 func (a *AiderAdapter) SessionStrategy() SessionStrategy {
-	return &TimingStrategy{Gap: 5 * 60e9} // 5 minutes
+	return &TimingStrategy{Gap: 5 * time.Minute}
 }
 
 func (a *AiderAdapter) SubagentStrategy() SubagentStrategyI {

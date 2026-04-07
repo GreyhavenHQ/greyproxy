@@ -1,6 +1,9 @@
 package api
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestValidateEndpointRule(t *testing.T) {
 	tests := []struct {
@@ -71,7 +74,7 @@ func TestValidateEndpointRule(t *testing.T) {
 			if tt.wantErr {
 				if errMsg == "" {
 					t.Errorf("expected validation error containing %q, got none", tt.errContains)
-				} else if tt.errContains != "" && !containsStr(errMsg, tt.errContains) {
+				} else if tt.errContains != "" && !strings.Contains(errMsg, tt.errContains) {
 					t.Errorf("error = %q, want it to contain %q", errMsg, tt.errContains)
 				}
 			} else {
@@ -83,15 +86,3 @@ func TestValidateEndpointRule(t *testing.T) {
 	}
 }
 
-func containsStr(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsSubstring(s, substr))
-}
-
-func containsSubstring(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
-}
