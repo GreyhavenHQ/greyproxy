@@ -50,7 +50,14 @@ func (d *OpenAIChatDissector) CanHandle(url, method, host string) bool {
 }
 
 func (d *OpenAIChatDissector) Extract(input ExtractionInput) (*ExtractionResult, error) {
-	result := &ExtractionResult{Provider: d.Name()}
+	// Determine provider from host: OpenRouter traffic is "openrouter",
+	// api.openai.com is "openai", everything else defaults to "openai".
+	provider := "openai"
+	switch input.Host {
+	case "openrouter.ai":
+		provider = "openrouter"
+	}
+	result := &ExtractionResult{Provider: provider}
 
 	var body struct {
 		Model          string            `json:"model"`

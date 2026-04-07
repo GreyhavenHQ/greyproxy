@@ -20,7 +20,7 @@ import (
 // that requires reprocessing existing conversations (e.g. new fields, linking).
 // When the stored version differs from this constant, the settings page
 // offers a "Rebuild conversations" action.
-const AssemblerVersion = 6
+const AssemblerVersion = 7
 
 // ConversationAssembler subscribes to EventTransactionNew and reassembles
 // LLM conversations from HTTP transactions using registered dissectors.
@@ -152,45 +152,61 @@ func (a *ConversationAssembler) processNewTransactionsLocked() {
 		return
 	}
 
-	// Find affected session IDs
+	// Find affected session IDs and collect sessionless entries
 	affectedSessions := map[string]bool{}
+	var sessionlessTxns []transactionEntry
 	for _, te := range newTxns {
 		if te.sessionID != "" {
 			affectedSessions[te.sessionID] = true
+		} else {
+			sessionlessTxns = append(sessionlessTxns, te)
 		}
 	}
 
-	if len(affectedSessions) == 0 {
+	if len(affectedSessions) == 0 && len(sessionlessTxns) == 0 {
 		SetConversationProcessingState(a.db, "last_processed_id", strconv.FormatInt(maxID, 10))
 		return
 	}
 
-	// Reload ALL transactions for affected sessions
-	allTxns, err := a.loadTransactionsForSessions(affectedSessions)
-	if err != nil {
-		slog.Warn("assembler: failed to reload sessions", "error", err)
-		return
-	}
+	var allConversations []assembledConversation
 
-	// For OpenAI: main sessions may reference subagent sessions via task_id
-	// in tool results. Load those referenced sessions too so that
-	// remapOpenAISubagents can remap them under their parent.
-	if extraSessions := extractReferencedSubagentSessions(allTxns, affectedSessions); len(extraSessions) > 0 {
-		extraTxns, err := a.loadTransactionsForSessions(extraSessions)
+	// Process session-based transactions
+	if len(affectedSessions) > 0 {
+		// Reload ALL transactions for affected sessions
+		allTxns, err := a.loadTransactionsForSessions(affectedSessions)
 		if err != nil {
-			slog.Warn("assembler: failed to load referenced subagent sessions", "error", err)
-		} else {
-			allTxns = append(allTxns, extraTxns...)
+			slog.Warn("assembler: failed to reload sessions", "error", err)
+			return
+		}
+
+		// For OpenAI: main sessions may reference subagent sessions via task_id
+		// in tool results. Load those referenced sessions too so that
+		// remapOpenAISubagents can remap them under their parent.
+		if extraSessions := extractReferencedSubagentSessions(allTxns, affectedSessions); len(extraSessions) > 0 {
+			extraTxns, err := a.loadTransactionsForSessions(extraSessions)
+			if err != nil {
+				slog.Warn("assembler: failed to load referenced subagent sessions", "error", err)
+			} else {
+				allTxns = append(allTxns, extraTxns...)
+			}
+		}
+
+		// Group by session and assemble
+		sessions := groupBySession(allTxns)
+		for sessionID, entries := range sessions {
+			conv := assembleConversation(sessionID, entries)
+			allConversations = append(allConversations, conv)
 		}
 	}
 
-	// Group by session and assemble
-	sessions := groupBySession(allTxns)
-	var allConversations []assembledConversation
-
-	for sessionID, entries := range sessions {
-		conv := assembleConversation(sessionID, entries)
-		allConversations = append(allConversations, conv)
+	// Process sessionless transactions (Gemini, Aider, etc.)
+	// These don't have a session to reload; group them directly via adapter strategy.
+	if len(sessionlessTxns) > 0 {
+		sessions := groupBySession(sessionlessTxns)
+		for sessionID, entries := range sessions {
+			conv := assembleConversation(sessionID, entries)
+			allConversations = append(allConversations, conv)
+		}
 	}
 
 	linkSubagentConversations(allConversations)
@@ -511,75 +527,95 @@ func groupBySession(txns []transactionEntry) map[string][]transactionEntry {
 		}
 	}
 
-	// Heuristic grouping for unassigned
+	// Heuristic grouping for unassigned entries.
+	// First, try the adapter's SessionStrategy to infer session IDs.
+	// Entries that remain unassigned after that fall back to the time-gap + overlap heuristic.
 	if len(unassigned) > 0 {
 		sort.Slice(unassigned, func(i, j int) bool { return unassigned[i].timestamp < unassigned[j].timestamp })
 
-		var groups [][]transactionEntry
-		var current []transactionEntry
+		// Detect adapter from unassigned entries and use its session strategy
+		adapter := DetectClientFromEntries(unassigned)
+		inferred := adapter.SessionStrategy().InferSession(unassigned)
 
-		for _, entry := range unassigned {
-			if len(current) == 0 {
-				current = append(current, entry)
-				continue
+		var stillUnassigned []transactionEntry
+		if len(inferred) > 0 {
+			for _, entry := range unassigned {
+				if sid, ok := inferred[entry.txnID]; ok && sid != "" {
+					rawSessions[sid] = append(rawSessions[sid], entry)
+				} else {
+					stillUnassigned = append(stillUnassigned, entry)
+				}
 			}
-			prevTs, err1 := time.Parse(time.RFC3339, current[len(current)-1].timestamp)
-			currTs, err2 := time.Parse(time.RFC3339, entry.timestamp)
-			if err1 != nil || err2 != nil {
-				// Cannot determine time gap; keep in same group
-				current = append(current, entry)
-				continue
-			}
-			if currTs.Sub(prevTs) > timeGapThreshold {
-				groups = append(groups, current)
-				current = []transactionEntry{entry}
-			} else {
-				current = append(current, entry)
-			}
-		}
-		if len(current) > 0 {
-			groups = append(groups, current)
+		} else {
+			stillUnassigned = unassigned
 		}
 
-		for _, group := range groups {
-			groupStart, err1 := time.Parse(time.RFC3339, group[0].timestamp)
-			groupEnd, err2 := time.Parse(time.RFC3339, group[len(group)-1].timestamp)
+		// Fallback: time-gap + overlap heuristic for entries the strategy did not assign
+		if len(stillUnassigned) > 0 {
+			var groups [][]transactionEntry
+			var current []transactionEntry
 
-			if err1 != nil || err2 != nil {
-				// Cannot determine overlap; assign to heuristic group
-				fakeID := fmt.Sprintf("heuristic_%d_%d", group[0].txnID, group[len(group)-1].txnID)
-				rawSessions[fakeID] = group
-				continue
-			}
-
-			var bestSession string
-			var bestOverlap time.Duration
-
-			for sid, sentries := range rawSessions {
-				sStart, e1 := time.Parse(time.RFC3339, sentries[0].timestamp)
-				sEnd, e2 := time.Parse(time.RFC3339, sentries[len(sentries)-1].timestamp)
-				if e1 != nil || e2 != nil {
+			for _, entry := range stillUnassigned {
+				if len(current) == 0 {
+					current = append(current, entry)
 					continue
 				}
-				overlapStart := maxTime(sStart, groupStart)
-				overlapEnd := minTime(sEnd.Add(timeGapThreshold), groupEnd.Add(timeGapThreshold))
-				if overlapStart.Before(overlapEnd) || overlapStart.Equal(overlapEnd) {
-					overlap := overlapEnd.Sub(overlapStart)
-					if overlap > bestOverlap {
-						bestOverlap = overlap
-						bestSession = sid
-					}
+				prevTs, err1 := time.Parse(time.RFC3339, current[len(current)-1].timestamp)
+				currTs, err2 := time.Parse(time.RFC3339, entry.timestamp)
+				if err1 != nil || err2 != nil {
+					current = append(current, entry)
+					continue
+				}
+				if currTs.Sub(prevTs) > timeGapThreshold {
+					groups = append(groups, current)
+					current = []transactionEntry{entry}
+				} else {
+					current = append(current, entry)
 				}
 			}
+			if len(current) > 0 {
+				groups = append(groups, current)
+			}
 
-			if bestSession != "" {
-				rawSessions[bestSession] = append(rawSessions[bestSession], group...)
-				sort.Slice(rawSessions[bestSession], func(i, j int) bool {
-					return rawSessions[bestSession][i].timestamp < rawSessions[bestSession][j].timestamp
-				})
-			} else {
-				fakeID := fmt.Sprintf("heuristic_%d_%d", group[0].txnID, group[len(group)-1].txnID)
-				rawSessions[fakeID] = group
+			for _, group := range groups {
+				groupStart, err1 := time.Parse(time.RFC3339, group[0].timestamp)
+				groupEnd, err2 := time.Parse(time.RFC3339, group[len(group)-1].timestamp)
+
+				if err1 != nil || err2 != nil {
+					fakeID := fmt.Sprintf("heuristic_%d_%d", group[0].txnID, group[len(group)-1].txnID)
+					rawSessions[fakeID] = group
+					continue
+				}
+
+				var bestSession string
+				var bestOverlap time.Duration
+
+				for sid, sentries := range rawSessions {
+					sStart, e1 := time.Parse(time.RFC3339, sentries[0].timestamp)
+					sEnd, e2 := time.Parse(time.RFC3339, sentries[len(sentries)-1].timestamp)
+					if e1 != nil || e2 != nil {
+						continue
+					}
+					overlapStart := maxTime(sStart, groupStart)
+					overlapEnd := minTime(sEnd.Add(timeGapThreshold), groupEnd.Add(timeGapThreshold))
+					if overlapStart.Before(overlapEnd) || overlapStart.Equal(overlapEnd) {
+						overlap := overlapEnd.Sub(overlapStart)
+						if overlap > bestOverlap {
+							bestOverlap = overlap
+							bestSession = sid
+						}
+					}
+				}
+
+				if bestSession != "" {
+					rawSessions[bestSession] = append(rawSessions[bestSession], group...)
+					sort.Slice(rawSessions[bestSession], func(i, j int) bool {
+						return rawSessions[bestSession][i].timestamp < rawSessions[bestSession][j].timestamp
+					})
+				} else {
+					fakeID := fmt.Sprintf("heuristic_%d_%d", group[0].txnID, group[len(group)-1].txnID)
+					rawSessions[fakeID] = group
+				}
 			}
 		}
 	}
@@ -603,7 +639,7 @@ func groupBySession(txns []transactionEntry) map[string][]transactionEntry {
 			if threadKey == "main" {
 				sessions[sid] = threadEntries
 			} else {
-				subConvs := splitSubagentInvocations(threadEntries)
+				subConvs := adapter.SubagentStrategy().SplitInvocations(threadEntries)
 				for i, subEntries := range subConvs {
 					sessions[fmt.Sprintf("%s/%s_%d", sid, threadKey, i+1)] = subEntries
 				}
@@ -701,27 +737,31 @@ func remapOpenAISubagents(sessions map[string][]transactionEntry) {
 }
 
 // extractReferencedSubagentSessions scans dissected transaction entries for
-// task_id references (OpenAI subagent session IDs) and returns any that are
-// not already in the known set.
+// cross-session subagent references and returns any that are not already
+// in the known set. Uses the adapter's SubagentStrategy when available,
+// falling back to OpenAI-specific task_id scanning for backward compatibility.
 func extractReferencedSubagentSessions(entries []transactionEntry, known map[string]bool) map[string]bool {
 	extra := map[string]bool{}
+
+	// Try adapter-based extraction first
+	adapter := DetectClientFromEntries(entries)
+	strategy := adapter.SubagentStrategy()
+
 	for _, e := range entries {
-		if e.result == nil || e.result.Provider != "openai" {
+		if e.result == nil {
 			continue
 		}
-		for _, msg := range e.result.Messages {
-			for _, cb := range msg.Content {
-				if cb.Type == "tool_result" && cb.Content != "" {
-					if tid := extractTaskID(cb.Content); tid != "" && !known[tid] {
-						extra[tid] = true
-					}
-				}
+		refs := strategy.ExtractReferencedSessions(e.result.Messages)
+		for _, ref := range refs {
+			if ref != "" && !known[ref] {
+				extra[ref] = true
 			}
 		}
+		// Also check SSE response for tool results with cross-session refs
 		if e.result.SSEResponse != nil {
 			for _, tc := range e.result.SSEResponse.ToolCalls {
 				if tc.ResultPreview != "" {
-					if tid := extractTaskID(tc.ResultPreview); tid != "" && !known[tid] {
+					if tid := strategy.LinkSubagentID(tc.ResultPreview); tid != "" && !known[tid] {
 						extra[tid] = true
 					}
 				}
@@ -956,8 +996,16 @@ func buildRoundsFromMessages(messages []dissector.Message, scaffolding *Scaffold
 	return rounds
 }
 
-// detectProvider infers the LLM provider from the transaction URLs.
+// detectProvider infers the LLM provider from dissector-extracted provider
+// fields first, then falls back to URL-based detection.
 func detectProvider(entries []transactionEntry) string {
+	// Prefer the provider set by the dissector (authoritative)
+	for _, e := range entries {
+		if e.result != nil && e.result.Provider != "" {
+			return e.result.Provider
+		}
+	}
+	// Fallback: URL-based detection
 	for _, e := range entries {
 		if strings.Contains(e.url, "api.openai.com") {
 			return "openai"
@@ -1068,7 +1116,7 @@ func assembleConversation(sessionID string, entries []transactionEntry) assemble
 	conv.turnCount = len(rounds)
 
 	// Map requests to turns
-	turnEntryMap := mapRequestsToTurns(entries, conv.turnCount)
+	turnEntryMap := mapRequestsToTurns(entries, conv.turnCount, scaffolding)
 
 	for i, rnd := range rounds {
 		turnNum := i + 1
@@ -1219,14 +1267,17 @@ func assembleConversation(sessionID string, entries []transactionEntry) assemble
 	return conv
 }
 
-func mapRequestsToTurns(entries []transactionEntry, numTurns int) map[int][]transactionEntry {
+func mapRequestsToTurns(entries []transactionEntry, numTurns int, scaffolding *ScaffoldingConfig) map[int][]transactionEntry {
+	if scaffolding == nil {
+		scaffolding = defaultScaffolding
+	}
 	entryTurns := map[int]int{}
 	for i, entry := range entries {
 		if entry.result != nil && entry.result.MessageCount > 0 {
 			// Count real prompts
 			prompts := 0
 			for _, msg := range entry.result.Messages {
-				if msg.Role == "user" && isRealUserMessage(msg) {
+				if msg.Role == "user" && scaffolding.IsRealUserMessage(msg) {
 					prompts++
 				}
 			}

@@ -6,7 +6,9 @@ import (
 	"os"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/greyhavenhq/greyproxy/internal/greyproxy/dissector"
 	_ "modernc.org/sqlite"
 )
 
@@ -451,5 +453,215 @@ func TestAssembler_ClientInference(t *testing.T) {
 				t.Errorf("inferClientName for %s = %q, want %q", tt.name, got, tt.wantName)
 			}
 		})
+	}
+}
+
+// TestMapRequestsToTurns_UsesClientScaffolding verifies that mapRequestsToTurns
+// uses the provided scaffolding config instead of the hardcoded default.
+func TestMapRequestsToTurns_UsesClientScaffolding(t *testing.T) {
+	// Create a scaffolding config that treats "Tool loaded." as scaffolding
+	claudeScaffolding := ClaudeCodeScaffolding()
+	// Create a generic scaffolding config that does NOT filter anything
+	genericScaffolding := GenericScaffolding()
+
+	// Build entries where one message is "Tool loaded." (Claude scaffolding)
+	msgs := []dissector.Message{
+		{Role: "user", Content: []dissector.ContentBlock{{Type: "text", Text: "Tool loaded."}}},
+		{Role: "user", Content: []dissector.ContentBlock{{Type: "text", Text: "Hello, build me a thing"}}},
+		{Role: "assistant", Content: []dissector.ContentBlock{{Type: "text", Text: "Sure!"}}},
+	}
+	entries := []transactionEntry{
+		{
+			txnID: 1, timestamp: "2025-01-01T00:00:00Z",
+			result: &dissector.ExtractionResult{
+				Messages:     msgs,
+				MessageCount: len(msgs),
+			},
+		},
+	}
+
+	// With Claude scaffolding: "Tool loaded." is filtered, so 1 real prompt
+	claudeResult := mapRequestsToTurns(entries, 1, claudeScaffolding)
+	if _, ok := claudeResult[1]; !ok {
+		t.Error("claude scaffolding: expected turn 1 to have entries")
+	}
+
+	// With generic scaffolding: "Tool loaded." is a real message, so 2 real prompts
+	genericResult := mapRequestsToTurns(entries, 2, genericScaffolding)
+	// Both prompts should be detected as turns
+	if len(genericResult) < 1 {
+		t.Error("generic scaffolding: expected at least 1 turn mapped")
+	}
+
+	// Verify that with nil scaffolding it defaults to Claude Code behavior
+	defaultResult := mapRequestsToTurns(entries, 1, nil)
+	if _, ok := defaultResult[1]; !ok {
+		t.Error("nil scaffolding (default): expected turn 1 to have entries")
+	}
+}
+
+// TestSessionStrategy_InferSession_Timing verifies that TimingStrategy
+// correctly groups entries by time gap.
+func TestSessionStrategy_InferSession_Timing(t *testing.T) {
+	strategy := &TimingStrategy{Gap: 5 * time.Minute}
+
+	entries := []transactionEntry{
+		{txnID: 1, timestamp: "2025-01-01T00:00:00Z"},
+		{txnID: 2, timestamp: "2025-01-01T00:01:00Z"},
+		{txnID: 3, timestamp: "2025-01-01T00:10:00Z"}, // 9 min gap -> new session
+		{txnID: 4, timestamp: "2025-01-01T00:11:00Z"},
+	}
+
+	result := strategy.InferSession(entries)
+	if len(result) != 4 {
+		t.Fatalf("expected 4 assignments, got %d", len(result))
+	}
+
+	// Entries 1 and 2 should be in the same session
+	if result[1] != result[2] {
+		t.Errorf("entries 1 and 2 should be in same session: %q vs %q", result[1], result[2])
+	}
+
+	// Entries 3 and 4 should be in the same session
+	if result[3] != result[4] {
+		t.Errorf("entries 3 and 4 should be in same session: %q vs %q", result[3], result[4])
+	}
+
+	// But entries 2 and 3 should be in different sessions
+	if result[2] == result[3] {
+		t.Error("entries 2 and 3 should be in different sessions (>5min gap)")
+	}
+}
+
+// TestSessionStrategy_UsedByGroupBySession verifies that groupBySession uses
+// the adapter's session strategy for sessionless transactions.
+func TestSessionStrategy_UsedByGroupBySession(t *testing.T) {
+	// Create sessionless transactions that look like Gemini CLI traffic.
+	// The GeminiCLI adapter uses TimingStrategy.
+	entries := []transactionEntry{
+		{
+			txnID: 1, timestamp: "2025-01-01T00:00:00Z",
+			requestHeaders: http.Header{"User-Agent": []string{"GeminiCLI/1.0"}},
+			result:         &dissector.ExtractionResult{Provider: "google-ai", Model: "gemini-2.5-pro"},
+		},
+		{
+			txnID: 2, timestamp: "2025-01-01T00:01:00Z",
+			requestHeaders: http.Header{"User-Agent": []string{"GeminiCLI/1.0"}},
+			result:         &dissector.ExtractionResult{Provider: "google-ai", Model: "gemini-2.5-pro"},
+		},
+		{
+			txnID: 3, timestamp: "2025-01-01T01:00:00Z", // 59 min gap -> new session
+			requestHeaders: http.Header{"User-Agent": []string{"GeminiCLI/1.0"}},
+			result:         &dissector.ExtractionResult{Provider: "google-ai", Model: "gemini-2.5-pro"},
+		},
+	}
+
+	sessions := groupBySession(entries)
+
+	// We should get at least 2 sessions due to the time gap
+	if len(sessions) < 2 {
+		t.Errorf("expected at least 2 sessions (time gap), got %d", len(sessions))
+		for sid, se := range sessions {
+			t.Logf("  session %q: %d entries", sid, len(se))
+		}
+	}
+
+	// Total transactions should cover all 3
+	total := 0
+	for _, se := range sessions {
+		total += len(se)
+	}
+	if total != 3 {
+		t.Errorf("expected 3 total entries across sessions, got %d", total)
+	}
+}
+
+// TestIncrementalAssembly_SessionlessTransactions verifies that sessionless
+// transactions (like Gemini/Aider) get processed during incremental assembly.
+func TestIncrementalAssembly_SessionlessTransactions(t *testing.T) {
+	db := setupTestDB(t)
+	bus := NewEventBus()
+	registry := NewEndpointRegistry(db)
+	assembler := NewConversationAssembler(db, bus, registry)
+
+	// Insert a Gemini-like transaction (sessionless) using the google-ai endpoint
+	geminiURL := "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:streamGenerateContent?alt=sse"
+	geminiBody := []byte(`{
+		"contents": [
+			{"role": "user", "parts": [{"text": "Hello Gemini"}]},
+			{"role": "model", "parts": [{"text": "Hi there!"}]}
+		],
+		"systemInstruction": {"parts": [{"text": "You are a helpful assistant."}]}
+	}`)
+
+	txn, err := CreateHttpTransaction(db, HttpTransactionCreateInput{
+		ContainerName:       "test-container",
+		DestinationHost:     "generativelanguage.googleapis.com",
+		DestinationPort:     443,
+		Method:              "POST",
+		URL:                 geminiURL,
+		RequestBody:         geminiBody,
+		RequestContentType:  "application/json",
+		ResponseBody:        nil,
+		ResponseContentType: "text/event-stream",
+		DurationMs:          500,
+		RequestHeaders: http.Header{
+			"User-Agent": []string{"GeminiCLI/1.0"},
+		},
+		Result: "auto",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Run the assembler (incremental path)
+	assembler.processNewTransactions()
+
+	// Verify conversations were created
+	convs, total, err := QueryConversations(db, ConversationFilter{Limit: 100})
+	if err != nil {
+		t.Fatalf("QueryConversations: %v", err)
+	}
+
+	if total == 0 {
+		t.Fatalf("expected at least 1 conversation from sessionless Gemini transaction (txn_id=%d), got 0", txn.ID)
+	}
+
+	t.Logf("Created %d conversation(s) from sessionless Gemini traffic", total)
+	for _, c := range convs {
+		t.Logf("  Conv %s: provider=%s client=%s model=%s turns=%d",
+			c.ID, c.Provider.String, c.ClientName.String, c.Model.String, c.TurnCount)
+	}
+}
+
+// TestDetectProvider_PrefersResult verifies that detectProvider uses the
+// dissector-extracted provider when available.
+func TestDetectProvider_PrefersResult(t *testing.T) {
+	// Entry with result.Provider set (from dissector) and URL that would
+	// normally resolve to a different provider
+	entries := []transactionEntry{
+		{
+			url: "https://openrouter.ai/api/v1/chat/completions",
+			result: &dissector.ExtractionResult{
+				Provider: "openrouter",
+			},
+		},
+	}
+
+	got := detectProvider(entries)
+	if got != "openrouter" {
+		t.Errorf("detectProvider = %q, want %q (from result.Provider)", got, "openrouter")
+	}
+}
+
+// TestDetectProvider_FallsBackToURL verifies URL-based detection when
+// result.Provider is not set.
+func TestDetectProvider_FallsBackToURL(t *testing.T) {
+	entries := []transactionEntry{
+		{url: "https://api.anthropic.com/v1/messages"},
+	}
+	got := detectProvider(entries)
+	if got != "anthropic" {
+		t.Errorf("detectProvider = %q, want %q (from URL)", got, "anthropic")
 	}
 }

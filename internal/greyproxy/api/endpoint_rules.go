@@ -3,10 +3,41 @@ package api
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	greyproxy "github.com/greyhavenhq/greyproxy/internal/greyproxy"
+	"github.com/greyhavenhq/greyproxy/internal/greyproxy/dissector"
 )
+
+// validHTTPMethods lists the standard HTTP methods plus the wildcard.
+var validHTTPMethods = map[string]bool{
+	"GET": true, "HEAD": true, "POST": true, "PUT": true,
+	"PATCH": true, "DELETE": true, "OPTIONS": true, "TRACE": true, "*": true,
+}
+
+// validateEndpointRule checks user input for an endpoint rule.
+// Returns an error message or empty string if valid.
+func validateEndpointRule(hostPattern, pathPattern, method, decoderName string) string {
+	// Validate decoder_name exists
+	if dissector.FindDissectorByName(decoderName) == nil {
+		return "unknown decoder_name: " + decoderName
+	}
+	// Validate path_pattern starts with /
+	if !strings.HasPrefix(pathPattern, "/") {
+		return "path_pattern must start with /"
+	}
+	// Validate host_pattern is not just a bare wildcard or empty
+	trimmed := strings.TrimSpace(hostPattern)
+	if trimmed == "" || trimmed == "%" || trimmed == "*" {
+		return "host_pattern must not be empty or a bare wildcard"
+	}
+	// Validate method
+	if !validHTTPMethods[strings.ToUpper(method)] {
+		return "invalid method: " + method + "; expected a standard HTTP method or *"
+	}
+	return ""
+}
 
 // EndpointRulesListHandler returns all endpoint rules.
 func EndpointRulesListHandler(s *Shared) gin.HandlerFunc {
@@ -37,6 +68,10 @@ func EndpointRulesCreateHandler(s *Shared) gin.HandlerFunc {
 		}
 		if input.Method == "" {
 			input.Method = "POST"
+		}
+		if errMsg := validateEndpointRule(input.HostPattern, input.PathPattern, input.Method, input.DecoderName); errMsg != "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+			return
 		}
 		enabled := true
 		if input.Enabled != nil {
@@ -84,6 +119,10 @@ func EndpointRulesUpdateHandler(s *Shared) gin.HandlerFunc {
 		}
 		if input.Method == "" {
 			input.Method = "POST"
+		}
+		if errMsg := validateEndpointRule(input.HostPattern, input.PathPattern, input.Method, input.DecoderName); errMsg != "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+			return
 		}
 		enabled := true
 		if input.Enabled != nil {
