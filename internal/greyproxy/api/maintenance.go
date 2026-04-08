@@ -15,7 +15,7 @@ func MaintenanceStatusHandler(s *Shared) gin.HandlerFunc {
 		c.JSON(http.StatusOK, gin.H{
 			"assembler_version_current": greyproxy.AssemblerVersion,
 			"assembler_version_stored":  stored,
-			"needs_rebuild":             stored < greyproxy.AssemblerVersion,
+			"needs_rebuild":             stored != greyproxy.AssemblerVersion,
 		})
 	}
 }

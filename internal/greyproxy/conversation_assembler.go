@@ -17,10 +17,10 @@ import (
 	"github.com/greyhavenhq/greyproxy/internal/greyproxy/dissector"
 )
 
-// AssemblerVersion is incremented when the assembly logic changes in a way
+// AssemblerVersion is changed when the assembly logic changes in a way
 // that requires reprocessing existing conversations (e.g. new fields, linking).
-// When the stored version differs from this constant, the settings page
-// offers a "Rebuild conversations" action.
+// When the stored version differs from this constant, a rebuild is triggered
+// automatically on startup and the settings page flags it.
 const AssemblerVersion = 7
 
 // ConversationAssembler subscribes to EventTransactionNew and reassembles
@@ -87,7 +87,7 @@ func (a *ConversationAssembler) RebuildAllConversations() {
 // Then it debounces rapid-fire transactions (500ms) to batch processing.
 func (a *ConversationAssembler) Start(ctx context.Context) {
 	// Auto-rebuild if assembler version changed
-	if StoredAssemblerVersion(a.db) < AssemblerVersion {
+	if StoredAssemblerVersion(a.db) != AssemblerVersion {
 		slog.Info("assembler: version changed, rebuilding all conversations",
 			"stored", StoredAssemblerVersion(a.db), "current", AssemblerVersion)
 		a.RebuildAllConversations()
