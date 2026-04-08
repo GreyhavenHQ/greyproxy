@@ -296,6 +296,22 @@ func SetConversationProcessingState(db *DB, key, value string) error {
 	return err
 }
 
+// DeleteAllConversations removes all conversations, turns, and conversation_id
+// links from http_transactions. Used during full rebuild to avoid stale orphans.
+func DeleteAllConversations(db *DB) error {
+	db.Lock()
+	defer db.Unlock()
+	tx, err := db.WriteDB().Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	tx.Exec("DELETE FROM turns")
+	tx.Exec("DELETE FROM conversations")
+	tx.Exec("UPDATE http_transactions SET conversation_id = NULL WHERE conversation_id IS NOT NULL")
+	return tx.Commit()
+}
+
 // --- helpers ---
 
 func nullStr(s string) sql.NullString {

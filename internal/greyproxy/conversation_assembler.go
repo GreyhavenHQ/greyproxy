@@ -59,7 +59,8 @@ func StoredAssemblerVersion(db *DB) int {
 func (a *ConversationAssembler) RebuildAllConversations() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	slog.Info("assembler: rebuild requested, resetting processing cursor")
+	slog.Info("assembler: rebuild requested, clearing old conversations and resetting cursor")
+	DeleteAllConversations(a.db)
 	SetConversationProcessingState(a.db, "last_processed_id", "0")
 	a.processNewTransactionsLocked()
 	SetConversationProcessingState(a.db, "assembler_version", strconv.Itoa(AssemblerVersion))
