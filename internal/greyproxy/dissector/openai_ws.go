@@ -22,25 +22,35 @@ import (
 	"strings"
 )
 
-// OpenAIWSDissector parses WS_REQ frames from the OpenAI Responses API.
-// It reuses the same extraction logic as OpenAIDissector.
+// OpenAIWSDissector parses both WS_REQ and WS_RESP frames from the
+// OpenAI Responses API WebSocket protocol.
 type OpenAIWSDissector struct{}
 
 func (d *OpenAIWSDissector) Name() string { return "openai-ws" }
 
 func (d *OpenAIWSDissector) CanHandle(url, method, host string) bool {
-	if method != "WS_REQ" {
+	if method != "WS_REQ" && method != "WS_RESP" {
 		return false
 	}
 	return strings.Contains(url, "api.openai.com") && strings.Contains(url, "/v1/responses")
 }
 
 func (d *OpenAIWSDissector) Extract(input ExtractionInput) (*ExtractionResult, error) {
-	result := &ExtractionResult{Provider: "openai"}
-
 	if len(input.RequestBody) < 10 {
 		return nil, nil // skip ping/pong frames
 	}
+	switch input.Method {
+	case "WS_REQ":
+		return d.extractRequest(input)
+	case "WS_RESP":
+		return d.extractResponse(input)
+	}
+	return nil, nil
+}
+
+// extractRequest parses WS_REQ frames (client sends response.create requests).
+func (d *OpenAIWSDissector) extractRequest(input ExtractionInput) (*ExtractionResult, error) {
+	result := &ExtractionResult{Provider: "openai"}
 
 	var body struct {
 		Type           string            `json:"type"`
@@ -196,25 +206,9 @@ func (d *OpenAIWSDissector) Extract(input ExtractionInput) (*ExtractionResult, e
 	return result, nil
 }
 
-// OpenAIWSEventDissector parses WS_RESP frames from the OpenAI Responses API.
-// Only response.completed frames produce meaningful extraction results; all
-// other event types (deltas, progress, pings) are skipped.
-type OpenAIWSEventDissector struct{}
-
-func (d *OpenAIWSEventDissector) Name() string { return "openai-ws-event" }
-
-func (d *OpenAIWSEventDissector) CanHandle(url, method, host string) bool {
-	if method != "WS_RESP" {
-		return false
-	}
-	return strings.Contains(url, "api.openai.com") && strings.Contains(url, "/v1/responses")
-}
-
-func (d *OpenAIWSEventDissector) Extract(input ExtractionInput) (*ExtractionResult, error) {
-	if len(input.RequestBody) < 10 {
-		return nil, nil // skip ping/pong
-	}
-
+// extractResponse parses WS_RESP frames. Only response.completed frames
+// produce meaningful results; all other event types are skipped.
+func (d *OpenAIWSDissector) extractResponse(input ExtractionInput) (*ExtractionResult, error) {
 	var envelope struct {
 		Type     string          `json:"type"`
 		Response json.RawMessage `json:"response"`
@@ -299,5 +293,4 @@ func (d *OpenAIWSEventDissector) Extract(input ExtractionInput) (*ExtractionResu
 
 func init() {
 	Register(&OpenAIWSDissector{})
-	Register(&OpenAIWSEventDissector{})
 }

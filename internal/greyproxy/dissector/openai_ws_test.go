@@ -11,8 +11,8 @@ func TestOpenAIWSDissector_CanHandle(t *testing.T) {
 	if !d.CanHandle("wss://api.openai.com:80/v1/responses", "WS_REQ", "api.openai.com") {
 		t.Error("should handle WS_REQ to api.openai.com/v1/responses")
 	}
-	if d.CanHandle("wss://api.openai.com:80/v1/responses", "WS_RESP", "api.openai.com") {
-		t.Error("should not handle WS_RESP")
+	if !d.CanHandle("wss://api.openai.com:80/v1/responses", "WS_RESP", "api.openai.com") {
+		t.Error("should handle WS_RESP to api.openai.com/v1/responses")
 	}
 	if d.CanHandle("wss://api.openai.com:80/v1/responses", "POST", "api.openai.com") {
 		t.Error("should not handle POST")
@@ -126,18 +126,21 @@ func TestOpenAIWSDissector_Extract_ResponseCreate(t *testing.T) {
 	}
 }
 
-func TestOpenAIWSEventDissector_CanHandle(t *testing.T) {
-	d := &OpenAIWSEventDissector{}
+func TestOpenAIWSDissector_CanHandle_RESP(t *testing.T) {
+	d := &OpenAIWSDissector{}
 	if !d.CanHandle("wss://api.openai.com:80/v1/responses", "WS_RESP", "api.openai.com") {
 		t.Error("should handle WS_RESP to api.openai.com/v1/responses")
 	}
-	if d.CanHandle("wss://api.openai.com:80/v1/responses", "WS_REQ", "api.openai.com") {
-		t.Error("should not handle WS_REQ")
+	if !d.CanHandle("wss://api.openai.com:80/v1/responses", "WS_REQ", "api.openai.com") {
+		t.Error("should handle WS_REQ to api.openai.com/v1/responses")
+	}
+	if d.CanHandle("wss://api.openai.com:80/v1/responses", "POST", "api.openai.com") {
+		t.Error("should not handle POST")
 	}
 }
 
-func TestOpenAIWSEventDissector_Extract_Completed(t *testing.T) {
-	d := &OpenAIWSEventDissector{}
+func TestOpenAIWSDissector_Extract_Completed(t *testing.T) {
+	d := &OpenAIWSDissector{}
 	body := map[string]any{
 		"type": "response.completed",
 		"response": map[string]any{
@@ -186,8 +189,8 @@ func TestOpenAIWSEventDissector_Extract_Completed(t *testing.T) {
 	}
 }
 
-func TestOpenAIWSEventDissector_Extract_SkipsDelta(t *testing.T) {
-	d := &OpenAIWSEventDissector{}
+func TestOpenAIWSDissector_Extract_SkipsDelta(t *testing.T) {
+	d := &OpenAIWSDissector{}
 	body := `{"type":"response.output_text.delta","delta":"Hello"}`
 	result, err := d.Extract(ExtractionInput{
 		RequestBody: []byte(body),
@@ -210,8 +213,16 @@ func TestFindDissectorByName_WS(t *testing.T) {
 		t.Errorf("name = %q, want openai-ws", d.Name())
 	}
 
-	d = FindDissectorByName("openai-ws-event")
-	if d == nil {
-		t.Fatal("openai-ws-event dissector not registered")
+	// Merged dissector handles both WS_REQ and WS_RESP
+	if !d.CanHandle("wss://api.openai.com/v1/responses", "WS_REQ", "api.openai.com") {
+		t.Error("should handle WS_REQ")
+	}
+	if !d.CanHandle("wss://api.openai.com/v1/responses", "WS_RESP", "api.openai.com") {
+		t.Error("should handle WS_RESP")
+	}
+
+	// openai-ws-event no longer exists as separate dissector
+	if FindDissectorByName("openai-ws-event") != nil {
+		t.Error("openai-ws-event should no longer be registered")
 	}
 }

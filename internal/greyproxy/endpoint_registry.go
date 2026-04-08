@@ -2,6 +2,7 @@ package greyproxy
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -44,7 +45,7 @@ var builtinRules = []EndpointRule{
 	{HostPattern: "api.anthropic.com", PathPattern: "/v1/messages", Method: "POST", DecoderName: "anthropic", Priority: 0},
 	{HostPattern: "api.openai.com", PathPattern: "/v1/responses", Method: "POST", DecoderName: "openai", Priority: 0},
 	{HostPattern: "api.openai.com", PathPattern: "/v1/responses", Method: "WS_REQ", DecoderName: "openai-ws", Priority: 0},
-	{HostPattern: "api.openai.com", PathPattern: "/v1/responses", Method: "WS_RESP", DecoderName: "openai-ws-event", Priority: 0},
+	{HostPattern: "api.openai.com", PathPattern: "/v1/responses", Method: "WS_RESP", DecoderName: "openai-ws", Priority: 0},
 	{HostPattern: "api.openai.com", PathPattern: "/v1/chat/completions", Method: "POST", DecoderName: "openai-chat", Priority: 0},
 	{HostPattern: "openrouter.ai", PathPattern: "/api/v1/chat/completions", Method: "POST", DecoderName: "openai-chat", Priority: 0},
 	{HostPattern: "generativelanguage.googleapis.com", PathPattern: "/v1beta/models/*", Method: "POST", DecoderName: "google-ai", Priority: 0},
@@ -233,6 +234,50 @@ func (r *EndpointRegistry) DeleteRule(id int64) error {
 	}
 	r.reload()
 	return nil
+}
+
+// AutoDetectAndCreate probes a request body to guess the decoder for an unknown host.
+// If the body looks like an OpenAI-compatible chat completions request (has "model"
+// and "messages" fields), it creates a user-defined endpoint rule and returns the
+// matching dissector. Returns nil if detection fails.
+func (r *EndpointRegistry) AutoDetectAndCreate(url, method, host string, body []byte) dissector.Dissector {
+	if method != "POST" || host == "" || len(body) == 0 {
+		return nil
+	}
+	path := extractPath(url)
+
+	// Quick JSON probe: check for OpenAI chat completions shape
+	var probe struct {
+		Model    string            `json:"model"`
+		Messages []json.RawMessage `json:"messages"`
+	}
+	if json.Unmarshal(body, &probe) != nil || probe.Model == "" || len(probe.Messages) == 0 {
+		return nil
+	}
+
+	// Looks like OpenAI chat completions format
+	decoderName := "openai-chat"
+	d := dissector.FindDissectorByName(decoderName)
+	if d == nil {
+		return nil
+	}
+
+	// Create the rule
+	id, err := r.CreateRule(EndpointRule{
+		HostPattern: host,
+		PathPattern: path,
+		Method:      "POST",
+		DecoderName: decoderName,
+		Priority:    5,
+		Enabled:     true,
+	})
+	if err != nil {
+		slog.Warn("endpoint_registry: auto-detect failed to create rule", "host", host, "path", path, "error", err)
+		return nil
+	}
+	slog.Info("endpoint_registry: auto-detected OpenAI-compatible endpoint, created rule",
+		"host", host, "path", path, "decoder", decoderName, "rule_id", id)
+	return d
 }
 
 // extractPath returns the path portion of a URL (before query string).
