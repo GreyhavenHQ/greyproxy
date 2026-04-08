@@ -20,7 +20,7 @@ import (
 // that requires reprocessing existing conversations (e.g. new fields, linking).
 // When the stored version differs from this constant, the settings page
 // offers a "Rebuild conversations" action.
-const AssemblerVersion = 11
+const AssemblerVersion = 13
 
 // ConversationAssembler subscribes to EventTransactionNew and reassembles
 // LLM conversations from HTTP transactions using registered dissectors.
@@ -1049,14 +1049,32 @@ func detectProvider(entries []transactionEntry) string {
 // inferClientName detects the coding tool client from request headers and
 // other signals. This is a basic detection; the full ClientAdapter system
 // (Phase 2+) provides richer detection with confidence scoring.
+// containerToClient maps greywall container names (process identifiers from
+// SOCKS5 auth) to client adapter names. This is the most reliable detection
+// signal since it comes from the OS-level process name.
+var containerToClient = map[string]string{
+	"claude":  "claude-code",
+	"codex":   "codex",
+	"opencode": "opencode",
+	"aider":   "aider",
+	"gemini":  "gemini-cli",
+}
+
 func inferClientName(provider string, entries []transactionEntry) string {
+	// 1. Container name from greywall (most reliable: OS-level process ID)
+	for _, e := range entries {
+		if name, ok := containerToClient[e.containerName]; ok {
+			return name
+		}
+	}
+
+	// 2. Header-based detection (for traffic not routed through greywall)
 	for _, e := range entries {
 		h := e.requestHeaders
 		if h == nil {
 			continue
 		}
 		ua := h.Get("User-Agent")
-		// High-confidence header-based detection
 		if h.Get("Originator") == "codex_exec" {
 			return "codex"
 		}
@@ -1076,13 +1094,21 @@ func inferClientName(provider string, entries []transactionEntry) string {
 			return "aider"
 		}
 	}
-	// Check dissector client hints (e.g. from WS metadata)
+
+	// 3. Dissector client hints (e.g. from WS metadata)
 	for _, e := range entries {
 		if e.result != nil && e.result.ClientHint != "" {
 			return e.result.ClientHint
 		}
 	}
-	// Fallback: infer from provider
+
+	// 4. Adapter detection from request content (system prompt fingerprinting)
+	adapter := DetectClientFromEntries(entries)
+	if adapter.Name() != "generic" {
+		return adapter.Name()
+	}
+
+	// 5. Fallback: infer from provider
 	switch provider {
 	case "anthropic":
 		return "claude-code"

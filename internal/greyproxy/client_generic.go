@@ -34,6 +34,10 @@ func (a *GenericAdapter) ClassifyThread(result *dissector.ExtractionResult) stri
 	if toolCount > 0 {
 		return "subagent"
 	}
+	// Requests with user messages are real conversations, not utility calls.
+	if result.MessageCount > 0 {
+		return "main"
+	}
 	return "utility"
 }
 

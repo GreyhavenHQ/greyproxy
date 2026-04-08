@@ -13,7 +13,7 @@ type AiderAdapter struct{}
 
 func (a *AiderAdapter) Name() string { return "aider" }
 
-func (a *AiderAdapter) DetectConfidence(headers http.Header, _ *dissector.ExtractionResult) float64 {
+func (a *AiderAdapter) DetectConfidence(headers http.Header, result *dissector.ExtractionResult) float64 {
 	if headers != nil {
 		if headers.Get("Http-Referer") == "https://aider.chat" {
 			return 0.95
@@ -24,6 +24,18 @@ func (a *AiderAdapter) DetectConfidence(headers http.Header, _ *dissector.Extrac
 		ua := headers.Get("User-Agent")
 		if strings.Contains(ua, "litellm/") && headers.Get("X-Title") == "Aider" {
 			return 0.8
+		}
+	}
+	// Detect from system prompt content when using OpenAI SDK directly
+	// (no aider-specific headers in that case).
+	// Aider's system prompt always starts with "Act as an expert software developer"
+	// and includes distinctive phrasing like "You are diligent and tireless".
+	if result != nil {
+		for _, sb := range result.SystemBlocks {
+			if strings.Contains(sb.Text, "expert software developer") &&
+				strings.Contains(sb.Text, "diligent and tireless") {
+				return 0.85
+			}
 		}
 	}
 	return 0.0
