@@ -20,7 +20,7 @@ import (
 // that requires reprocessing existing conversations (e.g. new fields, linking).
 // When the stored version differs from this constant, the settings page
 // offers a "Rebuild conversations" action.
-const AssemblerVersion = 13
+const AssemblerVersion = 5
 
 // ConversationAssembler subscribes to EventTransactionNew and reassembles
 // LLM conversations from HTTP transactions using registered dissectors.
