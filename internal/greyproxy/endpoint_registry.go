@@ -44,10 +44,7 @@ var builtinRules = []EndpointRule{
 	{HostPattern: "api.anthropic.com", PathPattern: "/v1/messages", Method: "POST", DecoderName: "anthropic", Priority: 0},
 	{HostPattern: "api.openai.com", PathPattern: "/v1/responses", Method: "POST", DecoderName: "openai", Priority: 0},
 	{HostPattern: "api.openai.com", PathPattern: "/v1/responses", Method: "WS_REQ", DecoderName: "openai-ws", Priority: 0},
-	// WS_RESP frames are not routed through the assembler: response.completed
-	// events lack session IDs and would be orphaned. The WS_REQ frames already
-	// carry the full conversation history. The openai-ws-event dissector remains
-	// registered for future use (e.g. pairing responses to requests).
+	{HostPattern: "api.openai.com", PathPattern: "/v1/responses", Method: "WS_RESP", DecoderName: "openai-ws-event", Priority: 0},
 	{HostPattern: "api.openai.com", PathPattern: "/v1/chat/completions", Method: "POST", DecoderName: "openai-chat", Priority: 0},
 	{HostPattern: "openrouter.ai", PathPattern: "/api/v1/chat/completions", Method: "POST", DecoderName: "openai-chat", Priority: 0},
 	{HostPattern: "generativelanguage.googleapis.com", PathPattern: "/v1beta/models/*", Method: "POST", DecoderName: "google-ai", Priority: 0},

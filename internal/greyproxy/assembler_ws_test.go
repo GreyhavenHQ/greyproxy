@@ -280,6 +280,30 @@ func TestAssembleConversation_NonWS_StillUsesBestEntry(t *testing.T) {
 	}
 }
 
+// TestAssignWSResponseSessions verifies that sessionless WS_RESP entries
+// get assigned the session of the nearest preceding WS_REQ.
+func TestAssignWSResponseSessions(t *testing.T) {
+	entries := []transactionEntry{
+		{txnID: 1, url: "wss://api.openai.com:80/v1/responses", sessionID: "sess-A"},          // WS_REQ
+		{txnID: 2, url: "wss://api.openai.com:80/v1/responses", sessionID: ""},                 // WS_RESP (no session)
+		{txnID: 3, url: "wss://api.openai.com:80/v1/responses", sessionID: ""},                 // WS_RESP (no session)
+		{txnID: 4, url: "wss://api.openai.com:80/v1/responses", sessionID: "sess-A"},          // WS_REQ
+		{txnID: 5, url: "wss://api.openai.com:80/v1/responses", sessionID: ""},                 // WS_RESP (no session)
+		{txnID: 6, url: "https://api.anthropic.com/v1/messages", sessionID: ""},                 // non-WS (should not be touched)
+		{txnID: 7, url: "wss://api.openai.com:80/v1/responses", sessionID: "sess-B"},          // WS_REQ different session
+		{txnID: 8, url: "wss://api.openai.com:80/v1/responses", sessionID: ""},                 // WS_RESP (should get sess-B)
+	}
+
+	assignWSResponseSessions(entries)
+
+	expected := []string{"sess-A", "sess-A", "sess-A", "sess-A", "sess-A", "", "sess-B", "sess-B"}
+	for i, want := range expected {
+		if entries[i].sessionID != want {
+			t.Errorf("entries[%d] (txnID=%d) sessionID = %q, want %q", i, entries[i].txnID, entries[i].sessionID, want)
+		}
+	}
+}
+
 func stepsJSON(steps []map[string]any) string {
 	b, _ := json.MarshalIndent(steps, "", "  ")
 	return string(b)

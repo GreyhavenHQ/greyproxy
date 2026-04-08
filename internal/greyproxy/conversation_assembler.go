@@ -20,7 +20,7 @@ import (
 // that requires reprocessing existing conversations (e.g. new fields, linking).
 // When the stored version differs from this constant, the settings page
 // offers a "Rebuild conversations" action.
-const AssemblerVersion = 9
+const AssemblerVersion = 10
 
 // ConversationAssembler subscribes to EventTransactionNew and reassembles
 // LLM conversations from HTTP transactions using registered dissectors.
@@ -399,6 +399,14 @@ func (a *ConversationAssembler) loadNewTransactions(sinceID int64) ([]transactio
 	if scanned > 0 {
 		slog.Info("assembler: scan complete", "scanned", scanned, "matched", matched)
 	}
+
+	// Assign sessionless WS_RESP entries to the session of the nearest
+	// preceding WS_REQ. WS_RESP response.completed frames carry the assistant
+	// response but have no prompt_cache_key; they belong to whichever WS_REQ
+	// was last sent on the same connection. Since entries are ordered by ID
+	// (chronological), we track the last-seen WS_REQ session and propagate it.
+	assignWSResponseSessions(entries)
+
 	return entries, maxID, nil
 }
 
@@ -1295,6 +1303,20 @@ func assembleConversation(sessionID string, entries []transactionEntry) assemble
 	}
 
 	return conv
+}
+
+// assignWSResponseSessions assigns session IDs to sessionless WS_RESP entries
+// by propagating the session from the nearest preceding WS_REQ. Entries must
+// be sorted by ID (chronological order) before calling this function.
+func assignWSResponseSessions(entries []transactionEntry) {
+	var lastWSSession string
+	for i := range entries {
+		if entries[i].sessionID != "" && strings.HasPrefix(entries[i].url, "wss://") {
+			lastWSSession = entries[i].sessionID
+		} else if entries[i].sessionID == "" && strings.HasPrefix(entries[i].url, "wss://") && lastWSSession != "" {
+			entries[i].sessionID = lastWSSession
+		}
+	}
 }
 
 // isIncrementalWSSession returns true if the entries represent a WebSocket
