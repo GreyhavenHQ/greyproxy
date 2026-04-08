@@ -10,10 +10,11 @@ import (
 	"github.com/greyhavenhq/greyproxy/internal/greyproxy/dissector"
 )
 
-// validHTTPMethods lists the standard HTTP methods plus the wildcard.
-var validHTTPMethods = map[string]bool{
+// validMethods lists the accepted HTTP methods, WebSocket pseudo-methods, and wildcard.
+var validMethods = map[string]bool{
 	"GET": true, "HEAD": true, "POST": true, "PUT": true,
-	"PATCH": true, "DELETE": true, "OPTIONS": true, "TRACE": true, "*": true,
+	"PATCH": true, "DELETE": true, "OPTIONS": true, "TRACE": true,
+	"WS_REQ": true, "WS_RESP": true, "*": true,
 }
 
 // validateEndpointRule checks user input for an endpoint rule.
@@ -33,7 +34,7 @@ func validateEndpointRule(hostPattern, pathPattern, method, decoderName string) 
 		return "host_pattern must not be empty or a bare wildcard"
 	}
 	// Validate method
-	if !validHTTPMethods[strings.ToUpper(method)] {
+	if !validMethods[strings.ToUpper(method)] {
 		return "invalid method: " + method + "; expected a standard HTTP method or *"
 	}
 	return ""

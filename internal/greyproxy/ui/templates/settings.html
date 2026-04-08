@@ -367,6 +367,7 @@
                 <select id="ep-method"
                     class="w-full px-3 py-1.5 text-sm bg-background border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary">
                     <option value="POST" selected>POST</option>
+                    <option value="WebSocket">WebSocket</option>
                     <option value="*">* (any)</option>
                     <option value="GET">GET</option>
                     <option value="PUT">PUT</option>
@@ -1210,6 +1211,21 @@
         return html;
     }
 
+    function createRule(host, path, method, decoder) {
+        return fetch(prefix + '/api/endpoint-rules', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                host_pattern: host,
+                path_pattern: path,
+                method: method,
+                decoder_name: decoder,
+                priority: 10,
+                enabled: true
+            })
+        }).then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); });
+    }
+
     window.addEndpointRule = function() {
         var host = document.getElementById('ep-host').value.trim();
         var path = document.getElementById('ep-path').value.trim();
@@ -1228,19 +1244,24 @@
         btn.disabled = true;
         btn.classList.add('opacity-50');
 
-        fetch(prefix + '/api/endpoint-rules', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                host_pattern: host,
-                path_pattern: path,
-                method: method,
-                decoder_name: decoder,
-                priority: 10,
-                enabled: true
-            })
-        })
-        .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
+        // WebSocket creates two rules (WS_REQ + WS_RESP) pointing to the same decoder
+        var promises;
+        if (method === 'WebSocket') {
+            promises = Promise.all([
+                createRule(host, path, 'WS_REQ', decoder),
+                createRule(host, path, 'WS_RESP', decoder)
+            ]).then(function(results) {
+                // Return first error if any
+                for (var i = 0; i < results.length; i++) {
+                    if (!results[i].ok) return results[i];
+                }
+                return results[0];
+            });
+        } else {
+            promises = createRule(host, path, method, decoder);
+        }
+
+        promises
         .then(function(res) {
             btn.disabled = false;
             btn.classList.remove('opacity-50');
