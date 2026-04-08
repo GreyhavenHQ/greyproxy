@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/greyhavenhq/greyproxy/internal/greyproxy/dissector"
@@ -20,7 +21,7 @@ import (
 // that requires reprocessing existing conversations (e.g. new fields, linking).
 // When the stored version differs from this constant, the settings page
 // offers a "Rebuild conversations" action.
-const AssemblerVersion = 5
+const AssemblerVersion = 6
 
 // ConversationAssembler subscribes to EventTransactionNew and reassembles
 // LLM conversations from HTTP transactions using registered dissectors.
@@ -29,11 +30,24 @@ type ConversationAssembler struct {
 	bus      *EventBus
 	Registry *EndpointRegistry
 	mu       sync.Mutex // protects processNewTransactions / RebuildAllConversations
+	enabled  atomic.Bool
 }
 
 // NewConversationAssembler creates a new assembler.
 func NewConversationAssembler(db *DB, bus *EventBus, registry *EndpointRegistry) *ConversationAssembler {
-	return &ConversationAssembler{db: db, bus: bus, Registry: registry}
+	a := &ConversationAssembler{db: db, bus: bus, Registry: registry}
+	a.enabled.Store(true)
+	return a
+}
+
+// SetEnabled toggles conversation tracking on or off at runtime.
+func (a *ConversationAssembler) SetEnabled(enabled bool) {
+	a.enabled.Store(enabled)
+	if enabled {
+		slog.Info("assembler: conversation tracking enabled")
+	} else {
+		slog.Info("assembler: conversation tracking disabled")
+	}
 }
 
 // StoredAssemblerVersion returns the version stored in the DB, or 0 if unset/invalid.
@@ -125,6 +139,9 @@ func (a *ConversationAssembler) processNewTransactions() {
 
 // processNewTransactionsLocked runs incremental assembly. Caller must hold a.mu.
 func (a *ConversationAssembler) processNewTransactionsLocked() {
+	if !a.enabled.Load() {
+		return
+	}
 	lastIDStr, err := GetConversationProcessingState(a.db, "last_processed_id")
 	if err != nil {
 		slog.Warn("assembler: failed to get last processed ID", "error", err)
@@ -355,7 +372,11 @@ func (a *ConversationAssembler) loadNewTransactions(sinceID int64) ([]transactio
 
 		d := a.Registry.FindDissector(url, method, host)
 		if d == nil {
-			continue
+			// Try auto-detecting OpenAI-compatible endpoints from body shape
+			d = a.Registry.AutoDetectAndCreate(url, method, host, reqBody)
+			if d == nil {
+				continue
+			}
 		}
 
 		result, err := d.Extract(dissector.ExtractionInput{
@@ -487,7 +508,10 @@ func (a *ConversationAssembler) loadTransactionsForSessions(sessionIDs map[strin
 
 		d := a.Registry.FindDissector(url, method, host)
 		if d == nil {
-			continue
+			d = a.Registry.AutoDetectAndCreate(url, method, host, reqBody)
+			if d == nil {
+				continue
+			}
 		}
 
 		result, err := d.Extract(dissector.ExtractionInput{

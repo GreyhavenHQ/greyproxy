@@ -8,10 +8,15 @@ import (
 )
 
 type settingsResponse struct {
-	Theme           string                   `json:"theme"`
-	Notifications   notificationSettingsResp `json:"notifications"`
-	Mitm            mitmSettingsResp         `json:"mitm"`
-	RedactedHeaders []string                 `json:"redactedHeaders"`
+	Theme           string                        `json:"theme"`
+	Notifications   notificationSettingsResp      `json:"notifications"`
+	Mitm            mitmSettingsResp              `json:"mitm"`
+	Conversations   conversationsSettingsResp     `json:"conversations"`
+	RedactedHeaders []string                      `json:"redactedHeaders"`
+}
+
+type conversationsSettingsResp struct {
+	Enabled bool `json:"enabled"`
 }
 
 type mitmSettingsResp struct {
@@ -52,6 +57,7 @@ func buildSettingsResponse(s *Shared) settingsResponse {
 	return settingsResponse{
 		Theme:           resolved.Theme,
 		RedactedHeaders: resolved.RedactedHeaders,
+		Conversations:   conversationsSettingsResp{Enabled: resolved.ConversationsEnabled},
 		Notifications: notificationSettingsResp{
 			Enabled:         resolved.NotificationsEnabled,
 			Available:       info.Available,
@@ -79,6 +85,9 @@ func SettingsUpdateHandler(s *Shared) gin.HandlerFunc {
 			Mitm *struct {
 				Enabled *bool `json:"enabled"`
 			} `json:"mitm"`
+			Conversations *struct {
+				Enabled *bool `json:"enabled"`
+			} `json:"conversations"`
 			RedactedHeaders []string `json:"redactedHeaders"`
 		}
 		if err := c.ShouldBindJSON(&body); err != nil {
@@ -100,6 +109,9 @@ func SettingsUpdateHandler(s *Shared) gin.HandlerFunc {
 		}
 		if body.Mitm != nil && body.Mitm.Enabled != nil {
 			patch.MitmEnabled = body.Mitm.Enabled
+		}
+		if body.Conversations != nil && body.Conversations.Enabled != nil {
+			patch.ConversationsEnabled = body.Conversations.Enabled
 		}
 		if body.RedactedHeaders != nil {
 			patch.RedactedHeaders = body.RedactedHeaders

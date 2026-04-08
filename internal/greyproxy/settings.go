@@ -10,10 +10,11 @@ import (
 // UserSettings stores user-overridden settings. Only non-nil fields
 // have been explicitly set by the user and will be persisted to disk.
 type UserSettings struct {
-	Theme                *string  `json:"theme,omitempty"`
-	NotificationsEnabled *bool    `json:"notificationsEnabled,omitempty"`
-	MitmEnabled          *bool    `json:"mitmEnabled,omitempty"`
-	RedactedHeaders      []string `json:"redactedHeaders,omitempty"`
+	Theme                 *string  `json:"theme,omitempty"`
+	NotificationsEnabled  *bool    `json:"notificationsEnabled,omitempty"`
+	MitmEnabled           *bool    `json:"mitmEnabled,omitempty"`
+	ConversationsEnabled  *bool    `json:"conversationsEnabled,omitempty"`
+	RedactedHeaders       []string `json:"redactedHeaders,omitempty"`
 }
 
 // ResolvedSettings is the fully resolved settings with defaults applied.
@@ -21,6 +22,7 @@ type ResolvedSettings struct {
 	Theme                string   `json:"theme"`
 	NotificationsEnabled bool     `json:"notificationsEnabled"`
 	MitmEnabled          bool     `json:"mitmEnabled"`
+	ConversationsEnabled bool     `json:"conversationsEnabled"`
 	RedactedHeaders      []string `json:"redactedHeaders"`
 }
 
@@ -34,8 +36,9 @@ type SettingsManager struct {
 
 	defaultNotificationsEnabled bool
 
-	onNotificationsChanged func(bool)
-	onMitmChanged          func(bool)
+	onNotificationsChanged  func(bool)
+	onMitmChanged           func(bool)
+	onConversationsChanged  func(bool)
 
 	redactor *HeaderRedactor
 }
@@ -58,6 +61,11 @@ func (m *SettingsManager) OnNotificationsChanged(fn func(bool)) {
 // OnMitmChanged sets a callback invoked when the MITM enabled state changes.
 func (m *SettingsManager) OnMitmChanged(fn func(bool)) {
 	m.onMitmChanged = fn
+}
+
+// OnConversationsChanged sets a callback invoked when conversation tracking is toggled.
+func (m *SettingsManager) OnConversationsChanged(fn func(bool)) {
+	m.onConversationsChanged = fn
 }
 
 // Load reads user settings from disk. If the file doesn't exist,
@@ -97,6 +105,7 @@ func (m *SettingsManager) resolve() ResolvedSettings {
 		Theme:                "system",
 		NotificationsEnabled: m.defaultNotificationsEnabled,
 		MitmEnabled:          true, // MITM enabled by default
+		ConversationsEnabled: true, // Conversation tracking enabled by default
 		RedactedHeaders:      DefaultRedactedHeaders,
 	}
 	if m.user.Theme != nil {
@@ -107,6 +116,9 @@ func (m *SettingsManager) resolve() ResolvedSettings {
 	}
 	if m.user.MitmEnabled != nil {
 		s.MitmEnabled = *m.user.MitmEnabled
+	}
+	if m.user.ConversationsEnabled != nil {
+		s.ConversationsEnabled = *m.user.ConversationsEnabled
 	}
 	if m.user.RedactedHeaders != nil {
 		s.RedactedHeaders = append(DefaultRedactedHeaders, m.user.RedactedHeaders...)
@@ -146,6 +158,13 @@ func (m *SettingsManager) Update(patch UserSettings) (ResolvedSettings, error) {
 		mitmChanged = old != *patch.MitmEnabled
 	}
 
+	var convChanged bool
+	if patch.ConversationsEnabled != nil {
+		old := m.resolve().ConversationsEnabled
+		m.user.ConversationsEnabled = patch.ConversationsEnabled
+		convChanged = old != *patch.ConversationsEnabled
+	}
+
 	if patch.RedactedHeaders != nil {
 		m.user.RedactedHeaders = patch.RedactedHeaders
 		m.rebuildRedactor()
@@ -163,12 +182,15 @@ func (m *SettingsManager) Update(patch UserSettings) (ResolvedSettings, error) {
 	if mitmChanged && m.onMitmChanged != nil {
 		m.onMitmChanged(resolved.MitmEnabled)
 	}
+	if convChanged && m.onConversationsChanged != nil {
+		m.onConversationsChanged(resolved.ConversationsEnabled)
+	}
 
 	return resolved, nil
 }
 
 func (m *SettingsManager) save() error {
-	if m.user.Theme == nil && m.user.NotificationsEnabled == nil && m.user.MitmEnabled == nil && m.user.RedactedHeaders == nil {
+	if m.user.Theme == nil && m.user.NotificationsEnabled == nil && m.user.MitmEnabled == nil && m.user.ConversationsEnabled == nil && m.user.RedactedHeaders == nil {
 		return nil
 	}
 

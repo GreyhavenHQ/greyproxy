@@ -694,8 +694,13 @@ func (p *program) buildGreyproxyService() error {
 	p.assemblerCancel = assemblerCancel
 	endpointRegistry := greyproxy.NewEndpointRegistry(shared.DB)
 	assembler := greyproxy.NewConversationAssembler(shared.DB, shared.Bus, endpointRegistry)
+	assembler.SetEnabled(resolvedSettings.ConversationsEnabled)
 	shared.Assembler = assembler
 	go assembler.Start(assemblerCtx)
+
+	shared.Settings.OnConversationsChanged(func(enabled bool) {
+		assembler.SetEnabled(enabled)
+	})
 
 	go func() {
 		log.Info("listening on ", svc.Addr())
