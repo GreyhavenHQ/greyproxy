@@ -1131,8 +1131,17 @@ func assembleConversation(sessionID string, entries []transactionEntry) assemble
 	}
 
 	conv.model = bestEntry.model
-	messages := bestEntry.result.Messages
 	scaffolding := ScaffoldingForClient(clientName)
+
+	// Detect incremental WS sessions (Codex CLI): each WS_REQ only carries
+	// NEW messages for that turn, not the full cumulative history. We must
+	// aggregate messages across all entries and interleave assistant responses
+	// from WS_RESP response.completed frames.
+	messages := bestEntry.result.Messages
+	if isIncrementalWSSession(entries) {
+		messages = aggregateWSMessages(entries)
+	}
+
 	rounds := buildRoundsFromMessages(messages, scaffolding)
 	conv.turnCount = len(rounds)
 
@@ -1286,6 +1295,68 @@ func assembleConversation(sessionID string, entries []transactionEntry) assemble
 	}
 
 	return conv
+}
+
+// isIncrementalWSSession returns true if the entries represent a WebSocket
+// session with incremental messaging (e.g. Codex CLI). In this mode, each
+// WS_REQ only carries new messages for that turn, not the full history.
+func isIncrementalWSSession(entries []transactionEntry) bool {
+	for _, e := range entries {
+		if strings.HasPrefix(e.url, "wss://") {
+			return true
+		}
+	}
+	return false
+}
+
+// aggregateWSMessages collects messages from all WS_REQ entries in
+// chronological order and interleaves assistant responses from WS_RESP
+// response.completed frames (via SSEResponse). This reconstructs the
+// full conversation from incremental WebSocket frames.
+func aggregateWSMessages(entries []transactionEntry) []dissector.Message {
+	var messages []dissector.Message
+
+	for _, e := range entries {
+		if e.result == nil {
+			continue
+		}
+
+		// Append user/tool messages from WS_REQ frames
+		if len(e.result.Messages) > 0 {
+			messages = append(messages, e.result.Messages...)
+		}
+
+		// Append assistant response from WS_RESP response.completed frames
+		if e.result.SSEResponse != nil {
+			sse := e.result.SSEResponse
+			var blocks []dissector.ContentBlock
+
+			if sse.Text != "" {
+				blocks = append(blocks, dissector.ContentBlock{
+					Type: "text",
+					Text: sse.Text,
+				})
+			}
+			for _, tc := range sse.ToolCalls {
+				blocks = append(blocks, dissector.ContentBlock{
+					Type:        "tool_use",
+					Name:        tc.Tool,
+					ID:          tc.ToolUseID,
+					Input:       tc.InputPreview,
+					ToolSummary: tc.ToolSummary,
+				})
+			}
+
+			if len(blocks) > 0 {
+				messages = append(messages, dissector.Message{
+					Role:    "assistant",
+					Content: blocks,
+				})
+			}
+		}
+	}
+
+	return messages
 }
 
 func mapRequestsToTurns(entries []transactionEntry, numTurns int, scaffolding *ScaffoldingConfig) map[int][]transactionEntry {
