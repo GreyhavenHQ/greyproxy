@@ -578,8 +578,7 @@ func (h *Sniffer) httpRoundTrip(ctx context.Context, rw, cc io.ReadWriteCloser, 
 	}
 
 	if resp.StatusCode == http.StatusSwitchingProtocols {
-		// Fire the hook so the 101 response is visible in the activity log
-		// before the connection is handed off to the WebSocket frame handler.
+		// Fire round-trip hooks for the 101 Upgrade so it gets recorded
 		if h.OnHTTPRoundTrip != nil || GlobalHTTPRoundTripHook != nil {
 			containerName := string(xctx.ClientIDFromContext(ctx))
 			if containerName == "" {
@@ -595,6 +594,13 @@ func (h *Sniffer) httpRoundTrip(ctx context.Context, rw, cc io.ReadWriteCloser, 
 				ResponseHeaders: resp.Header,
 				ContainerName:   containerName,
 				DurationMs:      time.Since(ro.Time).Milliseconds(),
+			}
+			if subInfo != nil {
+				info.SubstitutedCredentials = subInfo.Labels
+				info.SessionID = subInfo.SessionID
+			}
+			if reqBody != nil {
+				info.RequestBody = reqBody.Content()
 			}
 			if h.OnHTTPRoundTrip != nil {
 				h.OnHTTPRoundTrip(info)
@@ -1121,12 +1127,11 @@ func (h *Sniffer) terminateTLSDeferred(ctx context.Context, network string, conn
 		host = hostPart
 	}
 
-	// For deferred mode, prefer http/1.1 with the client but respect client ALPN if present.
-	// (HTTP/2 deferred connect is a future enhancement)
+	// For deferred mode, force http/1.1 with the client.
+	// HTTP/2 does not support WebSocket upgrades via 101 Switching Protocols,
+	// so allowing h2 negotiation here would break WebSocket sniffing.
+	// The upstream connection (lazy dial) negotiates its own ALPN independently.
 	nextProtos := []string{"http/1.1"}
-	if len(clientHello.SupportedProtos) > 0 {
-		nextProtos = clientHello.SupportedProtos
-	}
 
 	ro.TLS.Proto = "http/1.1"
 
