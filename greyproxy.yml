@@ -34,6 +34,8 @@ services:
       auther: auther-0
       metadata:
         sniffing: true
+        sniffing.websocket: true
+        mitm.alpn: "http/1.1"
     listener:
       type: tcp
     admission: admission-0
@@ -49,6 +51,8 @@ services:
       auther: auther-0
       metadata:
         sniffing: true
+        sniffing.websocket: true
+        mitm.alpn: "http/1.1"
     listener:
       type: tcp
     admission: admission-0

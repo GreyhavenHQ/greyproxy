@@ -286,6 +286,10 @@ type assembledTurn struct {
 // --- Transaction loading ---
 
 func (a *ConversationAssembler) loadNewTransactions(sinceID int64) ([]transactionEntry, int64, error) {
+	var totalRows int
+	_ = a.db.ReadDB().QueryRow(`SELECT COUNT(*) FROM http_transactions WHERE id > ?`, sinceID).Scan(&totalRows)
+	slog.Info("assembler: starting scan", "transactions_to_scan", totalRows)
+
 	rows, err := a.db.ReadDB().Query(`
 		SELECT id, timestamp, container_name, url, method, destination_host,
 		       request_body, response_body, response_content_type, duration_ms,

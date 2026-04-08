@@ -124,6 +124,21 @@ type HTTPRoundTripInfo struct {
 // Set this from program initialization to record transactions to the database.
 var GlobalHTTPRoundTripHook func(info HTTPRoundTripInfo)
 
+// WebSocketFrameInfo contains a single WebSocket frame captured during MITM.
+type WebSocketFrameInfo struct {
+	Host          string
+	URI           string
+	From          string // "client" or "server"
+	OpCode        int
+	Fin           bool
+	Rsv1          bool // true when permessage-deflate compression is active
+	Payload       []byte
+	ContainerName string
+}
+
+// GlobalWebSocketFrameHook is called (if set) after each MITM-intercepted WebSocket frame.
+var GlobalWebSocketFrameHook func(info WebSocketFrameInfo)
+
 // ErrRequestDenied is returned by the hold hook to indicate the request should be denied.
 var ErrRequestDenied = errors.New("request denied")
 
@@ -510,6 +525,18 @@ func (h *Sniffer) httpRoundTrip(ctx context.Context, rw, cc io.ReadWriteCloser, 
 		subInfo = credSub(req)
 	}
 
+	// For WebSocket upgrades, rewrite Sec-Websocket-Extensions to force no-context-takeover
+	// on both sides. This ensures each compressed frame can be decompressed independently,
+	// matching the behaviour of mitmproxy. Without this, permessage-deflate uses a shared
+	// deflate context across frames, making per-frame decompression impossible.
+	if strings.EqualFold(req.Header.Get("Upgrade"), "websocket") {
+		ext := req.Header.Get("Sec-Websocket-Extensions")
+		if strings.Contains(strings.ToLower(ext), "permessage-deflate") {
+			req.Header.Set("Sec-Websocket-Extensions",
+				"permessage-deflate; client_no_context_takeover; server_no_context_takeover")
+		}
+	}
+
 	err = req.Write(cc)
 
 	if reqBody != nil {
@@ -551,6 +578,31 @@ func (h *Sniffer) httpRoundTrip(ctx context.Context, rw, cc io.ReadWriteCloser, 
 	}
 
 	if resp.StatusCode == http.StatusSwitchingProtocols {
+		// Fire the hook so the 101 response is visible in the activity log
+		// before the connection is handed off to the WebSocket frame handler.
+		if h.OnHTTPRoundTrip != nil || GlobalHTTPRoundTripHook != nil {
+			containerName := string(xctx.ClientIDFromContext(ctx))
+			if containerName == "" {
+				containerName = ro.ClientID
+			}
+			info := HTTPRoundTripInfo{
+				Host:            req.Host,
+				Method:          req.Method,
+				URI:             req.RequestURI,
+				Proto:           req.Proto,
+				StatusCode:      resp.StatusCode,
+				RequestHeaders:  ro.HTTP.Request.Header,
+				ResponseHeaders: resp.Header,
+				ContainerName:   containerName,
+				DurationMs:      time.Since(ro.Time).Milliseconds(),
+			}
+			if h.OnHTTPRoundTrip != nil {
+				h.OnHTTPRoundTrip(info)
+			}
+			if GlobalHTTPRoundTripHook != nil {
+				GlobalHTTPRoundTripHook(info)
+			}
+		}
 		h.handleUpgradeResponse(ctx, rw, cc, req, resp, ro, log)
 		return
 	}
@@ -668,6 +720,8 @@ func (h *Sniffer) sniffingWebsocketFrame(ctx context.Context, rw, cc io.ReadWrit
 		sampleRate = math.MaxFloat64
 	}
 
+	containerName := string(xctx.ClientIDFromContext(ctx))
+
 	go func() {
 		ro2 := &xrecorder.HandlerRecorderObject{}
 		*ro2 = *ro
@@ -679,7 +733,7 @@ func (h *Sniffer) sniffingWebsocketFrame(ctx context.Context, rw, cc io.ReadWrit
 		for {
 			start := time.Now()
 
-			if err := h.copyWebsocketFrame(cc, rw, buf, "client", ro); err != nil {
+			if err := h.copyWebsocketFrame(cc, rw, buf, "client", ro, containerName); err != nil {
 				errc <- err
 				return
 			}
@@ -705,7 +759,7 @@ func (h *Sniffer) sniffingWebsocketFrame(ctx context.Context, rw, cc io.ReadWrit
 		for {
 			start := time.Now()
 
-			if err := h.copyWebsocketFrame(rw, cc, buf, "server", ro); err != nil {
+			if err := h.copyWebsocketFrame(rw, cc, buf, "server", ro, containerName); err != nil {
 				errc <- err
 				return
 			}
@@ -724,7 +778,7 @@ func (h *Sniffer) sniffingWebsocketFrame(ctx context.Context, rw, cc io.ReadWrit
 	return nil
 }
 
-func (h *Sniffer) copyWebsocketFrame(w io.Writer, r io.Reader, buf *bytes.Buffer, from string, ro *xrecorder.HandlerRecorderObject) (err error) {
+func (h *Sniffer) copyWebsocketFrame(w io.Writer, r io.Reader, buf *bytes.Buffer, from string, ro *xrecorder.HandlerRecorderObject, containerName string) (err error) {
 	fr := ws_util.Frame{}
 	if _, err = fr.ReadFrom(r); err != nil {
 		return err
@@ -741,10 +795,11 @@ func (h *Sniffer) copyWebsocketFrame(w io.Writer, r io.Reader, buf *bytes.Buffer
 		MaskKey: fr.Header.MaskKey,
 		Length:  fr.Header.PayloadLength,
 	}
-	if opts := h.RecorderOptions; opts != nil && opts.HTTPBody {
-		bodySize := opts.MaxBodySize
-		if bodySize <= 0 {
-			bodySize = DefaultBodySize
+	capturePayload := (h.RecorderOptions != nil && h.RecorderOptions.HTTPBody) || h.OnHTTPRoundTrip != nil || GlobalHTTPRoundTripHook != nil || GlobalWebSocketFrameHook != nil
+	if capturePayload {
+		bodySize := DefaultBodySize
+		if opts := h.RecorderOptions; opts != nil && opts.MaxBodySize > 0 {
+			bodySize = opts.MaxBodySize
 		}
 		if bodySize > MaxBodySize {
 			bodySize = MaxBodySize
@@ -754,10 +809,48 @@ func (h *Sniffer) copyWebsocketFrame(w io.Writer, r io.Reader, buf *bytes.Buffer
 		if _, err := io.Copy(buf, io.LimitReader(fr.Data, int64(bodySize))); err != nil {
 			return err
 		}
-		ws.Payload = buf.Bytes()
+		// Make an independent copy before any unmasking: buf.Bytes() is the backing
+		// array that will be re-used for forwarding via fr.Data below. Mutating it
+		// in-place would send unmasked bytes to the server (still claiming Masked=true),
+		// causing the server to XOR the already-unmasked data → garbage.
+		payload := make([]byte, buf.Len())
+		copy(payload, buf.Bytes())
+
+		// Client→server frames are masked (RFC 6455 §5.3). Unmask the copy so the
+		// captured payload is readable plaintext, not XOR-scrambled bytes.
+		if fr.Header.Masked {
+			mask := [4]byte{
+				byte(fr.Header.MaskKey),
+				byte(fr.Header.MaskKey >> 8),
+				byte(fr.Header.MaskKey >> 16),
+				byte(fr.Header.MaskKey >> 24),
+			}
+			for i := range payload {
+				payload[i] ^= mask[i%4]
+			}
+		}
+
+		ws.Payload = payload
 	}
 
 	ro.Websocket = ws
+
+	if GlobalWebSocketFrameHook != nil && ws.Payload != nil {
+		uri := ""
+		if ro.HTTP != nil {
+			uri = ro.HTTP.URI
+		}
+		GlobalWebSocketFrameHook(WebSocketFrameInfo{
+			Host:          ro.Host,
+			URI:           uri,
+			From:          from,
+			OpCode:        int(fr.Header.OpCode),
+			Fin:           fr.Header.Fin,
+			Rsv1:          fr.Header.Rsv1,
+			Payload:       ws.Payload,
+			ContainerName: containerName,
+		})
+	}
 	length := uint64(fr.Header.Length()) + uint64(fr.Header.PayloadLength)
 	if from == "client" {
 		ro.InputBytes = length

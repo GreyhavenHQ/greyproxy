@@ -564,6 +564,57 @@ func (p *program) buildGreyproxyService() error {
 		}()
 	})
 
+	// Wire WebSocket frame hook to store frames as transactions in the database
+	gostx.SetGlobalMitmWebSocketFrameHook(func(info gostx.MitmWebSocketFrameInfo) {
+		host, portStr, _ := net.SplitHostPort(info.Host)
+		if host == "" {
+			host = info.Host
+		}
+		port, _ := strconv.Atoi(portStr)
+		if port == 0 {
+			port = 443
+		}
+		containerName, _ := greyproxy_plugins.ResolveIdentity(info.ContainerName, "")
+		go func() {
+			if len(info.Payload) == 0 {
+				return
+			}
+			payload := info.Payload
+			// If RSV1 is set, the frame uses permessage-deflate compression.
+			// Decompress without context takeover (append sync tail first).
+			if info.Rsv1 {
+				decompressed, err := decompressWebSocketFrame(payload)
+				if err != nil {
+					log.Debugf("ws frame decompress failed (rsv1=%v from=%s): %v", info.Rsv1, info.From, err)
+				} else {
+					payload = decompressed
+				}
+			}
+			method := "WS_REQ"
+			if info.From == "server" {
+				method = "WS_RESP"
+			}
+			txn, err := greyproxy.CreateHttpTransaction(shared.DB, greyproxy.HttpTransactionCreateInput{
+				ContainerName:   containerName,
+				DestinationHost: host,
+				DestinationPort: port,
+				Method:          method,
+				URL:             "wss://" + info.Host + info.URI,
+				RequestBody:     payload,
+				StatusCode:      101,
+				Result:          "auto",
+			})
+			if err != nil {
+				log.Warnf("failed to store WebSocket frame: %v", err)
+				return
+			}
+			shared.Bus.Publish(greyproxy.Event{
+				Type: greyproxy.EventTransactionNew,
+				Data: txn.ToJSON(false),
+			})
+		}()
+	})
+
 	// Wire MITM request-level hold hook: evaluate destination-level rules
 	gostx.SetGlobalMitmHoldHook(func(ctx context.Context, info gostx.MitmRequestHoldInfo) error {
 		host, portStr, _ := net.SplitHostPort(info.Host)
@@ -592,6 +643,9 @@ func (p *program) buildGreyproxyService() error {
 	// Create the allow-all manager (in-memory, resets on restart).
 	allowAllManager := greyproxy.NewAllowAllManager(shared.Bus)
 	shared.AllowAll = allowAllManager
+	if silentAllow {
+		allowAllManager.Enable(0, greyproxy.SilentModeAllow) // duration=0 means until restart
+	}
 
 	// Initialize Docker resolver if configured.
 	var dockerResolver greyproxy_plugins.ContainerResolver
@@ -763,6 +817,21 @@ func decompressBody(body []byte, encoding string) []byte {
 		return body
 	}
 	return decoded
+}
+
+// decompressWebSocketFrame decompresses a permessage-deflate WebSocket frame payload.
+// The RSV1 bit signals per-frame deflate compression per RFC 7692.
+//
+// Go's compress/flate requires a BFINAL=1 block to terminate cleanly, unlike libz which
+// handles SYNC_FLUSH (BFINAL=0) implicitly. The gorilla/websocket trick is to append both:
+//   - 0x00 0x00 0xff 0xff  — the stripped SYNC_FLUSH terminator
+//   - 0x01 0x00 0x00 0xff 0xff — a BFINAL=1 empty stored block to signal end-of-stream
+func decompressWebSocketFrame(payload []byte) ([]byte, error) {
+	const tail = "\x00\x00\xff\xff\x01\x00\x00\xff\xff"
+	mr := io.MultiReader(bytes.NewReader(payload), strings.NewReader(tail))
+	r := flate.NewReader(mr)
+	defer r.Close()
+	return io.ReadAll(r)
 }
 
 // applyDockerEnvOverrides configures Docker resolution from environment variables.

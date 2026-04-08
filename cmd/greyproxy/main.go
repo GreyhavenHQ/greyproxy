@@ -34,7 +34,8 @@ var (
 	nodes        stringList
 	debug        bool
 	trace        bool
-	metricsAddr string
+	metricsAddr  string
+	silentAllow  bool
 )
 
 func init() {
@@ -92,6 +93,7 @@ func parseFlags() {
 	flag.BoolVar(&debug, "D", false, "debug mode")
 	flag.BoolVar(&trace, "DD", false, "trace mode")
 	flag.StringVar(&metricsAddr, "metrics", "", "metrics service address")
+	flag.BoolVar(&silentAllow, "silent-allow", false, "activate silent allow-all mode until restart")
 	flag.Parse()
 
 	if printVersion {

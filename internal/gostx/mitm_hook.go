@@ -101,6 +101,38 @@ func SetGlobalCredentialSubstituter(hook func(req *http.Request) *CredentialSubs
 	sniffing.SetGlobalCredentialSubstituter(hook)
 }
 
+// MitmWebSocketFrameInfo contains a single WebSocket frame captured during MITM.
+type MitmWebSocketFrameInfo struct {
+	Host          string
+	URI           string
+	From          string // "client" or "server"
+	OpCode        int
+	Fin           bool
+	Rsv1          bool // true when permessage-deflate compression is active
+	Payload       []byte
+	ContainerName string
+}
+
+// SetGlobalMitmWebSocketFrameHook sets a global callback that fires after each MITM-intercepted WebSocket frame.
+func SetGlobalMitmWebSocketFrameHook(hook func(info MitmWebSocketFrameInfo)) {
+	if hook == nil {
+		sniffing.GlobalWebSocketFrameHook = nil
+		return
+	}
+	sniffing.GlobalWebSocketFrameHook = func(info sniffing.WebSocketFrameInfo) {
+		hook(MitmWebSocketFrameInfo{
+			Host:          info.Host,
+			URI:           info.URI,
+			From:          info.From,
+			OpCode:        info.OpCode,
+			Fin:           info.Fin,
+			Rsv1:          info.Rsv1,
+			Payload:       info.Payload,
+			ContainerName: info.ContainerName,
+		})
+	}
+}
+
 // SetGlobalMitmHoldHook sets a global callback that fires BEFORE forwarding a MITM-intercepted
 // HTTP request upstream. Return nil to allow, ErrRequestDenied to deny with 403.
 // The hook may block (e.g., waiting for user approval).

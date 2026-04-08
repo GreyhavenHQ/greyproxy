@@ -36,6 +36,9 @@ WINDOWS_ARCH_LIST = \
 
 all: linux-amd64 darwin-amd64 darwin-arm64 windows-amd64 # Most used
 
+local: ## Build for the current machine, output to ./greyproxy (used by scripts/test-matrix/run.sh)
+	CGO_ENABLED=0 go build --ldflags="$(LDFLAGS)" -o $(NAME) $(GOFILES)
+
 darwin-amd64:
 	GOARCH=amd64 GOOS=darwin $(GOBUILD) -o $(BINDIR)/$(NAME)-$@ $(GOFILES)
 

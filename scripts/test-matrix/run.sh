@@ -1,0 +1,642 @@
+#!/usr/bin/env bash
+# run.sh — AI coding agent test matrix runner for greyproxy dissector research.
+#
+# Each agent runs 3 scenarios in isolated temp directories so greyproxy can
+# capture the HTTP traffic and we can build wire decoders + client adapters.
+#
+# Usage:
+#   ./run.sh [OPTIONS] <TARGET>
+#
+# TARGET:
+#   all          Run every available agent
+#   claudecode   Claude Code (claude CLI by Anthropic)
+#   opencode     OpenCode (opencode CLI by SST)
+#   codex        Codex CLI (codex by OpenAI)
+#   aider        Aider (aider by Paul Gauthier)
+#   gemini       Gemini CLI (gemini by Google)
+#   goose        Goose (goose by Block)
+#   amp          Amp (amp by Sourcegraph)
+#   cursor       Cursor agent (cursor agent CLI)
+#   continue     Continue.dev (cn CLI)
+#
+# Options:
+#   --isolate              Spin up a dedicated greyproxy on test ports with a
+#                          separate database. Safe to run alongside production.
+#                          (Overrides PREFIX for proxy routing.)
+#   --greyproxy-bin PATH   Path to greyproxy binary (default: auto-detect)
+#   --dry-run              Print commands without executing them
+#   --scenario A|B|C|all  Run only a specific scenario (default: all)
+#   --model MODEL          Override model (where supported)
+#   --prefix PREFIX        greywall prefix when not using --isolate (overrides PREFIX env var)
+#
+# Environment:
+#   PREFIX             Prepended to every agent invocation (default: empty)
+#   GREYPROXY_BIN      Path to greyproxy binary (alternative to --greyproxy-bin)
+#   GREYPROXY_DATA_HOME Production data dir (used for CA cert copy in --isolate)
+#
+# Examples:
+#   ./run.sh --isolate claudecode
+#   ./run.sh --isolate --dry-run all
+#   ./run.sh --isolate --scenario C opencode
+#   PREFIX="greywall --" ./run.sh claudecode          # use production proxy
+
+set -euo pipefail
+
+# ─── Config ──────────────────────────────────────────────────────────────────
+
+PREFIX="${PREFIX:-}"
+DRY_RUN=false
+SCENARIO="all"
+MODEL_OVERRIDE=""
+ISOLATE=false
+GREYPROXY_BIN="${GREYPROXY_BIN:-}"
+
+# Isolated instance ports (offset +1000 from production defaults)
+TEST_PROXY_HTTP=44051
+TEST_PROXY_SOCKS5=44052
+TEST_PROXY_DNS=44053
+TEST_DASHBOARD=44080
+
+# Will be set by setup_isolated_proxy
+ISOLATED_DATA_DIR=""
+ISOLATED_PID=""
+ISOLATED_BIN=""
+
+# ─── Argument parsing ────────────────────────────────────────────────────────
+
+usage() {
+    sed -n '/^# run.sh/,/^[^#]/{ /^#/p }' "$0" | sed 's/^# \?//'
+    exit 1
+}
+
+TARGET=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --isolate)         ISOLATE=true; shift ;;
+        --greyproxy-bin)   GREYPROXY_BIN="$2"; shift 2 ;;
+        --dry-run)         DRY_RUN=true; shift ;;
+        --scenario)        SCENARIO="$2"; shift 2 ;;
+        --model)           MODEL_OVERRIDE="$2"; shift 2 ;;
+        --prefix)          PREFIX="$2"; shift 2 ;;
+        --help|-h)         usage ;;
+        all|claudecode|opencode|codex|aider|gemini|goose|amp|cursor|continue)
+                           TARGET="$1"; shift ;;
+        *)                 echo "Unknown argument: $1"; usage ;;
+    esac
+done
+
+if [[ -z "$TARGET" ]]; then
+    echo "Error: target required"
+    usage
+fi
+
+# ─── Helpers ─────────────────────────────────────────────────────────────────
+
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+RED='\033[0;31m'
+RESET='\033[0m'
+
+log()  { echo -e "${CYAN}[run.sh]${RESET} $*"; }
+ok()   { echo -e "${GREEN}[ok]${RESET} $*"; }
+warn() { echo -e "${YELLOW}[warn]${RESET} $*"; }
+err()  { echo -e "${RED}[err]${RESET} $*"; }
+
+run_cmd() {
+    local label="$1"; shift
+    echo ""
+    echo -e "${CYAN}━━━ ${label} ━━━${RESET}"
+    echo -e "${YELLOW}CMD:${RESET} $*"
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo -e "${YELLOW}(dry-run — skipping)${RESET}"
+        return
+    fi
+    "$@" || { err "Command exited with code $?"; return 1; }
+}
+
+# ─── Isolated greyproxy setup ────────────────────────────────────────────────
+
+find_greyproxy_bin() {
+    if [[ -n "$GREYPROXY_BIN" ]]; then
+        echo "$GREYPROXY_BIN"
+        return
+    fi
+    # Common locations
+    local candidates=(
+        "$(dirname "$0")/../../greyproxy"
+        "/tmp/greyproxy-extract-"*/greyproxy
+        "$HOME/.local/bin/greyproxy"
+        "$(command -v greyproxy 2>/dev/null || true)"
+    )
+    for c in "${candidates[@]}"; do
+        # Expand globs
+        for f in $c; do
+            if [[ -x "$f" ]]; then
+                echo "$f"
+                return
+            fi
+        done
+    done
+    echo ""
+}
+
+find_prod_data_dir() {
+    if [[ -n "${GREYPROXY_DATA_HOME:-}" ]]; then
+        echo "$GREYPROXY_DATA_HOME"
+        return
+    fi
+    if [[ -n "${XDG_DATA_HOME:-}" ]]; then
+        echo "$XDG_DATA_HOME/greyproxy"
+        return
+    fi
+    echo "$HOME/.local/share/greyproxy"
+}
+
+write_isolated_config() {
+    local cfg_file="$1"
+    local data_dir="$2"
+    cat > "$cfg_file" <<EOF
+# Isolated greyproxy config for test matrix runner.
+# Generated by run.sh — do not edit manually.
+log:
+  level: debug
+  format: json
+  output: stdout
+
+greyproxy:
+  addr: ":${TEST_DASHBOARD}"
+  pathPrefix: /
+  db: "${data_dir}/greyproxy.db"
+  auther: auther-0
+  admission: admission-0
+  bypass: bypass-0
+  resolver: resolver-0
+  notifications:
+    enabled: true
+
+services:
+  - name: http-proxy
+    addr: ":${TEST_PROXY_HTTP}"
+    handler:
+      type: http
+      auther: auther-0
+      metadata:
+        sniffing: true
+        sniffing.websocket: true
+        mitm.alpn: "http/1.1"
+    listener:
+      type: tcp
+    admission: admission-0
+    bypass: bypass-0
+    resolver: resolver-0
+    hosts: hosts-0
+
+  - name: socks5-proxy
+    addr: ":${TEST_PROXY_SOCKS5}"
+    handler:
+      type: socks5
+      auther: auther-0
+      metadata:
+        sniffing: true
+        sniffing.websocket: true
+        mitm.alpn: "http/1.1"
+    listener:
+      type: tcp
+    admission: admission-0
+    bypass: bypass-0
+    resolver: resolver-0
+    hosts: hosts-0
+
+  - name: dns-proxy-udp
+    addr: :${TEST_PROXY_DNS}
+    handler:
+      type: dns
+    listener:
+      type: dns
+      metadata:
+        mode: udp
+    resolver: resolver-0
+    forwarder:
+      nodes:
+        - name: dns-upstream
+          addr: 1.1.1.1:53
+
+  - name: dns-proxy-tcp
+    addr: :${TEST_PROXY_DNS}
+    handler:
+      type: dns
+    listener:
+      type: tcp
+    resolver: resolver-0
+    forwarder:
+      nodes:
+        - name: dns-upstream
+          addr: 1.1.1.1:53
+
+hosts:
+  - name: hosts-0
+    mappings: []
+EOF
+}
+
+setup_isolated_proxy() {
+    local bin
+    bin="$(find_greyproxy_bin)"
+    if [[ -z "$bin" ]]; then
+        err "greyproxy binary not found. Use --greyproxy-bin /path/to/greyproxy"
+        exit 1
+    fi
+    ISOLATED_BIN="$bin"
+    log "using greyproxy binary: $bin"
+
+    local prod_data
+    prod_data="$(find_prod_data_dir)"
+
+    ISOLATED_DATA_DIR="$(mktemp -d /tmp/greyproxy-test-XXXXXX)"
+    local cfg_file="$ISOLATED_DATA_DIR/greyproxy.yml"
+
+    # Copy CA cert from production so MITM is trusted by system store
+    if [[ -f "$prod_data/ca-cert.pem" && -f "$prod_data/ca-key.pem" ]]; then
+        cp "$prod_data/ca-cert.pem" "$ISOLATED_DATA_DIR/"
+        cp "$prod_data/ca-key.pem" "$ISOLATED_DATA_DIR/"
+        log "reusing CA cert from $prod_data"
+    else
+        warn "No CA cert found at $prod_data — greyproxy will generate a new one"
+        warn "Agents may reject HTTPS connections if the new cert is not trusted"
+    fi
+
+    write_isolated_config "$cfg_file" "$ISOLATED_DATA_DIR"
+
+    log "starting isolated greyproxy (dashboard :${TEST_DASHBOARD}, proxy :${TEST_PROXY_HTTP}/:${TEST_PROXY_SOCKS5})"
+    log "isolated DB: $ISOLATED_DATA_DIR/greyproxy.db"
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        warn "(dry-run) would run: GREYPROXY_DATA_HOME=$ISOLATED_DATA_DIR $bin serve -C $cfg_file"
+        return
+    fi
+
+    GREYPROXY_DATA_HOME="$ISOLATED_DATA_DIR" "$bin" serve -C "$cfg_file" -silent-allow \
+        > "$ISOLATED_DATA_DIR/greyproxy.log" 2>&1 &
+    ISOLATED_PID=$!
+    log "isolated greyproxy PID: $ISOLATED_PID"
+
+    # Wait for dashboard to be ready (up to 15s)
+    local deadline=$(( $(date +%s) + 15 ))
+    while [[ $(date +%s) -lt $deadline ]]; do
+        if curl -sf "http://localhost:${TEST_DASHBOARD}/api/health" >/dev/null 2>&1 ||
+           curl -sf "http://localhost:${TEST_DASHBOARD}/" >/dev/null 2>&1; then
+            ok "isolated greyproxy is ready"
+            return
+        fi
+        sleep 0.5
+    done
+    err "isolated greyproxy did not start within 15s — check $ISOLATED_DATA_DIR/greyproxy.log"
+    cat "$ISOLATED_DATA_DIR/greyproxy.log" | tail -20 >&2
+    exit 1
+}
+
+teardown_isolated_proxy() {
+    if [[ -n "$ISOLATED_PID" ]] && kill -0 "$ISOLATED_PID" 2>/dev/null; then
+        log "stopping isolated greyproxy (PID $ISOLATED_PID)"
+        kill "$ISOLATED_PID" 2>/dev/null || true
+        wait "$ISOLATED_PID" 2>/dev/null || true
+    fi
+    if [[ -n "$ISOLATED_DATA_DIR" ]]; then
+        echo ""
+        ok "Isolated greyproxy stopped."
+        echo -e "  DB for analysis: ${GREEN}${ISOLATED_DATA_DIR}/greyproxy.db${RESET}"
+        echo -e "  Dashboard log:   ${ISOLATED_DATA_DIR}/greyproxy.log"
+        echo ""
+        echo "Open in dashboard (re-run isolated instance pointing at this DB):"
+        echo "  GREYPROXY_DATA_HOME=$ISOLATED_DATA_DIR $ISOLATED_BIN serve -C $ISOLATED_DATA_DIR/greyproxy.yml"
+        echo ""
+        echo "Or query directly:"
+        echo "  sqlite3 $ISOLATED_DATA_DIR/greyproxy.db \\"
+        echo "    \"SELECT id, url, substr(request_body,1,200) FROM http_transactions ORDER BY id\""
+        echo ""
+        echo "Debug logs for api.openai.com (copy to clipboard):"
+        echo "  grep openai $ISOLATED_DATA_DIR/greyproxy.log | wl-copy"
+    fi
+}
+
+# ─── Scenario setup ──────────────────────────────────────────────────────────
+
+make_tmpdir() {
+    local agent="$1"
+    local scenario="$2"
+    local dir
+    dir="$(mktemp -d "/tmp/greyproxy-matrix-${agent}-${scenario}-XXXXXX")"
+
+    if [[ "$scenario" == "B" || "$scenario" == "C" ]]; then
+        cat > "$dir/README.md" <<'EOF'
+# greyproxy test project
+
+A minimal project used to test AI coding agent behavior through the greyproxy.
+
+## Overview
+
+This project provides a proxy layer for capturing and dissecting LLM API traffic.
+The main components are the dissector pipeline and the conversation assembler.
+
+## Status
+
+Work in progress. See docs/context-dissectors/ for architecture notes.
+EOF
+    fi
+
+    if [[ "$scenario" == "C" ]]; then
+        mkdir -p "$dir/src"
+        cat > "$dir/src/main.py" <<'EOF'
+# TODO: add error handling for network timeouts
+# TODO: support streaming responses
+
+def process_request(data):
+    """Process an incoming API request."""
+    return {"status": "ok", "data": data}
+
+def main():
+    # TODO: read config from file
+    print("starting server")
+    result = process_request({"input": "hello"})
+    print(result)
+
+if __name__ == "__main__":
+    main()
+EOF
+        cat > "$dir/src/utils.py" <<'EOF'
+# TODO: replace with a proper logging library
+
+def format_json(data):
+    """Format data as indented JSON string."""
+    import json
+    return json.dumps(data, indent=2)
+
+def count_tokens(text):
+    # TODO: implement proper tokenizer
+    return len(text.split())
+
+class Config:
+    """Application configuration."""
+    # TODO: load from environment variables
+    DEBUG = False
+    MAX_RETRIES = 3
+EOF
+        cat > "$dir/src/api.py" <<'EOF'
+from utils import format_json
+
+def handle_get(path):
+    return format_json({"path": path, "method": "GET"})
+
+def handle_post(path, body):
+    # TODO: validate body schema
+    return format_json({"path": path, "method": "POST", "body": body})
+EOF
+    fi
+
+    echo "$dir"
+}
+
+# ─── Scenario prompts ────────────────────────────────────────────────────────
+
+PROMPT_A="Say hello world, nothing else. One sentence only."
+
+PROMPT_B="Read the file README.md. Then write a single sentence summary of it to a new file called SUMMARY.md."
+
+PROMPT_C="You have two tasks. First, use a subagent (or agent tool) to find all TODO comments in the src/ directory and list them. Second, use another subagent to count the total number of lines of Python code in src/. Once both subagents finish, write a combined report to REPORT.md. If your tools do not support subagents, do both tasks yourself and still write REPORT.md."
+
+# ─── Agent runners ───────────────────────────────────────────────────────────
+
+run_claudecode() {
+    local scenario="$1" prompt="$2"
+    local tmpdir; tmpdir="$(make_tmpdir claudecode "$scenario")"
+    log "claudecode scenario $scenario → $tmpdir"
+    local model_flag=""
+    [[ -n "$MODEL_OVERRIDE" ]] && model_flag="--model $MODEL_OVERRIDE"
+    # shellcheck disable=SC2086
+    run_cmd "claudecode/$scenario" \
+        bash -c "cd $(printf '%q' "$tmpdir") && $PREFIX claude \
+            --dangerously-skip-permissions \
+            --no-session-persistence \
+            --output-format text \
+            $model_flag \
+            -p $(printf '%q' "$prompt")"
+    echo "  tmpdir: $tmpdir"
+}
+
+run_opencode() {
+    local scenario="$1" prompt="$2"
+    local tmpdir; tmpdir="$(make_tmpdir opencode "$scenario")"
+    log "opencode scenario $scenario → $tmpdir"
+    local model_flag=""
+    [[ -n "$MODEL_OVERRIDE" ]] && model_flag="--model $MODEL_OVERRIDE"
+    # shellcheck disable=SC2086
+    run_cmd "opencode/$scenario" \
+        bash -c "cd $(printf '%q' "$tmpdir") && $PREFIX opencode run \
+            $model_flag \
+            $(printf '%q' "$prompt")"
+    echo "  tmpdir: $tmpdir"
+}
+
+run_codex() {
+    local scenario="$1" prompt="$2"
+    local tmpdir; tmpdir="$(make_tmpdir codex "$scenario")"
+    log "codex scenario $scenario → $tmpdir"
+    local model_flag=""
+    [[ -n "$MODEL_OVERRIDE" ]] && model_flag="--model $MODEL_OVERRIDE"
+    # shellcheck disable=SC2086
+    run_cmd "codex/$scenario" \
+        bash -c "$PREFIX codex \
+            --cd $(printf '%q' "$tmpdir") \
+            --ask-for-approval never \
+            --sandbox workspace-write \
+            $model_flag \
+            exec --ephemeral \
+            $(printf '%q' "$prompt")"
+    echo "  tmpdir: $tmpdir"
+}
+
+run_aider() {
+    local scenario="$1" prompt="$2"
+    local tmpdir; tmpdir="$(make_tmpdir aider "$scenario")"
+    log "aider scenario $scenario → $tmpdir"
+    local model_flag=""
+    [[ -n "$MODEL_OVERRIDE" ]] && model_flag="--model $MODEL_OVERRIDE"
+    local files=()
+    [[ "$scenario" == "B" ]] && files=("README.md" "SUMMARY.md")
+    [[ "$scenario" == "C" ]] && files=("src/main.py" "src/utils.py" "src/api.py" "REPORT.md")
+    # shellcheck disable=SC2086
+    run_cmd "aider/$scenario" \
+        bash -c "cd $(printf '%q' "$tmpdir") && $PREFIX aider \
+            --message $(printf '%q' "$prompt") \
+            --yes-always \
+            --no-git \
+            --no-auto-commits \
+            --no-stream \
+            $model_flag \
+            ${files[*]:-}"
+    echo "  tmpdir: $tmpdir"
+}
+
+run_gemini() {
+    local scenario="$1" prompt="$2"
+    local tmpdir; tmpdir="$(make_tmpdir gemini "$scenario")"
+    log "gemini scenario $scenario → $tmpdir"
+    local model_flag=""
+    [[ -n "$MODEL_OVERRIDE" ]] && model_flag="-m $MODEL_OVERRIDE"
+    # shellcheck disable=SC2086
+    run_cmd "gemini/$scenario" \
+        bash -c "cd $(printf '%q' "$tmpdir") && $PREFIX gemini \
+            $model_flag \
+            -y \
+            -p $(printf '%q' "$prompt")"
+    echo "  tmpdir: $tmpdir"
+}
+
+run_goose() {
+    local scenario="$1" prompt="$2"
+    local tmpdir; tmpdir="$(make_tmpdir goose "$scenario")"
+    log "goose scenario $scenario → $tmpdir"
+    local model_flag=""
+    [[ -n "$MODEL_OVERRIDE" ]] && model_flag="--model $MODEL_OVERRIDE"
+    # shellcheck disable=SC2086
+    run_cmd "goose/$scenario" \
+        bash -c "cd $(printf '%q' "$tmpdir") && GOOSE_MODE=auto $PREFIX goose run \
+            --with-builtin developer \
+            --no-session \
+            $model_flag \
+            -t $(printf '%q' "$prompt")"
+    echo "  tmpdir: $tmpdir"
+}
+
+run_amp() {
+    local scenario="$1" prompt="$2"
+    local tmpdir; tmpdir="$(make_tmpdir amp "$scenario")"
+    log "amp scenario $scenario → $tmpdir"
+    # shellcheck disable=SC2086
+    run_cmd "amp/$scenario" \
+        bash -c "cd $(printf '%q' "$tmpdir") && $PREFIX amp \
+            --dangerously-allow-all \
+            -x $(printf '%q' "$prompt")"
+    echo "  tmpdir: $tmpdir"
+}
+
+run_cursor() {
+    local scenario="$1" prompt="$2"
+    local tmpdir; tmpdir="$(make_tmpdir cursor "$scenario")"
+    log "cursor scenario $scenario → $tmpdir"
+    local model_flag=""
+    [[ -n "$MODEL_OVERRIDE" ]] && model_flag="--model $MODEL_OVERRIDE"
+    # shellcheck disable=SC2086
+    run_cmd "cursor/$scenario" \
+        bash -c "$PREFIX cursor agent \
+            --print \
+            --trust \
+            --workspace $(printf '%q' "$tmpdir") \
+            $model_flag \
+            $(printf '%q' "$prompt")"
+    echo "  tmpdir: $tmpdir"
+    echo "  NOTE: requires Cursor installed and authenticated"
+}
+
+run_continue() {
+    local scenario="$1" prompt="$2"
+    local tmpdir; tmpdir="$(make_tmpdir continue "$scenario")"
+    log "continue scenario $scenario → $tmpdir"
+    local model_flag=""
+    [[ -n "$MODEL_OVERRIDE" ]] && model_flag="--model $MODEL_OVERRIDE"
+    # shellcheck disable=SC2086
+    run_cmd "continue/$scenario" \
+        bash -c "cd $(printf '%q' "$tmpdir") && $PREFIX cn \
+            --auto \
+            $model_flag \
+            -p $(printf '%q' "$prompt")"
+    echo "  tmpdir: $tmpdir"
+}
+
+# ─── Dispatch ────────────────────────────────────────────────────────────────
+
+AGENTS_ALL=(claudecode opencode codex aider gemini goose amp cursor continue)
+
+declare -A SCENARIOS
+SCENARIOS[A]="$PROMPT_A"
+SCENARIOS[B]="$PROMPT_B"
+SCENARIOS[C]="$PROMPT_C"
+
+agent_cmd() {
+    case "$1" in
+        claudecode) echo "claude" ;;
+        continue)   echo "cn" ;;
+        *)          echo "$1" ;;
+    esac
+}
+
+run_agent() {
+    local agent="$1"
+    echo ""
+    echo -e "${GREEN}════════════════════════════════════${RESET}"
+    echo -e "${GREEN}  Agent: ${agent}${RESET}"
+    echo -e "${GREEN}════════════════════════════════════${RESET}"
+
+    local bin; bin="$(agent_cmd "$agent")"
+    if ! command -v "$bin" &>/dev/null 2>&1; then
+        warn "$bin not found in PATH — skipping (dry-run will still print)"
+        [[ "$DRY_RUN" != "true" ]] && return
+    fi
+
+    local letters
+    if [[ "$SCENARIO" == "all" ]]; then
+        letters=(A B C)
+    else
+        letters=("$SCENARIO")
+    fi
+
+    for letter in "${letters[@]}"; do
+        local prompt="${SCENARIOS[$letter]}"
+        "run_${agent}" "$letter" "$prompt"
+    done
+}
+
+# ─── Main ────────────────────────────────────────────────────────────────────
+
+# If --isolate, start a dedicated greyproxy and build the PREFIX
+if [[ "$ISOLATE" == "true" ]]; then
+    setup_isolated_proxy
+    # Override PREFIX to point greywall at the isolated instance
+    PREFIX="greywall \
+        --profile relaxed \
+        --no-credential-protection \
+        --proxy socks5://localhost:${TEST_PROXY_SOCKS5} \
+        --http-proxy http://localhost:${TEST_PROXY_HTTP} \
+        --dns localhost:${TEST_PROXY_DNS} \
+        --"
+    # PREFIX="env ALL_PROXY=socks5h://localhost:${TEST_PROXY_SOCKS5} HTTP_PROXY=http://localhost:${TEST_PROXY_HTTP}"
+    # Tear down on exit (normal, error, or Ctrl-C)
+    trap teardown_isolated_proxy EXIT
+fi
+
+echo ""
+echo -e "${CYAN}greyproxy dissector test matrix runner${RESET}"
+echo -e "  target:    ${TARGET}"
+echo -e "  scenario:  ${SCENARIO}"
+echo -e "  isolate:   ${ISOLATE}"
+echo -e "  dry-run:   ${DRY_RUN}"
+if [[ "$ISOLATE" == "true" && -n "$ISOLATED_DATA_DIR" ]]; then
+    echo -e "  test DB:   ${ISOLATED_DATA_DIR}/greyproxy.db"
+    echo -e "  dashboard: http://localhost:${TEST_DASHBOARD}"
+fi
+if [[ -n "$MODEL_OVERRIDE" ]]; then
+    echo -e "  model:     ${MODEL_OVERRIDE}"
+fi
+echo ""
+
+if [[ "$TARGET" == "all" ]]; then
+    for agent in "${AGENTS_ALL[@]}"; do
+        run_agent "$agent"
+    done
+else
+    run_agent "$TARGET"
+fi
+
+echo ""
+ok "Done."
