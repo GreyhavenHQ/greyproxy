@@ -1094,6 +1094,34 @@
             .catch(function() {});
     }
 
+    // Group rules that share host+path+decoder into a single display entry.
+    // This collapses WS_REQ/WS_RESP pairs and any other method variants.
+    function groupRules(rules) {
+        var groups = [];
+        var seen = {};
+        rules.forEach(function(rule) {
+            var key = rule.host_pattern + '|' + rule.path_pattern + '|' + rule.decoder_name + '|' + rule.user_defined;
+            if (seen[key]) {
+                seen[key].methods.push(rule.method);
+                seen[key].ids.push(rule.id);
+            } else {
+                var group = {
+                    host_pattern: rule.host_pattern,
+                    path_pattern: rule.path_pattern,
+                    decoder_name: rule.decoder_name,
+                    methods: [rule.method],
+                    ids: [rule.id],
+                    priority: rule.priority,
+                    enabled: rule.enabled,
+                    user_defined: rule.user_defined
+                };
+                seen[key] = group;
+                groups.push(group);
+            }
+        });
+        return groups;
+    }
+
     function loadEndpointRules() {
         fetch(prefix + '/api/endpoint-rules')
             .then(function(r) { return r.json(); })
@@ -1105,25 +1133,25 @@
                     return;
                 }
 
-                // Separate built-in and user rules
-                var builtinRules = rules.filter(function(r) { return !r.user_defined; });
-                var userRules = rules.filter(function(r) { return r.user_defined; });
+                var grouped = groupRules(rules);
+                var builtinGroups = grouped.filter(function(g) { return !g.user_defined; });
+                var userGroups = grouped.filter(function(g) { return g.user_defined; });
 
                 var html = '';
 
-                if (userRules.length > 0) {
+                if (userGroups.length > 0) {
                     html += '<div class="mb-4"><p class="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">Custom</p>';
                     html += '<div class="space-y-2">';
-                    userRules.forEach(function(rule) {
-                        html += renderEndpointRule(rule, true);
+                    userGroups.forEach(function(group) {
+                        html += renderEndpointGroup(group, true);
                     });
                     html += '</div></div>';
                 }
 
                 html += '<div><p class="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">Built-in</p>';
                 html += '<div class="space-y-2">';
-                builtinRules.forEach(function(rule) {
-                    html += renderEndpointRule(rule, false);
+                builtinGroups.forEach(function(group) {
+                    html += renderEndpointGroup(group, false);
                 });
                 html += '</div></div>';
 
@@ -1134,29 +1162,49 @@
             });
     }
 
-    function renderEndpointRule(rule, canDelete) {
-        var enabledBadge = rule.enabled
+    function formatMethods(methods) {
+        // Collapse WS_REQ+WS_RESP into "WebSocket"
+        var hasWsReq = methods.indexOf('WS_REQ') !== -1;
+        var hasWsResp = methods.indexOf('WS_RESP') !== -1;
+        var other = methods.filter(function(m) { return m !== 'WS_REQ' && m !== 'WS_RESP'; });
+        var parts = [];
+        if (hasWsReq && hasWsResp) {
+            parts.push('WebSocket');
+        } else if (hasWsReq) {
+            parts.push('WS_REQ');
+        } else if (hasWsResp) {
+            parts.push('WS_RESP');
+        }
+        return parts.concat(other);
+    }
+
+    function renderEndpointGroup(group, canDelete) {
+        var enabledBadge = group.enabled
             ? '<span class="text-xs text-[var(--color-green)]">enabled</span>'
             : '<span class="text-xs text-muted-foreground">disabled</span>';
+        var methods = formatMethods(group.methods);
         var html = '<div class="flex items-center justify-between p-2.5 bg-muted rounded border border-border">';
         html += '<div class="flex items-center gap-3 min-w-0 flex-1">';
         html += '<div class="min-w-0 flex-1">';
         html += '<div class="flex items-center gap-2 flex-wrap">';
-        html += '<span class="text-sm font-medium font-mono">' + escapeHtml(rule.host_pattern) + '</span>';
-        html += '<span class="text-xs text-muted-foreground font-mono">' + escapeHtml(rule.path_pattern) + '</span>';
-        html += '<span class="inline-flex items-center px-1.5 py-0.5 text-xs font-medium bg-background border border-border rounded">' + escapeHtml(rule.method) + '</span>';
+        html += '<span class="text-sm font-medium font-mono">' + escapeHtml(group.host_pattern) + '</span>';
+        html += '<span class="text-xs text-muted-foreground font-mono">' + escapeHtml(group.path_pattern) + '</span>';
+        methods.forEach(function(m) {
+            html += '<span class="inline-flex items-center px-1.5 py-0.5 text-xs font-medium bg-background border border-border rounded">' + escapeHtml(m) + '</span>';
+        });
         html += '</div>';
         html += '<div class="flex items-center gap-2 mt-0.5">';
-        html += '<span class="text-xs text-muted-foreground">decoder: <span class="font-medium text-foreground">' + escapeHtml(rule.decoder_name) + '</span></span>';
-        if (rule.priority > 0) {
-            html += '<span class="text-xs text-muted-foreground">priority: ' + rule.priority + '</span>';
+        html += '<span class="text-xs text-muted-foreground">decoder: <span class="font-medium text-foreground">' + escapeHtml(group.decoder_name) + '</span></span>';
+        if (group.priority > 0) {
+            html += '<span class="text-xs text-muted-foreground">priority: ' + group.priority + '</span>';
         }
         html += enabledBadge;
         html += '</div>';
         html += '</div>';
         html += '</div>';
         if (canDelete) {
-            html += '<button data-delete-endpoint-rule="' + rule.id + '" class="text-xs text-muted-foreground hover:text-destructive px-2 py-1 shrink-0">Delete</button>';
+            // Delete all rules in the group
+            html += '<button data-delete-endpoint-rules="' + group.ids.join(',') + '" class="text-xs text-muted-foreground hover:text-destructive px-2 py-1 shrink-0">Delete</button>';
         }
         html += '</div>';
         return html;
@@ -1212,17 +1260,18 @@
         });
     };
 
-    function deleteEndpointRule(id) {
+    function deleteEndpointRules(idsStr) {
         if (!confirm('Delete this endpoint rule? You may need to rebuild conversations afterward.')) return;
-        fetch(prefix + '/api/endpoint-rules/' + encodeURIComponent(id), { method: 'DELETE' })
-            .then(function() { loadEndpointRules(); })
-            .catch(function() {});
+        var ids = idsStr.split(',');
+        Promise.all(ids.map(function(id) {
+            return fetch(prefix + '/api/endpoint-rules/' + encodeURIComponent(id), { method: 'DELETE' });
+        })).then(function() { loadEndpointRules(); }).catch(function() {});
     }
 
     // Event delegation for endpoint rule delete buttons
     document.addEventListener('click', function(e) {
-        var btn = e.target.closest('[data-delete-endpoint-rule]');
-        if (btn) { deleteEndpointRule(btn.getAttribute('data-delete-endpoint-rule')); return; }
+        var btn = e.target.closest('[data-delete-endpoint-rules]');
+        if (btn) { deleteEndpointRules(btn.getAttribute('data-delete-endpoint-rules')); return; }
     });
 
     loadDissectors();

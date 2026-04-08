@@ -56,9 +56,11 @@ func (r *EndpointRegistry) seedBuiltinRules() {
 	defer r.db.Unlock()
 	for _, rule := range builtinRules {
 		_, err := r.db.WriteDB().Exec(
-			`INSERT OR IGNORE INTO endpoint_rules
+			`INSERT INTO endpoint_rules
 			 (host_pattern, path_pattern, method, decoder_name, priority, enabled, user_defined)
-			 VALUES (?, ?, ?, ?, ?, 1, 0)`,
+			 VALUES (?, ?, ?, ?, ?, 1, 0)
+			 ON CONFLICT(host_pattern, path_pattern, method, user_defined)
+			 DO UPDATE SET decoder_name = excluded.decoder_name, priority = excluded.priority, enabled = 1`,
 			rule.HostPattern, rule.PathPattern, rule.Method, rule.DecoderName, rule.Priority,
 		)
 		if err != nil {
