@@ -1196,9 +1196,6 @@
         html += '</div>';
         html += '<div class="flex items-center gap-2 mt-0.5">';
         html += '<span class="text-xs text-muted-foreground">decoder: <span class="font-medium text-foreground">' + escapeHtml(group.decoder_name) + '</span></span>';
-        if (group.priority > 0) {
-            html += '<span class="text-xs text-muted-foreground">priority: ' + group.priority + '</span>';
-        }
         html += enabledBadge;
         html += '</div>';
         html += '</div>';
