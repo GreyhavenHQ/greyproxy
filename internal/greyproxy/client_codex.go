@@ -37,6 +37,11 @@ func (a *CodexAdapter) ClassifyThread(result *dissector.ExtractionResult) string
 	if result == nil {
 		return "main"
 	}
+	// WS_RESP response.completed frames carry assistant responses (SSEResponse)
+	// but no tools or messages. They belong to the main conversation thread.
+	if result.SSEResponse != nil {
+		return "main"
+	}
 	// Check for orchestration tools
 	for _, t := range result.Tools {
 		switch t.Name {

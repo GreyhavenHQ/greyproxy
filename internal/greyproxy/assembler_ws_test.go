@@ -152,6 +152,19 @@ func TestAssembleConversation_CodexWS_TwoTurns(t *testing.T) {
 		t.Errorf("turn 2 userPrompt = %q, want \"what's your name\"", got)
 	}
 
+	// Turn 2 should have an assistant step with "Codex."
+	turn2HasAssistant := false
+	for _, step := range turn2.steps {
+		if step["type"] == "assistant" {
+			if text, ok := step["text"].(string); ok && text == "Codex." {
+				turn2HasAssistant = true
+			}
+		}
+	}
+	if !turn2HasAssistant {
+		t.Errorf("turn 2 missing assistant step with 'Codex.', steps: %v", stepsJSON(turn2.steps))
+	}
+
 	// System prompt should be set
 	if conv.systemPrompt == nil || !strings.Contains(*conv.systemPrompt, "Codex") {
 		t.Error("missing system prompt")

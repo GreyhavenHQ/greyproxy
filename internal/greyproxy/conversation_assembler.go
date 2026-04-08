@@ -20,7 +20,7 @@ import (
 // that requires reprocessing existing conversations (e.g. new fields, linking).
 // When the stored version differs from this constant, the settings page
 // offers a "Rebuild conversations" action.
-const AssemblerVersion = 10
+const AssemblerVersion = 11
 
 // ConversationAssembler subscribes to EventTransactionNew and reassembles
 // LLM conversations from HTTP transactions using registered dissectors.
@@ -1211,8 +1211,11 @@ func assembleConversation(sessionID string, entries []transactionEntry) assemble
 		}
 	}
 
-	// Recover last assistant response from SSE
-	if len(conv.turns) > 0 {
+	// Recover last assistant response from SSE.
+	// Skip for incremental WS sessions: aggregateWSMessages already interleaves
+	// assistant responses from SSE into the message stream, so this recovery
+	// would duplicate earlier-turn responses into the last turn.
+	if len(conv.turns) > 0 && !isIncrementalWSSession(entries) {
 		lastTurn := &conv.turns[len(conv.turns)-1]
 		existingTexts := map[string]bool{}
 		for _, s := range lastTurn.steps {
@@ -1266,8 +1269,11 @@ func assembleConversation(sessionID string, entries []transactionEntry) assemble
 			break
 		}
 
-		// Check if last turn has a response
-		for _, s := range lastTurn.steps {
+	}
+
+	// Check if last turn has a response
+	if len(conv.turns) > 0 {
+		for _, s := range conv.turns[len(conv.turns)-1].steps {
 			if s["type"] == "assistant" {
 				if _, ok := s["text"]; ok {
 					conv.lastTurnHasResponse = true
