@@ -132,6 +132,13 @@ func EndpointRulesUpdateHandler(s *Shared) gin.HandlerFunc {
 	}
 }
 
+// DissectorsListHandler returns metadata about all registered dissectors.
+func DissectorsListHandler() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"dissectors": dissector.RegisteredDissectors()})
+	}
+}
+
 // EndpointRulesDeleteHandler deletes a user-defined endpoint rule.
 func EndpointRulesDeleteHandler(s *Shared) gin.HandlerFunc {
 	return func(c *gin.Context) {

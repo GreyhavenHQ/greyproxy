@@ -41,7 +41,8 @@ var sessionIDEscapedJSONPattern = regexp.MustCompile(`\\?"session_id\\?"\s*:\\?\
 // AnthropicDissector parses Anthropic Messages API transactions.
 type AnthropicDissector struct{}
 
-func (d *AnthropicDissector) Name() string { return "anthropic" }
+func (d *AnthropicDissector) Name() string        { return "anthropic" }
+func (d *AnthropicDissector) Description() string { return "Anthropic Messages API (/v1/messages)" }
 
 func (d *AnthropicDissector) CanHandle(url, method, host string) bool {
 	if method != "POST" {

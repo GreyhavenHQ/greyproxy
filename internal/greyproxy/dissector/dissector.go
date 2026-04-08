@@ -12,6 +12,10 @@ type Dissector interface {
 	// Name returns the provider name (e.g. "anthropic").
 	Name() string
 
+	// Description returns a short human-readable description of what API
+	// format this dissector handles, shown in the UI.
+	Description() string
+
 	// CanHandle returns true if this dissector can parse the given HTTP transaction.
 	CanHandle(url, method, host string) bool
 
@@ -131,6 +135,21 @@ func FindDissectorByName(name string) Dissector {
 		}
 	}
 	return nil
+}
+
+// DissectorInfo holds metadata about a registered dissector.
+type DissectorInfo struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+// RegisteredDissectors returns info about all registered dissectors.
+func RegisteredDissectors() []DissectorInfo {
+	infos := make([]DissectorInfo, len(registry))
+	for i, d := range registry {
+		infos[i] = DissectorInfo{Name: d.Name(), Description: d.Description()}
+	}
+	return infos
 }
 
 func init() {

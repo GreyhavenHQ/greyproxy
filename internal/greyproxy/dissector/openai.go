@@ -42,7 +42,8 @@ import (
 // OpenAIDissector parses OpenAI Responses API (/v1/responses) transactions.
 type OpenAIDissector struct{}
 
-func (d *OpenAIDissector) Name() string { return "openai" }
+func (d *OpenAIDissector) Name() string        { return "openai" }
+func (d *OpenAIDissector) Description() string { return "OpenAI Responses API (/v1/responses)" }
 
 func (d *OpenAIDissector) CanHandle(url, method, host string) bool {
 	if method != "POST" {

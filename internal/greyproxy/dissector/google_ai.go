@@ -28,7 +28,8 @@ import (
 // GoogleAIDissector parses Google AI (Gemini) API transactions.
 type GoogleAIDissector struct{}
 
-func (d *GoogleAIDissector) Name() string { return "google-ai" }
+func (d *GoogleAIDissector) Name() string        { return "google-ai" }
+func (d *GoogleAIDissector) Description() string { return "Google Gemini API (/v1beta/models)" }
 
 func (d *GoogleAIDissector) CanHandle(url, method, host string) bool {
 	if method != "POST" {

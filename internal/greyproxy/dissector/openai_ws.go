@@ -26,7 +26,8 @@ import (
 // OpenAI Responses API WebSocket protocol.
 type OpenAIWSDissector struct{}
 
-func (d *OpenAIWSDissector) Name() string { return "openai-ws" }
+func (d *OpenAIWSDissector) Name() string        { return "openai-ws" }
+func (d *OpenAIWSDissector) Description() string { return "OpenAI Responses API over WebSocket (Codex)" }
 
 func (d *OpenAIWSDissector) CanHandle(url, method, host string) bool {
 	if method != "WS_REQ" && method != "WS_RESP" {

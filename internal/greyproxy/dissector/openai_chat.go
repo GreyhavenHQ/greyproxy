@@ -27,6 +27,9 @@ import (
 type OpenAIChatDissector struct{}
 
 func (d *OpenAIChatDissector) Name() string { return "openai-chat" }
+func (d *OpenAIChatDissector) Description() string {
+	return "OpenAI Chat Completions API, also used by LiteLLM, Ollama, and other compatible endpoints"
+}
 
 // CanHandle matches known chat completions hosts. Custom/self-hosted endpoints
 // (LiteLLM, Ollama, etc.) are handled via the EndpointRegistry, not here.
