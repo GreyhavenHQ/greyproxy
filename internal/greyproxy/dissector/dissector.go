@@ -45,6 +45,7 @@ type ExtractionResult struct {
 	Tools        []Tool
 	SSEResponse  *SSEResponseData
 	MessageCount int
+	ClientHint   string // optional hint for client detection (e.g. "codex" from WS metadata)
 }
 
 // Message represents a single message in a conversation.

@@ -22,6 +22,10 @@ func (a *CodexAdapter) DetectConfidence(headers http.Header, result *dissector.E
 			return 0.8
 		}
 	}
+	// Detect from WS dissector client hint (no headers for WS frames)
+	if result != nil && result.ClientHint == "codex" {
+		return 0.95
+	}
 	return 0.0
 }
 

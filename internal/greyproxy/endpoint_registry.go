@@ -43,6 +43,11 @@ func NewEndpointRegistry(db *DB) *EndpointRegistry {
 var builtinRules = []EndpointRule{
 	{HostPattern: "api.anthropic.com", PathPattern: "/v1/messages", Method: "POST", DecoderName: "anthropic", Priority: 0},
 	{HostPattern: "api.openai.com", PathPattern: "/v1/responses", Method: "POST", DecoderName: "openai", Priority: 0},
+	{HostPattern: "api.openai.com", PathPattern: "/v1/responses", Method: "WS_REQ", DecoderName: "openai-ws", Priority: 0},
+	// WS_RESP frames are not routed through the assembler: response.completed
+	// events lack session IDs and would be orphaned. The WS_REQ frames already
+	// carry the full conversation history. The openai-ws-event dissector remains
+	// registered for future use (e.g. pairing responses to requests).
 	{HostPattern: "api.openai.com", PathPattern: "/v1/chat/completions", Method: "POST", DecoderName: "openai-chat", Priority: 0},
 	{HostPattern: "openrouter.ai", PathPattern: "/api/v1/chat/completions", Method: "POST", DecoderName: "openai-chat", Priority: 0},
 	{HostPattern: "generativelanguage.googleapis.com", PathPattern: "/v1beta/models/*", Method: "POST", DecoderName: "google-ai", Priority: 0},
@@ -142,10 +147,12 @@ func (r *EndpointRegistry) AllURLPatterns() []string {
 	var patterns []string
 	seen := map[string]bool{}
 	for _, rule := range r.rules {
-		// Convert glob to LIKE pattern
+		// Convert glob to LIKE pattern.
+		// Use % between host and path to tolerate optional port (e.g. :80, :443)
+		// in URLs like wss://api.openai.com:80/v1/responses.
 		hostLike := strings.ReplaceAll(rule.HostPattern, "*", "%")
 		pathLike := strings.ReplaceAll(rule.PathPattern, "*", "%")
-		pattern := "%" + hostLike + pathLike + "%"
+		pattern := "%" + hostLike + "%" + pathLike + "%"
 		if !seen[pattern] {
 			patterns = append(patterns, pattern)
 			seen[pattern] = true

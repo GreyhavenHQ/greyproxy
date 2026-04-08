@@ -20,7 +20,7 @@ import (
 // that requires reprocessing existing conversations (e.g. new fields, linking).
 // When the stored version differs from this constant, the settings page
 // offers a "Rebuild conversations" action.
-const AssemblerVersion = 7
+const AssemblerVersion = 9
 
 // ConversationAssembler subscribes to EventTransactionNew and reassembles
 // LLM conversations from HTTP transactions using registered dissectors.
@@ -170,24 +170,40 @@ func (a *ConversationAssembler) processNewTransactionsLocked() {
 
 	var allConversations []assembledConversation
 
+	// Full rebuild (lastID == 0): loadNewTransactions already scanned every
+	// transaction in the DB, so the session reload is redundant and extremely
+	// expensive on large databases (LIKE scans over multi-GB bodies).
+	// Use the already-loaded entries directly.
+	fullRebuild := lastID == 0
+
 	// Process session-based transactions
 	if len(affectedSessions) > 0 {
-		// Reload ALL transactions for affected sessions
-		allTxns, err := a.loadTransactionsForSessions(affectedSessions)
-		if err != nil {
-			slog.Warn("assembler: failed to reload sessions", "error", err)
-			return
-		}
+		var allTxns []transactionEntry
 
-		// For OpenAI: main sessions may reference subagent sessions via task_id
-		// in tool results. Load those referenced sessions too so that
-		// remapOpenAISubagents can remap them under their parent.
-		if extraSessions := extractReferencedSubagentSessions(allTxns, affectedSessions); len(extraSessions) > 0 {
-			extraTxns, err := a.loadTransactionsForSessions(extraSessions)
+		if fullRebuild {
+			// Already have all transactions from the initial scan
+			allTxns = newTxns
+			slog.Info("assembler: full rebuild, skipping session reload",
+				"sessions", len(affectedSessions), "entries", len(allTxns))
+		} else {
+			// Incremental: reload ALL transactions for affected sessions
+			var err error
+			allTxns, err = a.loadTransactionsForSessions(affectedSessions)
 			if err != nil {
-				slog.Warn("assembler: failed to load referenced subagent sessions", "error", err)
-			} else {
-				allTxns = append(allTxns, extraTxns...)
+				slog.Warn("assembler: failed to reload sessions", "error", err)
+				return
+			}
+
+			// For OpenAI: main sessions may reference subagent sessions via task_id
+			// in tool results. Load those referenced sessions too so that
+			// remapOpenAISubagents can remap them under their parent.
+			if extraSessions := extractReferencedSubagentSessions(allTxns, affectedSessions); len(extraSessions) > 0 {
+				extraTxns, err := a.loadTransactionsForSessions(extraSessions)
+				if err != nil {
+					slog.Warn("assembler: failed to load referenced subagent sessions", "error", err)
+				} else {
+					allTxns = append(allTxns, extraTxns...)
+				}
 			}
 		}
 
@@ -396,11 +412,13 @@ func (a *ConversationAssembler) loadTransactionsForSessions(sessionIDs map[strin
 	var likeClauses []string
 	var args []any
 	for sid := range sessionIDs {
-		// Match both legacy format (session_UUID) and new JSON format (session_id with UUID value)
-		clause := `(CAST(request_body AS TEXT) LIKE ? ESCAPE '\' OR CAST(request_body AS TEXT) LIKE ? ESCAPE '\')`
+		// Match legacy format (session_UUID), JSON format (session_id with UUID value),
+		// and WS format (prompt_cache_key with UUID value).
+		clause := `(CAST(request_body AS TEXT) LIKE ? ESCAPE '\' OR CAST(request_body AS TEXT) LIKE ? ESCAPE '\' OR CAST(request_body AS TEXT) LIKE ? ESCAPE '\')`
 		likeClauses = append(likeClauses, clause)
 		args = append(args, "%session_"+escapeLikePattern(sid)+"%")
 		args = append(args, "%session_id%"+escapeLikePattern(sid)+"%")
+		args = append(args, "%prompt_cache_key%"+escapeLikePattern(sid)+"%")
 	}
 
 	// Build URL pattern filter from endpoint registry (replaces hardcoded patterns)
@@ -1048,6 +1066,12 @@ func inferClientName(provider string, entries []transactionEntry) string {
 		}
 		if h.Get("Http-Referer") == "https://aider.chat" || h.Get("X-Title") == "Aider" {
 			return "aider"
+		}
+	}
+	// Check dissector client hints (e.g. from WS metadata)
+	for _, e := range entries {
+		if e.result != nil && e.result.ClientHint != "" {
+			return e.result.ClientHint
 		}
 	}
 	// Fallback: infer from provider
