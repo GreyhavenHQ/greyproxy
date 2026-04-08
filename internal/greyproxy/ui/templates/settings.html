@@ -343,15 +343,16 @@
     <!-- Add Rule -->
     <div class="bg-card border border-border rounded-lg p-6 mb-6">
         <h2 class="text-lg font-semibold mb-4">Add Endpoint Rule</h2>
+        <p class="text-xs text-muted-foreground mb-3">Both host and path support <code class="font-mono bg-muted px-1 rounded">*</code> as a wildcard. For example: <code class="font-mono bg-muted px-1 rounded">*.example.com</code> or <code class="font-mono bg-muted px-1 rounded">/v1/*/completions</code></p>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
             <div>
                 <label class="block text-xs font-medium text-muted-foreground mb-1">Host pattern</label>
-                <input id="ep-host" type="text" placeholder="e.g. litellm.example.com"
+                <input id="ep-host" type="text" placeholder="litellm.example.com or *.local"
                     class="w-full px-3 py-1.5 text-sm bg-background border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary">
             </div>
             <div>
                 <label class="block text-xs font-medium text-muted-foreground mb-1">Path pattern</label>
-                <input id="ep-path" type="text" placeholder="e.g. /v1/chat/completions" value="/v1/chat/completions"
+                <input id="ep-path" type="text" placeholder="/v1/chat/completions" value="/v1/chat/completions"
                     class="w-full px-3 py-1.5 text-sm bg-background border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary">
             </div>
             <div>
