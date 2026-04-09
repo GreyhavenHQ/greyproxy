@@ -36,9 +36,9 @@ func TestOpenAIWSDissector_Extract_PingFrame(t *testing.T) {
 func TestOpenAIWSDissector_Extract_ResponseCreate(t *testing.T) {
 	d := &OpenAIWSDissector{}
 	body := map[string]any{
-		"type":            "response.create",
-		"model":           "gpt-5.4",
-		"instructions":    "You are Codex, a coding agent.",
+		"type":             "response.create",
+		"model":            "gpt-5.4",
+		"instructions":     "You are Codex, a coding agent.",
 		"prompt_cache_key": "019d6a97-4577-7130-8100-ad0e118bf762",
 		"input": []any{
 			map[string]any{

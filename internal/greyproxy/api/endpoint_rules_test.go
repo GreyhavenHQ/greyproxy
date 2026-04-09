@@ -85,4 +85,3 @@ func TestValidateEndpointRule(t *testing.T) {
 		})
 	}
 }
-

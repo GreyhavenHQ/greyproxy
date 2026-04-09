@@ -60,9 +60,9 @@ func (d *OpenAIDissector) Extract(input ExtractionInput) (*ExtractionResult, err
 	result := &ExtractionResult{Provider: d.Name()}
 
 	var body struct {
-		Model         string            `json:"model"`
-		Input         []json.RawMessage `json:"input"`
-		Tools         []struct {
+		Model string            `json:"model"`
+		Input []json.RawMessage `json:"input"`
+		Tools []struct {
 			Name        string `json:"name"`
 			Description string `json:"description"`
 		} `json:"tools"`
@@ -383,4 +383,3 @@ func matchToolCallID(callID, itemID string) bool {
 	// Simple heuristic: just match the last tool call added.
 	return callID != "" && itemID != ""
 }
-

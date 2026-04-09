@@ -37,7 +37,6 @@ var sessionIDPattern = regexp.MustCompile(`session_([a-f0-9-]{36})`)
 var sessionIDJSONPattern = regexp.MustCompile(`"session_id"\s*:\s*"([a-f0-9-]{36})"`)
 var sessionIDEscapedJSONPattern = regexp.MustCompile(`\\?"session_id\\?"\s*:\\?\s*\\?"([a-f0-9-]{36})\\?"`)
 
-
 // AnthropicDissector parses Anthropic Messages API transactions.
 type AnthropicDissector struct{}
 
@@ -66,8 +65,8 @@ func (d *AnthropicDissector) Extract(input ExtractionInput) (*ExtractionResult, 
 			Role    string `json:"role"`
 			Content any    `json:"content"`
 		} `json:"messages"`
-		System   []json.RawMessage `json:"system"`
-		Tools    []struct {
+		System []json.RawMessage `json:"system"`
+		Tools  []struct {
 			Name        string `json:"name"`
 			Description string `json:"description"`
 		} `json:"tools"`
@@ -315,4 +314,3 @@ func classifyOpenAIThread(sysLen int, tools []Tool) string {
 	}
 	return "utility"
 }
-

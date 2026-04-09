@@ -19,7 +19,7 @@ type ActivityItem struct {
 	ResolvedHostname sql.NullString
 	RuleID           sql.NullInt64
 	RuleSummary      sql.NullString
-	MitmSkipReason sql.NullString
+	MitmSkipReason   sql.NullString
 	// HTTP-specific fields
 	Method                 sql.NullString
 	URL                    sql.NullString
@@ -37,8 +37,8 @@ type ActivityFilter struct {
 	Result      string // "", "allowed", "blocked"
 	FromDate    *time.Time
 	ToDate      *time.Time
-	Limit  int
-	Offset int
+	Limit       int
+	Offset      int
 }
 
 // QueryActivity returns a unified, time-ordered list from request_logs and http_transactions.

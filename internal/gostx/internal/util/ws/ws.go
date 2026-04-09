@@ -6,9 +6,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gorilla/websocket"
 	ctx_pkg "github.com/greyhavenhq/greyproxy/internal/gostx/ctx"
 	xio "github.com/greyhavenhq/greyproxy/internal/gostx/internal/io"
-	"github.com/gorilla/websocket"
 )
 
 type WebsocketConn interface {

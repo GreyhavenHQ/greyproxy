@@ -30,8 +30,8 @@ type dockerCacheEntry struct {
 
 // dockerContainerSummary parses the relevant fields from Docker's /containers/json response.
 type dockerContainerSummary struct {
-	ID      string   `json:"Id"`
-	Names   []string `json:"Names"`
+	ID              string   `json:"Id"`
+	Names           []string `json:"Names"`
 	NetworkSettings struct {
 		Networks map[string]struct {
 			IPAddress string `json:"IPAddress"`

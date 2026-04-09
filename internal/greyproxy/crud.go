@@ -311,7 +311,7 @@ func IngestRules(db *DB, rules []IngestRuleInput) (*IngestResult, error) {
 func FindMatchingRule(db *DB, containerName, destHost string, destPort int, resolvedHostname string) *Rule {
 	// Get all non-expired rules
 	rows, err := db.ReadDB().Query(
-		`SELECT `+ruleColumns+` FROM rules
+		`SELECT ` + ruleColumns + ` FROM rules
 		 WHERE expires_at IS NULL OR expires_at > datetime('now')`,
 	)
 	if err != nil {

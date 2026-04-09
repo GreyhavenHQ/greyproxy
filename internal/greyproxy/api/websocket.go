@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/greyhavenhq/greyproxy/internal/gostcore/logger"
 	"github.com/gorilla/websocket"
+	"github.com/greyhavenhq/greyproxy/internal/gostcore/logger"
 	greyproxy "github.com/greyhavenhq/greyproxy/internal/greyproxy"
 )
 

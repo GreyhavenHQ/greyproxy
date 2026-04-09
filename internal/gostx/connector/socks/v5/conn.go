@@ -5,9 +5,9 @@ import (
 	"net"
 	"time"
 
+	"github.com/greyhavenhq/greyproxy/internal/gosocks5"
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/common/bufpool"
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/logger"
-	"github.com/greyhavenhq/greyproxy/internal/gosocks5"
 )
 
 type bindConn struct {

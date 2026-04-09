@@ -9,9 +9,9 @@ import (
 // for each pending request destination. Counters are managed explicitly via
 // Add (increment) and the returned cleanup function (decrement).
 type WaiterTracker struct {
-	mu      sync.Mutex
-	counts  map[string]int
-	bus     *EventBus
+	mu     sync.Mutex
+	counts map[string]int
+	bus    *EventBus
 }
 
 func NewWaiterTracker(bus *EventBus) *WaiterTracker {

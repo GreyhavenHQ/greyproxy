@@ -8,10 +8,10 @@ import (
 	"net"
 	"time"
 
+	"github.com/greyhavenhq/greyproxy/internal/gosocks5"
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/limiter"
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/logger"
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/observer/stats"
-	"github.com/greyhavenhq/greyproxy/internal/gosocks5"
 	ctxvalue "github.com/greyhavenhq/greyproxy/internal/gostx/ctx"
 	ictx "github.com/greyhavenhq/greyproxy/internal/gostx/internal/ctx"
 	xnet "github.com/greyhavenhq/greyproxy/internal/gostx/internal/net"

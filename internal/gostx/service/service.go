@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/shlex"
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/admission"
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/handler"
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/listener"
@@ -24,7 +25,6 @@ import (
 	xctx "github.com/greyhavenhq/greyproxy/internal/gostx/ctx"
 	xmetrics "github.com/greyhavenhq/greyproxy/internal/gostx/metrics"
 	xstats "github.com/greyhavenhq/greyproxy/internal/gostx/observer/stats"
-	"github.com/google/shlex"
 	"github.com/rs/xid"
 )
 

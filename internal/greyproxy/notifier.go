@@ -70,9 +70,9 @@ type notifySendCaps struct {
 
 // NotificationBackendInfo describes the notification backend status.
 type NotificationBackendInfo struct {
-	Available      bool   `json:"available"`
-	Backend        string `json:"backend"`
-	InstallHint    string `json:"installHint,omitempty"`
+	Available       bool   `json:"available"`
+	Backend         string `json:"backend"`
+	InstallHint     string `json:"installHint,omitempty"`
 	SupportsActions bool   `json:"supportsActions"`
 }
 

@@ -20,8 +20,8 @@ type Auther struct {
 func NewAuther() *Auther {
 	return &Auther{
 		log: logger.Default().WithFields(map[string]any{
-			"kind":    "auther",
-			"auther":  "greyproxy",
+			"kind":   "auther",
+			"auther": "greyproxy",
 		}),
 	}
 }

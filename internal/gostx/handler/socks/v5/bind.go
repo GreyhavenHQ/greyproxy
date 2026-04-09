@@ -5,10 +5,10 @@ import (
 	"net"
 	"time"
 
+	"github.com/greyhavenhq/greyproxy/internal/gosocks5"
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/limiter"
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/logger"
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/observer/stats"
-	"github.com/greyhavenhq/greyproxy/internal/gosocks5"
 	xctx "github.com/greyhavenhq/greyproxy/internal/gostx/ctx"
 	xnet "github.com/greyhavenhq/greyproxy/internal/gostx/internal/net"
 	traffic_wrapper "github.com/greyhavenhq/greyproxy/internal/gostx/limiter/traffic/wrapper"

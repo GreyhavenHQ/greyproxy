@@ -5,9 +5,9 @@ import (
 	"crypto/tls"
 	"net"
 
+	"github.com/greyhavenhq/greyproxy/internal/gosocks5"
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/auth"
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/logger"
-	"github.com/greyhavenhq/greyproxy/internal/gosocks5"
 	xctx "github.com/greyhavenhq/greyproxy/internal/gostx/ctx"
 	"github.com/greyhavenhq/greyproxy/internal/gostx/internal/util/socks"
 )

@@ -204,4 +204,3 @@ func (s *CompositeStrategy) InferSession(entries []transactionEntry) map[int64]s
 	}
 	return nil
 }
-

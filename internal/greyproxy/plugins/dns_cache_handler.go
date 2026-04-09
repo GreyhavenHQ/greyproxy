@@ -10,8 +10,8 @@ import (
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/hop"
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/logger"
 	md "github.com/greyhavenhq/greyproxy/internal/gostcore/metadata"
-	greyproxy "github.com/greyhavenhq/greyproxy/internal/greyproxy"
 	"github.com/greyhavenhq/greyproxy/internal/gostx/registry"
+	greyproxy "github.com/greyhavenhq/greyproxy/internal/greyproxy"
 	"github.com/miekg/dns"
 )
 

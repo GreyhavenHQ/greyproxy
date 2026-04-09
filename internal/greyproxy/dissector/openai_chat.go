@@ -106,10 +106,10 @@ func (d *OpenAIChatDissector) Extract(input ExtractionInput) (*ExtractionResult,
 	// Messages
 	for _, raw := range body.Messages {
 		var probe struct {
-			Role       string `json:"role"`
-			Content    any    `json:"content"`
+			Role       string            `json:"role"`
+			Content    any               `json:"content"`
 			ToolCalls  []json.RawMessage `json:"tool_calls"`
-			ToolCallID string `json:"tool_call_id"`
+			ToolCallID string            `json:"tool_call_id"`
 		}
 		if json.Unmarshal(raw, &probe) != nil {
 			continue

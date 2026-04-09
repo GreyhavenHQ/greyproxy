@@ -454,14 +454,14 @@ var (
 	activityTmpl      = parseTemplate("base.html", "base.html", "activity.html")
 	conversationsTmpl = parseTemplate("base.html", "base.html", "conversations.html")
 
-	dashboardStatsTmpl    = parseTemplate("dashboard_stats.html", "partials/dashboard_stats.html")
-	pendingListTmpl       = parseTemplate("pending_list.html", "partials/pending_list.html")
-	rulesListTmpl         = parseTemplate("rules_list.html", "partials/rules_list.html")
-	logsTableTmpl         = parseTemplate("logs_table.html", "partials/logs_table.html")
-	trafficTableTmpl      = parseTemplate("traffic_table.html", "partials/traffic_table.html")
-	activityTableTmpl     = parseTemplate("activity_table.html", "partials/activity_table.html")
-	convListTmpl          = parseTemplate("conversation_list.html", "partials/conversation_list.html")
-	convDetailTmpl        = parseTemplate("conversation_detail.html", "partials/conversation_detail.html")
+	dashboardStatsTmpl = parseTemplate("dashboard_stats.html", "partials/dashboard_stats.html")
+	pendingListTmpl    = parseTemplate("pending_list.html", "partials/pending_list.html")
+	rulesListTmpl      = parseTemplate("rules_list.html", "partials/rules_list.html")
+	logsTableTmpl      = parseTemplate("logs_table.html", "partials/logs_table.html")
+	trafficTableTmpl   = parseTemplate("traffic_table.html", "partials/traffic_table.html")
+	activityTableTmpl  = parseTemplate("activity_table.html", "partials/activity_table.html")
+	convListTmpl       = parseTemplate("conversation_list.html", "partials/conversation_list.html")
+	convDetailTmpl     = parseTemplate("conversation_detail.html", "partials/conversation_detail.html")
 )
 
 // cacheBuster is set once at startup for static asset cache busting.

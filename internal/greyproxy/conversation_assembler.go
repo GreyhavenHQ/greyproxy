@@ -344,12 +344,12 @@ func (a *ConversationAssembler) loadNewTransactions(sinceID int64) ([]transactio
 
 	for rows.Next() {
 		var (
-			id            int64
+			id                               int64
 			ts, container, url, method, host string
-			reqBody, respBody []byte
-			respCT        *string
-			durationMsPtr *int64
-			reqHeadersJSON *string
+			reqBody, respBody                []byte
+			respCT                           *string
+			durationMsPtr                    *int64
+			reqHeadersJSON                   *string
 		)
 		if err := rows.Scan(&id, &ts, &container, &url, &method, &host,
 			&reqBody, &respBody, &respCT, &durationMsPtr, &reqHeadersJSON); err != nil {
@@ -488,12 +488,12 @@ func (a *ConversationAssembler) loadTransactionsForSessions(sessionIDs map[strin
 	var entries []transactionEntry
 	for rows.Next() {
 		var (
-			id            int64
+			id                               int64
 			ts, container, url, method, host string
-			reqBody, respBody []byte
-			respCT        *string
-			durationMsPtr *int64
-			reqHeadersJSON *string
+			reqBody, respBody                []byte
+			respCT                           *string
+			durationMsPtr                    *int64
+			reqHeadersJSON                   *string
 		)
 		if err := rows.Scan(&id, &ts, &container, &url, &method, &host,
 			&reqBody, &respBody, &respCT, &durationMsPtr, &reqHeadersJSON); err != nil {
@@ -1078,11 +1078,11 @@ func detectProvider(entries []transactionEntry) string {
 // SOCKS5 auth) to client adapter names. This is the most reliable detection
 // signal since it comes from the OS-level process name.
 var containerToClient = map[string]string{
-	"claude":  "claude-code",
-	"codex":   "codex",
+	"claude":   "claude-code",
+	"codex":    "codex",
 	"opencode": "opencode",
-	"aider":   "aider",
-	"gemini":  "gemini-cli",
+	"aider":    "aider",
+	"gemini":   "gemini-cli",
 }
 
 func inferClientName(provider string, entries []transactionEntry) string {
@@ -1352,11 +1352,11 @@ func assembleConversation(sessionID string, entries []transactionEntry) assemble
 		}
 	}
 	conv.metadata = map[string]any{
-		"total_requests":              len(entries),
-		"truncated_requests":          truncated,
-		"parseable_requests":          parseable,
-		"messages_in_best_request":    bestEntry.result.MessageCount,
-		"best_request_id":             bestEntry.txnID,
+		"total_requests":           len(entries),
+		"truncated_requests":       truncated,
+		"parseable_requests":       parseable,
+		"messages_in_best_request": bestEntry.result.MessageCount,
+		"best_request_id":          bestEntry.txnID,
 	}
 
 	return conv
@@ -1561,20 +1561,20 @@ func linkSubagentConversations(allConvs []assembledConversation) {
 
 func (a *ConversationAssembler) upsertConversation(conv assembledConversation) error {
 	input := ConversationUpsertInput{
-		ID:                  conv.conversationID,
-		Model:               conv.model,
-		ContainerName:       conv.containerName,
-		Provider:            conv.provider,
-		StartedAt:           conv.startedAt,
-		EndedAt:             conv.endedAt,
-		TurnCount:           conv.turnCount,
-		SystemPrompt:        conv.systemPrompt,
-		SystemPromptSummary: conv.systemPromptSummary,
+		ID:                   conv.conversationID,
+		Model:                conv.model,
+		ContainerName:        conv.containerName,
+		Provider:             conv.provider,
+		StartedAt:            conv.startedAt,
+		EndedAt:              conv.endedAt,
+		TurnCount:            conv.turnCount,
+		SystemPrompt:         conv.systemPrompt,
+		SystemPromptSummary:  conv.systemPromptSummary,
 		ParentConversationID: conv.parentConvID,
-		LastTurnHasResponse: conv.lastTurnHasResponse,
-		Incomplete:          conv.incomplete,
-		IncompleteReason:    conv.incompleteReason,
-		ClientName:          conv.clientName,
+		LastTurnHasResponse:  conv.lastTurnHasResponse,
+		Incomplete:           conv.incomplete,
+		IncompleteReason:     conv.incompleteReason,
+		ClientName:           conv.clientName,
 	}
 
 	input.MetadataJSON = jsonMarshalOrNil(conv.metadata)

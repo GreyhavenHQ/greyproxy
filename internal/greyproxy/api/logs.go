@@ -91,13 +91,13 @@ func LogsStatsHandler(s *Shared) gin.HandlerFunc {
 		}
 
 		c.JSON(http.StatusOK, gin.H{
-			"period": stats.Period,
-			"total_requests": stats.TotalRequests,
-			"allowed":        stats.Allowed,
-			"blocked":        stats.Blocked,
-			"top_containers": stats.ByContainer,
+			"period":           stats.Period,
+			"total_requests":   stats.TotalRequests,
+			"allowed":          stats.Allowed,
+			"blocked":          stats.Blocked,
+			"top_containers":   stats.ByContainer,
 			"top_destinations": stats.TopBlocked,
-			"timeline":       stats.Timeline,
+			"timeline":         stats.Timeline,
 		})
 	}
 }

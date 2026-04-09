@@ -62,16 +62,16 @@ type Message struct {
 
 // ContentBlock represents a block within a message's content array.
 type ContentBlock struct {
-	Type         string `json:"type"`
-	Text         string `json:"text,omitempty"`
-	Name         string `json:"name,omitempty"`         // tool_use: tool name
-	ID           string `json:"id,omitempty"`            // tool_use: tool_use_id
-	Input        string `json:"input,omitempty"`         // tool_use: JSON input (stringified)
-	ToolSummary  string `json:"tool_summary,omitempty"`  // tool_use: short human-readable summary
-	ToolUseID    string `json:"tool_use_id,omitempty"`   // tool_result
-	Content      string `json:"content,omitempty"`       // tool_result content preview
-	IsError      bool   `json:"is_error,omitempty"`      // tool_result
-	Thinking     string `json:"thinking,omitempty"`      // thinking block
+	Type        string `json:"type"`
+	Text        string `json:"text,omitempty"`
+	Name        string `json:"name,omitempty"`         // tool_use: tool name
+	ID          string `json:"id,omitempty"`           // tool_use: tool_use_id
+	Input       string `json:"input,omitempty"`        // tool_use: JSON input (stringified)
+	ToolSummary string `json:"tool_summary,omitempty"` // tool_use: short human-readable summary
+	ToolUseID   string `json:"tool_use_id,omitempty"`  // tool_result
+	Content     string `json:"content,omitempty"`      // tool_result content preview
+	IsError     bool   `json:"is_error,omitempty"`     // tool_result
+	Thinking    string `json:"thinking,omitempty"`     // thinking block
 }
 
 // SystemBlock represents a system prompt block.

@@ -27,30 +27,30 @@ type Conversation struct {
 	UpdatedAt            sql.NullString `json:"-"`
 
 	// Populated by queries, not stored directly
-	Turns      []Turn `json:"-"`
+	Turns       []Turn `json:"-"`
 	FirstPrompt string `json:"-"`
 }
 
 // ConversationJSON is the API response format for a conversation.
 type ConversationJSON struct {
-	ID                   string   `json:"id"`
-	Model                *string  `json:"model"`
-	ContainerName        *string  `json:"container_name"`
-	Provider             *string  `json:"provider,omitempty"`
-	StartedAt            *string  `json:"started_at"`
-	EndedAt              *string  `json:"ended_at"`
-	TurnCount            int      `json:"turn_count"`
-	SystemPrompt         *string  `json:"system_prompt,omitempty"`
-	SystemPromptSummary  *string  `json:"system_prompt_summary,omitempty"`
-	ParentConversationID *string  `json:"parent_conversation_id,omitempty"`
-	LastTurnHasResponse  bool     `json:"last_turn_has_response"`
-	Metadata             any      `json:"metadata,omitempty"`
-	LinkedSubagents      any      `json:"linked_subagents,omitempty"`
-	RequestIDs           any      `json:"request_ids,omitempty"`
-	Incomplete           bool     `json:"incomplete"`
-	IncompleteReason     *string  `json:"incomplete_reason,omitempty"`
-	ClientName           *string  `json:"client_name,omitempty"`
-	FirstPrompt          *string  `json:"first_prompt,omitempty"`
+	ID                   string     `json:"id"`
+	Model                *string    `json:"model"`
+	ContainerName        *string    `json:"container_name"`
+	Provider             *string    `json:"provider,omitempty"`
+	StartedAt            *string    `json:"started_at"`
+	EndedAt              *string    `json:"ended_at"`
+	TurnCount            int        `json:"turn_count"`
+	SystemPrompt         *string    `json:"system_prompt,omitempty"`
+	SystemPromptSummary  *string    `json:"system_prompt_summary,omitempty"`
+	ParentConversationID *string    `json:"parent_conversation_id,omitempty"`
+	LastTurnHasResponse  bool       `json:"last_turn_has_response"`
+	Metadata             any        `json:"metadata,omitempty"`
+	LinkedSubagents      any        `json:"linked_subagents,omitempty"`
+	RequestIDs           any        `json:"request_ids,omitempty"`
+	Incomplete           bool       `json:"incomplete"`
+	IncompleteReason     *string    `json:"incomplete_reason,omitempty"`
+	ClientName           *string    `json:"client_name,omitempty"`
+	FirstPrompt          *string    `json:"first_prompt,omitempty"`
 	Turns                []TurnJSON `json:"turns,omitempty"`
 }
 
@@ -122,17 +122,17 @@ func (c *Conversation) ToJSON(includeTurns bool) ConversationJSON {
 
 // Turn represents a single turn in a conversation.
 type Turn struct {
-	ID              int64          `json:"id"`
-	ConversationID  string         `json:"conversation_id"`
-	TurnNumber      int            `json:"turn_number"`
-	UserPrompt      sql.NullString `json:"-"`
-	StepsJSON       sql.NullString `json:"-"`
-	APICallsInTurn  int            `json:"api_calls_in_turn"`
-	RequestIDsJSON  sql.NullString `json:"-"`
-	Timestamp       sql.NullString `json:"-"`
-	TimestampEnd    sql.NullString `json:"-"`
-	DurationMs      sql.NullInt64  `json:"-"`
-	Model           sql.NullString `json:"-"`
+	ID             int64          `json:"id"`
+	ConversationID string         `json:"conversation_id"`
+	TurnNumber     int            `json:"turn_number"`
+	UserPrompt     sql.NullString `json:"-"`
+	StepsJSON      sql.NullString `json:"-"`
+	APICallsInTurn int            `json:"api_calls_in_turn"`
+	RequestIDsJSON sql.NullString `json:"-"`
+	Timestamp      sql.NullString `json:"-"`
+	TimestampEnd   sql.NullString `json:"-"`
+	DurationMs     sql.NullInt64  `json:"-"`
+	Model          sql.NullString `json:"-"`
 }
 
 // TurnJSON is the API response format for a turn.

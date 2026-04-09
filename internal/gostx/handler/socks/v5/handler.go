@@ -6,6 +6,7 @@ import (
 	"net"
 	"time"
 
+	"github.com/greyhavenhq/greyproxy/internal/gosocks5"
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/handler"
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/limiter"
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/limiter/traffic"
@@ -13,7 +14,6 @@ import (
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/observer"
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/observer/stats"
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/recorder"
-	"github.com/greyhavenhq/greyproxy/internal/gosocks5"
 	gostx "github.com/greyhavenhq/greyproxy/internal/gostx"
 	xctx "github.com/greyhavenhq/greyproxy/internal/gostx/ctx"
 	"github.com/greyhavenhq/greyproxy/internal/gostx/internal/util/socks"

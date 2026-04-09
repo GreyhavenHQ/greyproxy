@@ -5,8 +5,8 @@ import (
 	"time"
 
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/metadata"
-	mdutil "github.com/greyhavenhq/greyproxy/internal/gostx/metadata/util"
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/selector"
+	mdutil "github.com/greyhavenhq/greyproxy/internal/gostx/metadata/util"
 )
 
 type failFilter[T any] struct {

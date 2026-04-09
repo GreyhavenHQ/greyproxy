@@ -108,10 +108,10 @@ func TestHeaderRedactorExtraPatterns(t *testing.T) {
 	r := NewHeaderRedactor([]string{"X-Custom-Auth", "*password*"})
 
 	h := http.Header{
-		"X-Custom-Auth":     {"auth123"},
-		"X-User-Password":   {"pass"},
-		"X-Request-Id":      {"req-001"},
-		"Authorization":     {"Bearer xxx"}, // default still works
+		"X-Custom-Auth":   {"auth123"},
+		"X-User-Password": {"pass"},
+		"X-Request-Id":    {"req-001"},
+		"Authorization":   {"Bearer xxx"}, // default still works
 	}
 	out := r.Redact(h)
 

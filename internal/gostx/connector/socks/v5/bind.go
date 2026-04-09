@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"net"
 
+	"github.com/greyhavenhq/greyproxy/internal/gosocks5"
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/connector"
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/logger"
-	"github.com/greyhavenhq/greyproxy/internal/gosocks5"
 	"github.com/greyhavenhq/greyproxy/internal/gostx/internal/net/udp"
 	"github.com/greyhavenhq/greyproxy/internal/gostx/internal/util/mux"
 	"github.com/greyhavenhq/greyproxy/internal/gostx/internal/util/socks"

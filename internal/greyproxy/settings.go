@@ -10,11 +10,11 @@ import (
 // UserSettings stores user-overridden settings. Only non-nil fields
 // have been explicitly set by the user and will be persisted to disk.
 type UserSettings struct {
-	Theme                 *string  `json:"theme,omitempty"`
-	NotificationsEnabled  *bool    `json:"notificationsEnabled,omitempty"`
-	MitmEnabled           *bool    `json:"mitmEnabled,omitempty"`
-	ConversationsEnabled  *bool    `json:"conversationsEnabled,omitempty"`
-	RedactedHeaders       []string `json:"redactedHeaders,omitempty"`
+	Theme                *string  `json:"theme,omitempty"`
+	NotificationsEnabled *bool    `json:"notificationsEnabled,omitempty"`
+	MitmEnabled          *bool    `json:"mitmEnabled,omitempty"`
+	ConversationsEnabled *bool    `json:"conversationsEnabled,omitempty"`
+	RedactedHeaders      []string `json:"redactedHeaders,omitempty"`
 }
 
 // ResolvedSettings is the fully resolved settings with defaults applied.
@@ -36,9 +36,9 @@ type SettingsManager struct {
 
 	defaultNotificationsEnabled bool
 
-	onNotificationsChanged  func(bool)
-	onMitmChanged           func(bool)
-	onConversationsChanged  func(bool)
+	onNotificationsChanged func(bool)
+	onMitmChanged          func(bool)
+	onConversationsChanged func(bool)
 
 	redactor *HeaderRedactor
 }

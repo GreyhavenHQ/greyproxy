@@ -13,8 +13,8 @@ const (
 // AllowAllStatus is the current state of silent mode.
 type AllowAllStatus struct {
 	Active           bool       `json:"active"`
-	Mode             string     `json:"mode,omitempty"`             // "allow" or "deny"
-	ExpiresAt        *time.Time `json:"expires_at,omitempty"`       // nil means "until restart"
+	Mode             string     `json:"mode,omitempty"`              // "allow" or "deny"
+	ExpiresAt        *time.Time `json:"expires_at,omitempty"`        // nil means "until restart"
 	RemainingSeconds *int64     `json:"remaining_seconds,omitempty"` // nil means "until restart"
 }
 

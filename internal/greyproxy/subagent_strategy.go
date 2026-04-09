@@ -24,11 +24,11 @@ type SubagentStrategyI interface {
 
 type NoSubagentStrategy struct{}
 
-func (s *NoSubagentStrategy) AgentToolNames() []string              { return nil }
+func (s *NoSubagentStrategy) AgentToolNames() []string { return nil }
 func (s *NoSubagentStrategy) ExtractReferencedSessions(_ []dissector.Message) []string {
 	return nil
 }
-func (s *NoSubagentStrategy) LinkSubagentID(_ string) string        { return "" }
+func (s *NoSubagentStrategy) LinkSubagentID(_ string) string { return "" }
 func (s *NoSubagentStrategy) SplitInvocations(entries []transactionEntry) [][]transactionEntry {
 	if len(entries) == 0 {
 		return nil
@@ -61,8 +61,6 @@ func (s *ClaudeCodeSubagentStrategy) SplitInvocations(entries []transactionEntry
 // OpenCode: Tool "task", separate session IDs, cross-session linking via task_id.
 
 type OpenCodeSubagentStrategy struct{}
-
-
 
 func (s *OpenCodeSubagentStrategy) AgentToolNames() []string {
 	return []string{"task"}

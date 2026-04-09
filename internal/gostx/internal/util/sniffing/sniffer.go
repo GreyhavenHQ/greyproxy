@@ -14,17 +14,16 @@ import (
 	"math"
 	"net"
 	"net/http"
-	"sync"
-	"sync/atomic"
 	"net/http/httputil"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/bypass"
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/logger"
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/observer/stats"
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/recorder"
-	dissector "github.com/greyhavenhq/greyproxy/internal/tlsdissector"
 	xbypass "github.com/greyhavenhq/greyproxy/internal/gostx/bypass"
 	xctx "github.com/greyhavenhq/greyproxy/internal/gostx/ctx"
 	xio "github.com/greyhavenhq/greyproxy/internal/gostx/internal/io"
@@ -35,6 +34,7 @@ import (
 	xstats "github.com/greyhavenhq/greyproxy/internal/gostx/observer/stats"
 	stats_wrapper "github.com/greyhavenhq/greyproxy/internal/gostx/observer/stats/wrapper"
 	xrecorder "github.com/greyhavenhq/greyproxy/internal/gostx/recorder"
+	dissector "github.com/greyhavenhq/greyproxy/internal/tlsdissector"
 	"golang.org/x/net/http/httpguts"
 	"golang.org/x/net/http2"
 	"golang.org/x/time/rate"
@@ -148,12 +148,12 @@ var ErrNotHTTP = errors.New("not HTTP")
 
 // HTTPRequestHoldInfo contains request details for the hold hook to evaluate.
 type HTTPRequestHoldInfo struct {
-	Host          string
-	Method        string
-	URI           string
+	Host           string
+	Method         string
+	URI            string
 	RequestHeaders http.Header
-	RequestBody   []byte
-	ContainerName string
+	RequestBody    []byte
+	ContainerName  string
 }
 
 // GlobalHTTPRequestHoldHook is called (if set) before forwarding a MITM-intercepted HTTP request upstream.

@@ -8,11 +8,11 @@ import (
 )
 
 type settingsResponse struct {
-	Theme           string                        `json:"theme"`
-	Notifications   notificationSettingsResp      `json:"notifications"`
-	Mitm            mitmSettingsResp              `json:"mitm"`
-	Conversations   conversationsSettingsResp     `json:"conversations"`
-	RedactedHeaders []string                      `json:"redactedHeaders"`
+	Theme           string                    `json:"theme"`
+	Notifications   notificationSettingsResp  `json:"notifications"`
+	Mitm            mitmSettingsResp          `json:"mitm"`
+	Conversations   conversationsSettingsResp `json:"conversations"`
+	RedactedHeaders []string                  `json:"redactedHeaders"`
 }
 
 type conversationsSettingsResp struct {

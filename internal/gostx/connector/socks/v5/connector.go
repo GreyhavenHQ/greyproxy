@@ -8,10 +8,10 @@ import (
 	"net"
 	"time"
 
+	"github.com/greyhavenhq/greyproxy/internal/gosocks5"
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/connector"
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/logger"
 	md "github.com/greyhavenhq/greyproxy/internal/gostcore/metadata"
-	"github.com/greyhavenhq/greyproxy/internal/gosocks5"
 	ctxvalue "github.com/greyhavenhq/greyproxy/internal/gostx/ctx"
 	"github.com/greyhavenhq/greyproxy/internal/gostx/internal/util/socks"
 	"github.com/greyhavenhq/greyproxy/internal/gostx/registry"

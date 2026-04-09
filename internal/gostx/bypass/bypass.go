@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gobwas/glob"
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/bypass"
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/logger"
 	ctxvalue "github.com/greyhavenhq/greyproxy/internal/gostx/ctx"
@@ -18,7 +19,6 @@ import (
 	"github.com/greyhavenhq/greyproxy/internal/gostx/internal/matcher"
 	xnet "github.com/greyhavenhq/greyproxy/internal/gostx/internal/net"
 	xlogger "github.com/greyhavenhq/greyproxy/internal/gostx/logger"
-	"github.com/gobwas/glob"
 )
 
 var (

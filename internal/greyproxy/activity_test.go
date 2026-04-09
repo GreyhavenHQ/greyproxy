@@ -17,7 +17,7 @@ func TestQueryActivity(t *testing.T) {
 		ContainerName: "myapp", DestinationHost: "api.example.com", DestinationPort: 443,
 		Method: "POST", URL: "https://api.example.com/v1/messages",
 		RequestHeaders: http.Header{"Content-Type": {"application/json"}},
-		StatusCode: 200, DurationMs: 150, Result: "auto",
+		StatusCode:     200, DurationMs: 150, Result: "auto",
 	})
 
 	t.Run("shows both connections and HTTP traffic", func(t *testing.T) {

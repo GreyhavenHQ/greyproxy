@@ -21,14 +21,9 @@ import (
 
 	"github.com/andybalholm/brotli"
 	"github.com/fsnotify/fsnotify"
-	"github.com/klauspost/compress/zstd"
 	defaults "github.com/greyhavenhq/greyproxy"
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/logger"
 	svccore "github.com/greyhavenhq/greyproxy/internal/gostcore/service"
-	greyproxy "github.com/greyhavenhq/greyproxy/internal/greyproxy"
-	greyproxy_api "github.com/greyhavenhq/greyproxy/internal/greyproxy/api"
-	greyproxy_plugins "github.com/greyhavenhq/greyproxy/internal/greyproxy/plugins"
-	greyproxy_ui "github.com/greyhavenhq/greyproxy/internal/greyproxy/ui"
 	"github.com/greyhavenhq/greyproxy/internal/gostx"
 	"github.com/greyhavenhq/greyproxy/internal/gostx/config"
 	"github.com/greyhavenhq/greyproxy/internal/gostx/config/loader"
@@ -37,7 +32,12 @@ import (
 	xmetrics "github.com/greyhavenhq/greyproxy/internal/gostx/metrics"
 	metrics "github.com/greyhavenhq/greyproxy/internal/gostx/metrics/service"
 	"github.com/greyhavenhq/greyproxy/internal/gostx/registry"
+	greyproxy "github.com/greyhavenhq/greyproxy/internal/greyproxy"
+	greyproxy_api "github.com/greyhavenhq/greyproxy/internal/greyproxy/api"
+	greyproxy_plugins "github.com/greyhavenhq/greyproxy/internal/greyproxy/plugins"
+	greyproxy_ui "github.com/greyhavenhq/greyproxy/internal/greyproxy/ui"
 	"github.com/kardianos/service"
+	"github.com/klauspost/compress/zstd"
 	"github.com/spf13/viper"
 )
 
@@ -46,9 +46,9 @@ type program struct {
 	srvGreyproxy *greyproxy.Service
 	srvProfiling *http.Server
 
-	cancel           context.CancelFunc
-	assemblerCancel  context.CancelFunc
-	credStoreCancel  context.CancelFunc
+	cancel          context.CancelFunc
+	assemblerCancel context.CancelFunc
+	credStoreCancel context.CancelFunc
 
 	certMtimeMu sync.Mutex
 	certMtime   time.Time // mtime of ca-cert.pem at last successful reload
@@ -373,7 +373,6 @@ func (p *program) buildGreyproxyService() error {
 	if gaCfg.Resolver == "" {
 		gaCfg.Resolver = "resolver-0"
 	}
-
 
 	applyDockerEnvOverrides(&gaCfg)
 

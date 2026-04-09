@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	xnet "github.com/greyhavenhq/greyproxy/internal/gostx/internal/net"
 	"github.com/gobwas/glob"
+	xnet "github.com/greyhavenhq/greyproxy/internal/gostx/internal/net"
 	"github.com/yl2chen/cidranger"
 )
 

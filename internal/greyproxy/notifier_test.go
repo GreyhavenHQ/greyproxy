@@ -46,7 +46,7 @@ func TestDetectNotifySendCaps(t *testing.T) {
 // by exercising parseVersion against the thresholds used in detectNotifySendCaps.
 func TestNotifySendCapsFromVersion(t *testing.T) {
 	tests := []struct {
-		version     string
+		version      string
 		wantAdvanced bool
 	}{
 		{"0.7.9", false},
