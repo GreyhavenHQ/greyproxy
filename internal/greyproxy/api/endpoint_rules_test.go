@@ -1,9 +1,51 @@
 package api
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/gin-gonic/gin"
 )
+
+func TestDissectorsListHandler(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.GET("/api/dissectors", DissectorsListHandler())
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/dissectors", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("status: got %d, want 200", w.Code)
+	}
+
+	var resp struct {
+		Dissectors []struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+		} `json:"dissectors"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Dissectors) == 0 {
+		t.Fatal("expected at least one dissector, got none")
+	}
+
+	// Verify each entry has name and description
+	for _, d := range resp.Dissectors {
+		if d.Name == "" {
+			t.Error("dissector with empty name")
+		}
+		if d.Description == "" {
+			t.Errorf("dissector %q has empty description", d.Name)
+		}
+	}
+}
 
 func TestValidateEndpointRule(t *testing.T) {
 	tests := []struct {
