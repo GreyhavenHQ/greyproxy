@@ -82,6 +82,9 @@ func (p *program) Start(s service.Service) error {
 	// Auto-inject MITM cert paths if CA files exist
 	injectCertPaths(cfg, greyproxyDataHome())
 
+	// Replace hardcoded DNS upstream with the host's actual resolver
+	injectSystemDNS(cfg)
+
 	config.Set(cfg)
 
 	// Override DNS handler to capture responses for DNS cache population.
@@ -129,6 +132,32 @@ func injectCertPaths(cfg *config.Config, dataDir string) {
 			svc.Handler.Metadata["mitm.keyFile"] = keyFile
 		}
 	}
+}
+
+// injectSystemDNS populates the upstream forwarder for any DNS proxy service
+// that has no forwarder configured. The upstream is detected from the host's
+// system resolver (/etc/resolv.conf on Linux/macOS, registry on Windows),
+// falling back to 1.1.1.1:53 if detection fails.
+//
+// Services that already have a forwarder configured are left completely alone,
+// which is how users opt out or override the upstream.
+func injectSystemDNS(cfg *config.Config) {
+	upstream := systemDNSServers()[0]
+	for _, svc := range cfg.Services {
+		if svc.Handler == nil || svc.Handler.Type != "dns" {
+			continue
+		}
+		if svc.Forwarder != nil && len(svc.Forwarder.Nodes) > 0 {
+			// User has explicitly configured a forwarder; leave it alone.
+			continue
+		}
+		svc.Forwarder = &config.ForwarderConfig{
+			Nodes: []*config.ForwardNodeConfig{
+				{Name: "dns-upstream", Addr: upstream},
+			},
+		}
+	}
+	logger.Default().Infof("dns forwarder: upstream = %s", upstream)
 }
 
 // watchCertFiles watches ca-cert.pem and ca-key.pem using inotify (fsnotify) and
@@ -324,6 +353,7 @@ func (p *program) reloadConfig() error {
 		return err
 	}
 	injectCertPaths(cfg, greyproxyDataHome())
+	injectSystemDNS(cfg)
 	config.Set(cfg)
 
 	if err := loader.Load(cfg); err != nil {
@@ -665,7 +695,9 @@ func (p *program) buildGreyproxyService() error {
 	autherPlugin := greyproxy_plugins.NewAuther()
 	admissionPlugin := greyproxy_plugins.NewAdmission()
 	bypassPlugin := greyproxy_plugins.NewBypass(shared.DB, shared.Cache, shared.Bus, shared.Waiters, shared.ConnTracker, dockerResolver, allowAllManager)
-	resolverPlugin := greyproxy_plugins.NewResolver(shared.Cache)
+	sysDNS := systemDNSServers()[0]
+	resolverPlugin := greyproxy_plugins.NewResolver(shared.Cache, sysDNS)
+	log.Infof("dns resolver: upstream connections will resolve via %s", sysDNS)
 
 	_ = registry.AutherRegistry().Register(gaCfg.Auther, autherPlugin)
 	_ = registry.AdmissionRegistry().Register(gaCfg.Admission, admissionPlugin)

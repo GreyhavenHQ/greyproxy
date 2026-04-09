@@ -59,6 +59,18 @@ services:
     hosts: hosts-0
 
   # DNS proxy on port 53 (UDP + TCP)
+  #
+  # Upstream resolver: greyproxy auto-detects the system DNS at startup
+  # (/etc/resolv.conf on Linux/macOS, registry on Windows) and injects it as
+  # the forwarder. Falls back to 1.1.1.1:53 if detection fails.
+  #
+  # To use a specific upstream instead, add a forwarder block to either or both
+  # services below and greyproxy will leave it untouched:
+  #
+  #   forwarder:
+  #     nodes:
+  #       - name: dns-upstream
+  #         addr: 9.9.9.9:53
   - name: dns-proxy-udp
     addr: :43053
     handler:
@@ -68,10 +80,6 @@ services:
       metadata:
         mode: udp
     resolver: resolver-0
-    forwarder:
-      nodes:
-        - name: dns-upstream
-          addr: 1.1.1.1:53
 
   - name: dns-proxy-tcp
     addr: :43053
@@ -80,12 +88,12 @@ services:
     listener:
       type: tcp
     resolver: resolver-0
-    forwarder:
-      nodes:
-        - name: dns-upstream
-          addr: 1.1.1.1:53
 
-# Static host mappings (populated by entrypoint-gost.sh)
+# Static host mappings
 hosts:
   - name: hosts-0
-    mappings: []
+    mappings:
+      - ip: 127.0.0.1
+        hostname: localhost
+      - ip: "::1"
+        hostname: localhost
