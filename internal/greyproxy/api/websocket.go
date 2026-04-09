@@ -262,9 +262,9 @@ func handleClientCommands(client *wsClient, s *Shared, log logger.Logger) {
 		case "claim_notifications":
 			if client.notifClaimed {
 				_ = client.send(gin.H{
-					"type":          "error",
-					"error":         "notifications already claimed by this connection",
-					"timestamp":     time.Now().UTC().Format(time.RFC3339),
+					"type":      "error",
+					"error":     "notifications already claimed by this connection",
+					"timestamp": time.Now().UTC().Format(time.RFC3339),
 				})
 				continue
 			}
