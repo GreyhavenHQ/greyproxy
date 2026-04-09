@@ -30,6 +30,7 @@ type wsClient struct {
 	mu            sync.Mutex
 	subscriptions map[string]bool // nil means "subscribe to all"
 	subMu         sync.RWMutex
+	notifClaimed  bool // true if this client claimed notifications
 }
 
 func (c *wsClient) send(msg any) error {
@@ -95,6 +96,18 @@ func WebSocketHandler(s *Shared) gin.HandlerFunc {
 		go func() {
 			defer close(done)
 			handleClientCommands(client, s, log)
+		}()
+
+		// Release notification claim on disconnect
+		defer func() {
+			if client.notifClaimed && s.Notifier != nil {
+				count := s.Notifier.ReleaseNotifications()
+				log.Infof("ws client %s disconnected, auto-released notification claim (active claims: %d)", client.id, count)
+				s.Bus.Publish(greyproxy.Event{
+					Type: greyproxy.EventNotificationClaimsChanged,
+					Data: map[string]any{"active_claims": count},
+				})
+			}
 		}()
 
 		// Forward events to client (filtered by subscriptions)
@@ -244,6 +257,35 @@ func handleClientCommands(client *wsClient, s *Shared, log logger.Logger) {
 				"type":       "unsubscribed",
 				"event_type": cmd.EventType,
 				"timestamp":  time.Now().UTC().Format(time.RFC3339),
+			})
+
+		case "claim_notifications":
+			if client.notifClaimed {
+				_ = client.send(gin.H{
+					"type":          "error",
+					"error":         "notifications already claimed by this connection",
+					"timestamp":     time.Now().UTC().Format(time.RFC3339),
+				})
+				continue
+			}
+			if s.Notifier == nil {
+				_ = client.send(gin.H{
+					"type":      "error",
+					"error":     "notifier not available",
+					"timestamp": time.Now().UTC().Format(time.RFC3339),
+				})
+				continue
+			}
+			client.notifClaimed = true
+			count := s.Notifier.ClaimNotifications()
+			s.Bus.Publish(greyproxy.Event{
+				Type: greyproxy.EventNotificationClaimsChanged,
+				Data: map[string]any{"active_claims": count},
+			})
+			_ = client.send(gin.H{
+				"type":          "notification_claimed",
+				"active_claims": count,
+				"timestamp":     time.Now().UTC().Format(time.RFC3339),
 			})
 
 		default:

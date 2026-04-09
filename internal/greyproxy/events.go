@@ -22,6 +22,9 @@ const (
 
 	// Allow-all mode events
 	EventAllowAllChanged = "allowall.changed"
+
+	// Notification claim events
+	EventNotificationClaimsChanged = "notification.claims_changed"
 )
 
 // Event represents a broadcast event.

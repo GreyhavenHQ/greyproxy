@@ -33,14 +33,17 @@ type notificationSettingsResp struct {
 	Backend         string `json:"backend"`
 	InstallHint     string `json:"installHint,omitempty"`
 	SupportsActions bool   `json:"supportsActions"`
+	ActiveClaims    int    `json:"activeClaims"`
 }
 
 func buildSettingsResponse(s *Shared) settingsResponse {
 	resolved := s.Settings.Get()
 
 	var info greyproxy.NotificationBackendInfo
+	var activeClaims int
 	if s.Notifier != nil {
 		info = s.Notifier.BackendInfo()
+		activeClaims = s.Notifier.ActiveClaims()
 	}
 
 	certStatus := buildCertStatus(s.DataHome)
@@ -64,6 +67,7 @@ func buildSettingsResponse(s *Shared) settingsResponse {
 			Backend:         info.Backend,
 			InstallHint:     info.InstallHint,
 			SupportsActions: info.SupportsActions,
+			ActiveClaims:    activeClaims,
 		},
 		Mitm: mitm,
 	}

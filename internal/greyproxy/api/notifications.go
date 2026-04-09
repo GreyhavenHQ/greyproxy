@@ -10,11 +10,18 @@ import (
 func NotificationsStatusHandler(s *Shared) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if s.Settings == nil {
-			c.JSON(http.StatusOK, gin.H{"enabled": false})
+			c.JSON(http.StatusOK, gin.H{"enabled": false, "active_claims": 0})
 			return
 		}
 		resolved := s.Settings.Get()
-		c.JSON(http.StatusOK, gin.H{"enabled": resolved.NotificationsEnabled})
+		activeClaims := 0
+		if s.Notifier != nil {
+			activeClaims = s.Notifier.ActiveClaims()
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"enabled":       resolved.NotificationsEnabled,
+			"active_claims": activeClaims,
+		})
 	}
 }
 

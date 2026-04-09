@@ -48,6 +48,11 @@ type Notifier struct {
 	activeNotifMu sync.Mutex
 	activeNotif   map[int64]*os.Process
 
+	// Notification claims: when > 0, a companion app is handling
+	// notifications and system notifications are suppressed.
+	claimsMu sync.Mutex
+	claims   int
+
 	stop chan struct{}
 }
 
@@ -271,9 +276,47 @@ func (n *Notifier) Enabled() bool {
 	return n.enabled.Load()
 }
 
+// ClaimNotifications increments the claim counter, suppressing system
+// notifications while at least one claim is active. Returns the new count.
+func (n *Notifier) ClaimNotifications() int {
+	n.claimsMu.Lock()
+	n.claims++
+	count := n.claims
+	n.claimsMu.Unlock()
+	n.log.Infof("notification claimed (active claims: %d)", count)
+	return count
+}
+
+// ReleaseNotifications decrements the claim counter. When it reaches zero,
+// system notifications resume. Returns the new count.
+func (n *Notifier) ReleaseNotifications() int {
+	n.claimsMu.Lock()
+	if n.claims > 0 {
+		n.claims--
+	}
+	count := n.claims
+	n.claimsMu.Unlock()
+	n.log.Infof("notification released (active claims: %d)", count)
+	return count
+}
+
+// ActiveClaims returns the current number of notification claims.
+func (n *Notifier) ActiveClaims() int {
+	n.claimsMu.Lock()
+	defer n.claimsMu.Unlock()
+	return n.claims
+}
+
+// claimed returns true if notifications are currently claimed by a companion.
+func (n *Notifier) claimed() bool {
+	n.claimsMu.Lock()
+	defer n.claimsMu.Unlock()
+	return n.claims > 0
+}
+
 // onPendingCreated handles a brand new pending request; always notify.
 func (n *Notifier) onPendingCreated(evt Event) {
-	if !n.enabled.Load() {
+	if !n.enabled.Load() || n.claimed() {
 		return
 	}
 
@@ -291,7 +334,7 @@ func (n *Notifier) onPendingCreated(evt Event) {
 
 // onWaitersChanged handles when a pending goes from 0 waiters to 1+.
 func (n *Notifier) onWaitersChanged(evt Event) {
-	if !n.enabled.Load() {
+	if !n.enabled.Load() || n.claimed() {
 		return
 	}
 
