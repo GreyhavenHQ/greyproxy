@@ -45,7 +45,7 @@ func OverrideDNSHandler() {
 	// Must unregister first — the registry uses LoadOrStore and calls Fatal on duplicates.
 	registry.HandlerRegistry().Unregister("dns")
 
-	registry.HandlerRegistry().Register("dns", func(opts ...handler.Option) handler.Handler {
+	_ = registry.HandlerRegistry().Register("dns", func(opts ...handler.Option) handler.Handler {
 		inner := origFactory(opts...)
 		return &cachingDNSHandler{inner: inner}
 	})

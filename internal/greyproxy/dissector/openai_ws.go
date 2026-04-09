@@ -139,7 +139,7 @@ func (d *OpenAIWSDissector) extractRequest(input ExtractionInput) (*ExtractionRe
 				Name      string `json:"name"`
 				Arguments string `json:"arguments"`
 			}
-			json.Unmarshal(raw, &fc)
+			_ = json.Unmarshal(raw, &fc)
 
 			cb := ContentBlock{
 				Type: "tool_use",
@@ -164,7 +164,7 @@ func (d *OpenAIWSDissector) extractRequest(input ExtractionInput) (*ExtractionRe
 				CallID string `json:"call_id"`
 				Output string `json:"output"`
 			}
-			json.Unmarshal(raw, &fco)
+			_ = json.Unmarshal(raw, &fco)
 
 			content := fco.Output
 			if len(content) > 500 {
@@ -192,7 +192,7 @@ func (d *OpenAIWSDissector) extractRequest(input ExtractionInput) (*ExtractionRe
 					Text string `json:"text"`
 				} `json:"content"`
 			}
-			json.Unmarshal(raw, &msg)
+			_ = json.Unmarshal(raw, &msg)
 			m := Message{Role: msg.Role}
 			for _, c := range msg.Content {
 				if c.Type == "output_text" && c.Text != "" {

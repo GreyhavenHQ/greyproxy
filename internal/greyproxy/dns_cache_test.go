@@ -64,14 +64,14 @@ func setupDNSTestDB(t *testing.T) *DB {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tmpFile.Close()
-	t.Cleanup(func() { os.Remove(tmpFile.Name()) })
+	_ = tmpFile.Close()
+	t.Cleanup(func() { _ = os.Remove(tmpFile.Name()) })
 
 	db, err := OpenDB(tmpFile.Name())
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() { _ = db.Close() })
 
 	if err := db.Migrate(); err != nil {
 		t.Fatal(err)
@@ -91,7 +91,7 @@ func TestDNSCacheDBPersistAndReload(t *testing.T) {
 
 	// Verify entries are in the database
 	var count int
-	db.ReadDB().QueryRow("SELECT COUNT(*) FROM dns_cache").Scan(&count)
+	_ = db.ReadDB().QueryRow("SELECT COUNT(*) FROM dns_cache").Scan(&count)
 	if count != 2 {
 		t.Fatalf("expected 2 rows in dns_cache, got %d", count)
 	}
@@ -144,7 +144,7 @@ func TestDNSCacheDBExpiredEntriesNotLoaded(t *testing.T) {
 
 	// Insert an entry with an old updated_at (beyond 7-day TTL)
 	db.Lock()
-	db.WriteDB().Exec(
+	_, _ = db.WriteDB().Exec(
 		"INSERT INTO dns_cache (ip, hostname, updated_at) VALUES (?, ?, datetime('now', '-8 days'))",
 		"10.0.0.1", "stale.example.com",
 	)
@@ -176,14 +176,14 @@ func TestDNSCacheDBUpsertUpdatesTimestamp(t *testing.T) {
 
 	// DB should have the latest hostname
 	var hostname string
-	db.ReadDB().QueryRow("SELECT hostname FROM dns_cache WHERE ip = ?", "10.0.0.1").Scan(&hostname)
+	_ = db.ReadDB().QueryRow("SELECT hostname FROM dns_cache WHERE ip = ?", "10.0.0.1").Scan(&hostname)
 	if hostname != "new.example.com" {
 		t.Errorf("expected upserted hostname %q, got %q", "new.example.com", hostname)
 	}
 
 	// Only one row for that IP
 	var count int
-	db.ReadDB().QueryRow("SELECT COUNT(*) FROM dns_cache WHERE ip = ?", "10.0.0.1").Scan(&count)
+	_ = db.ReadDB().QueryRow("SELECT COUNT(*) FROM dns_cache WHERE ip = ?", "10.0.0.1").Scan(&count)
 	if count != 1 {
 		t.Errorf("expected 1 row for IP, got %d", count)
 	}

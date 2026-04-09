@@ -50,7 +50,7 @@ func TestDockerResolverResolveIPFound(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		json.NewEncoder(w).Encode(containers)
+		_ = json.NewEncoder(w).Encode(containers)
 	}))
 	defer server.Close()
 
@@ -71,7 +71,7 @@ func TestDockerResolverResolveIPNotFound(t *testing.T) {
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(containers)
+		_ = json.NewEncoder(w).Encode(containers)
 	}))
 	defer server.Close()
 
@@ -107,7 +107,7 @@ func TestDockerResolverCaching(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
-		json.NewEncoder(w).Encode(containers)
+		_ = json.NewEncoder(w).Encode(containers)
 	}))
 	defer server.Close()
 
@@ -134,7 +134,7 @@ func TestDockerResolverCacheExpiry(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
-		json.NewEncoder(w).Encode(containers)
+		_ = json.NewEncoder(w).Encode(containers)
 	}))
 	defer server.Close()
 
@@ -166,7 +166,7 @@ func TestDockerResolverMultipleNetworks(t *testing.T) {
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(containers)
+		_ = json.NewEncoder(w).Encode(containers)
 	}))
 	defer server.Close()
 
@@ -190,7 +190,7 @@ func TestDockerResolverStripsLeadingSlash(t *testing.T) {
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(containers)
+		_ = json.NewEncoder(w).Encode(containers)
 	}))
 	defer server.Close()
 
@@ -208,7 +208,7 @@ func TestDockerResolverIDTruncatedTo12(t *testing.T) {
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(containers)
+		_ = json.NewEncoder(w).Encode(containers)
 	}))
 	defer server.Close()
 
@@ -226,7 +226,7 @@ func TestDockerResolverMissNotCached(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
-		json.NewEncoder(w).Encode(*containers)
+		_ = json.NewEncoder(w).Encode(*containers)
 	}))
 	defer server.Close()
 

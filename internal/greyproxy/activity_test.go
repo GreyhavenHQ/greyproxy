@@ -9,11 +9,11 @@ func TestQueryActivity(t *testing.T) {
 	db := setupTestDB(t)
 
 	// Seed connection logs
-	CreateLogEntry(db, LogCreateInput{ContainerName: "myapp", DestinationHost: "api.example.com", DestinationPort: 443, Result: "allowed"})
-	CreateLogEntry(db, LogCreateInput{ContainerName: "myapp", DestinationHost: "evil.com", DestinationPort: 443, Result: "blocked"})
+	_, _ = CreateLogEntry(db, LogCreateInput{ContainerName: "myapp", DestinationHost: "api.example.com", DestinationPort: 443, Result: "allowed"})
+	_, _ = CreateLogEntry(db, LogCreateInput{ContainerName: "myapp", DestinationHost: "evil.com", DestinationPort: 443, Result: "blocked"})
 
 	// Seed HTTP transactions
-	CreateHttpTransaction(db, HttpTransactionCreateInput{
+	_, _ = CreateHttpTransaction(db, HttpTransactionCreateInput{
 		ContainerName: "myapp", DestinationHost: "api.example.com", DestinationPort: 443,
 		Method: "POST", URL: "https://api.example.com/v1/messages",
 		RequestHeaders: http.Header{"Content-Type": {"application/json"}},

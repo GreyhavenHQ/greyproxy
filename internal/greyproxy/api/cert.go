@@ -166,11 +166,11 @@ func CertGenerateHandler(s *Shared) gin.HandlerFunc {
 			return
 		}
 		if err := pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: certDER}); err != nil {
-			certOut.Close()
+			_ = certOut.Close()
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to encode cert: %v", err)})
 			return
 		}
-		certOut.Close()
+		_ = certOut.Close()
 
 		keyBytes, err := x509.MarshalECPrivateKey(privateKey)
 		if err != nil {
@@ -184,11 +184,11 @@ func CertGenerateHandler(s *Shared) gin.HandlerFunc {
 			return
 		}
 		if err := pem.Encode(keyOut, &pem.Block{Type: "EC PRIVATE KEY", Bytes: keyBytes}); err != nil {
-			keyOut.Close()
+			_ = keyOut.Close()
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to encode key: %v", err)})
 			return
 		}
-		keyOut.Close()
+		_ = keyOut.Close()
 
 		c.JSON(http.StatusOK, gin.H{
 			"message":    "Certificate generated and reloaded.",

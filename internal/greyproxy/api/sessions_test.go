@@ -154,7 +154,7 @@ func TestSessionsCreate_MixedCredentials(t *testing.T) {
 	}
 
 	var resp map[string]any
-	json.Unmarshal(w.Body.Bytes(), &resp)
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
 
 	// Should have 2 credentials total
 	if count := int(resp["credential_count"].(float64)); count != 2 {
@@ -187,7 +187,7 @@ func TestSessionsCreate_UnknownGlobalCredential(t *testing.T) {
 	}
 
 	var resp map[string]any
-	json.Unmarshal(w.Body.Bytes(), &resp)
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
 	errMsg, _ := resp["error"].(string)
 	if errMsg == "" {
 		t.Error("expected error message")
@@ -230,7 +230,7 @@ func TestSessionsCreate_OnlyGlobalNoMappings(t *testing.T) {
 	}
 
 	var resp map[string]any
-	json.Unmarshal(w.Body.Bytes(), &resp)
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
 	if count := int(resp["credential_count"].(float64)); count != 1 {
 		t.Errorf("credential_count = %d, want 1", count)
 	}

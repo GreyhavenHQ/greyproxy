@@ -17,14 +17,14 @@ func setupTestDB(t *testing.T) *DB {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tmpFile.Close()
-	t.Cleanup(func() { os.Remove(tmpFile.Name()) })
+	_ = tmpFile.Close()
+	t.Cleanup(func() { _ = os.Remove(tmpFile.Name()) })
 
 	db, err := OpenDB(tmpFile.Name())
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() { _ = db.Close() })
 
 	if err := db.Migrate(); err != nil {
 		t.Fatal(err)
@@ -195,7 +195,7 @@ func TestGetRulesFilter(t *testing.T) {
 	}
 
 	// Filter by container
-	rules, total, err = GetRules(db, RuleFilter{Container: "myapp"})
+	_, total, err = GetRules(db, RuleFilter{Container: "myapp"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -405,8 +405,8 @@ func TestGetPendingCount(t *testing.T) {
 		t.Errorf("expected 0, got %d", count)
 	}
 
-	CreateOrUpdatePending(db, "myapp", "", "1.2.3.4", 443, "")
-	CreateOrUpdatePending(db, "myapp", "", "5.6.7.8", 80, "")
+	_, _, _ = CreateOrUpdatePending(db, "myapp", "", "1.2.3.4", 443, "")
+	_, _, _ = CreateOrUpdatePending(db, "myapp", "", "5.6.7.8", 80, "")
 
 	count, err = GetPendingCount(db)
 	if err != nil {
@@ -553,9 +553,9 @@ func TestQueryLogs(t *testing.T) {
 	db := setupTestDB(t)
 
 	// Create logs
-	CreateLogEntry(db, LogCreateInput{ContainerName: "myapp", DestinationHost: "a.com", Result: "allowed"})
-	CreateLogEntry(db, LogCreateInput{ContainerName: "myapp", DestinationHost: "b.com", Result: "blocked"})
-	CreateLogEntry(db, LogCreateInput{ContainerName: "other", DestinationHost: "c.com", Result: "allowed"})
+	_, _ = CreateLogEntry(db, LogCreateInput{ContainerName: "myapp", DestinationHost: "a.com", Result: "allowed"})
+	_, _ = CreateLogEntry(db, LogCreateInput{ContainerName: "myapp", DestinationHost: "b.com", Result: "blocked"})
+	_, _ = CreateLogEntry(db, LogCreateInput{ContainerName: "other", DestinationHost: "c.com", Result: "allowed"})
 
 	// All logs
 	logs, total, err := QueryLogs(db, LogFilter{})
@@ -570,7 +570,7 @@ func TestQueryLogs(t *testing.T) {
 	}
 
 	// Filter by result
-	logs, total, err = QueryLogs(db, LogFilter{Result: "blocked"})
+	_, total, err = QueryLogs(db, LogFilter{Result: "blocked"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -579,7 +579,7 @@ func TestQueryLogs(t *testing.T) {
 	}
 
 	// Filter by container
-	logs, total, err = QueryLogs(db, LogFilter{Container: "myapp"})
+	_, total, err = QueryLogs(db, LogFilter{Container: "myapp"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -592,9 +592,9 @@ func TestGetDashboardStats(t *testing.T) {
 	db := setupTestDB(t)
 
 	// Create some log data
-	CreateLogEntry(db, LogCreateInput{ContainerName: "myapp", DestinationHost: "a.com", Result: "allowed"})
-	CreateLogEntry(db, LogCreateInput{ContainerName: "myapp", DestinationHost: "b.com", Result: "blocked"})
-	CreateLogEntry(db, LogCreateInput{ContainerName: "other", DestinationHost: "c.com", Result: "allowed"})
+	_, _ = CreateLogEntry(db, LogCreateInput{ContainerName: "myapp", DestinationHost: "a.com", Result: "allowed"})
+	_, _ = CreateLogEntry(db, LogCreateInput{ContainerName: "myapp", DestinationHost: "b.com", Result: "blocked"})
+	_, _ = CreateLogEntry(db, LogCreateInput{ContainerName: "other", DestinationHost: "c.com", Result: "allowed"})
 
 	from := time.Now().Add(-1 * time.Hour)
 	to := time.Now().Add(1 * time.Hour)
@@ -636,7 +636,7 @@ func TestMigrations(t *testing.T) {
 
 	// Verify migration versions were recorded
 	var count int
-	db.ReadDB().QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&count)
+	_ = db.ReadDB().QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&count)
 	if count != 11 {
 		t.Errorf("expected 11 migration versions, got %d", count)
 	}
@@ -831,7 +831,7 @@ func TestQueryHttpTransactions(t *testing.T) {
 
 	// Create several transactions
 	for _, m := range []string{"GET", "POST", "DELETE"} {
-		CreateHttpTransaction(db, HttpTransactionCreateInput{
+		_, _ = CreateHttpTransaction(db, HttpTransactionCreateInput{
 			ContainerName:   "app1",
 			DestinationHost: "api.example.com",
 			DestinationPort: 443,
@@ -841,7 +841,7 @@ func TestQueryHttpTransactions(t *testing.T) {
 			Result:          "auto",
 		})
 	}
-	CreateHttpTransaction(db, HttpTransactionCreateInput{
+	_, _ = CreateHttpTransaction(db, HttpTransactionCreateInput{
 		ContainerName:   "app2",
 		DestinationHost: "other.example.com",
 		DestinationPort: 443,
@@ -864,13 +864,13 @@ func TestQueryHttpTransactions(t *testing.T) {
 	}
 
 	// Filter by method
-	txns, total, _ = QueryHttpTransactions(db, TransactionFilter{Method: "POST"})
+	_, total, _ = QueryHttpTransactions(db, TransactionFilter{Method: "POST"})
 	if total != 1 {
 		t.Errorf("total with method=POST = %d, want 1", total)
 	}
 
 	// Filter by destination
-	txns, total, _ = QueryHttpTransactions(db, TransactionFilter{Destination: "other"})
+	_, total, _ = QueryHttpTransactions(db, TransactionFilter{Destination: "other"})
 	if total != 1 {
 		t.Errorf("total with destination=other = %d, want 1", total)
 	}

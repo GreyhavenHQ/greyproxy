@@ -370,7 +370,7 @@ func TestAssembler_AssembleConversation(t *testing.T) {
 
 			var body map[string]any
 			if f.RequestBody != "" {
-				json.Unmarshal([]byte(f.RequestBody), &body)
+				_ = json.Unmarshal([]byte(f.RequestBody), &body)
 			}
 
 			entry := transactionEntry{

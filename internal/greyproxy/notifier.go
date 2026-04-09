@@ -170,10 +170,10 @@ func detectNotifySendCaps() notifySendCaps {
 func parseVersion(v string) (major, minor int) {
 	parts := strings.SplitN(v, ".", 3)
 	if len(parts) >= 1 {
-		fmt.Sscanf(parts[0], "%d", &major)
+		_, _ = fmt.Sscanf(parts[0], "%d", &major)
 	}
 	if len(parts) >= 2 {
-		fmt.Sscanf(parts[1], "%d", &minor)
+		_, _ = fmt.Sscanf(parts[1], "%d", &minor)
 	}
 	return
 }
@@ -385,7 +385,7 @@ func (n *Notifier) trackNotification(pendingID int64, proc *os.Process) {
 	n.activeNotifMu.Lock()
 	defer n.activeNotifMu.Unlock()
 	if old, exists := n.activeNotif[pendingID]; exists {
-		old.Signal(syscall.SIGINT)
+		_ = old.Signal(syscall.SIGINT)
 	}
 	n.activeNotif[pendingID] = proc
 	n.log.Debugf("tracked pid %d for pending %d (active: %d)", proc.Pid, pendingID, len(n.activeNotif))
@@ -409,7 +409,7 @@ func (n *Notifier) closeNotification(pendingID int64) {
 
 	if exists && proc != nil {
 		n.log.Infof("closing notification for pending %d (pid %d)", pendingID, proc.Pid)
-		proc.Signal(syscall.SIGINT)
+		_ = proc.Signal(syscall.SIGINT)
 	}
 }
 
@@ -418,7 +418,7 @@ func (n *Notifier) closeAllNotifications() {
 	defer n.activeNotifMu.Unlock()
 	for _, proc := range n.activeNotif {
 		if proc != nil {
-			proc.Signal(syscall.SIGINT)
+			_ = proc.Signal(syscall.SIGINT)
 		}
 	}
 	n.activeNotif = make(map[int64]*os.Process)
@@ -475,11 +475,11 @@ func (n *Notifier) sendLinuxAdvanced(title, body, url string, pendingID int64) {
 		if scanner.Scan() {
 			action := strings.TrimSpace(scanner.Text())
 			if action == "default" {
-				exec.Command("xdg-open", url).Start()
+				_ = exec.Command("xdg-open", url).Start()
 			}
 		}
 
-		cmd.Wait()
+		_ = cmd.Wait()
 		n.untrackNotification(pendingID)
 	}()
 }
@@ -524,7 +524,7 @@ func (n *Notifier) sendDarwinTerminalNotifier(title, body, url string, pendingID
 		}
 
 		n.trackNotification(pendingID, cmd.Process)
-		cmd.Wait()
+		_ = cmd.Wait()
 		n.untrackNotification(pendingID)
 	}()
 }

@@ -27,15 +27,15 @@ func OpenDB(path string) (*DB, error) {
 
 	readDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
-		writeDB.Close()
+		_ = writeDB.Close()
 		return nil, fmt.Errorf("open read db: %w", err)
 	}
 	readDB.SetMaxOpenConns(4)
 
 	// Enable WAL mode
 	if _, err := writeDB.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		writeDB.Close()
-		readDB.Close()
+		_ = writeDB.Close()
+		_ = readDB.Close()
 		return nil, fmt.Errorf("enable WAL: %w", err)
 	}
 

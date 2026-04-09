@@ -135,7 +135,7 @@ func QueryActivity(db *DB, f ActivityFilter) ([]ActivityItem, int, error) {
 	if err != nil {
 		return nil, 0, fmt.Errorf("query activity: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var items []ActivityItem
 	for rows.Next() {

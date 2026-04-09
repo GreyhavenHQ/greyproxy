@@ -4,10 +4,31 @@ linters:
   default: none
   enable:
     - govet
+    - errcheck
+    - staticcheck
+    - unused
+  settings:
+    staticcheck:
+      checks:
+        - "all"
+        - "-QF*"  # quickfix suggestions are style, not correctness
+        - "-ST*"  # style checks (package comments, naming conventions)
+  exclusions:
+    paths:
+      - internal/gostx
+      - internal/gostcore
+      - internal/gosocks5
+      - internal/tlsdissector
 
 formatters:
   enable:
     - gofmt
+  exclusions:
+    paths:
+      - internal/gostx
+      - internal/gostcore
+      - internal/gosocks5
+      - internal/tlsdissector
 
 issues:
   max-issues-per-linter: 0

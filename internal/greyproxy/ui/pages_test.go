@@ -19,14 +19,14 @@ func setupTestDB(t *testing.T) *greyproxy.DB {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tmpFile.Close()
-	t.Cleanup(func() { os.Remove(tmpFile.Name()) })
+	_ = tmpFile.Close()
+	t.Cleanup(func() { _ = os.Remove(tmpFile.Name()) })
 
 	db, err := greyproxy.OpenDB(tmpFile.Name())
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() { _ = db.Close() })
 
 	if err := db.Migrate(); err != nil {
 		t.Fatal(err)

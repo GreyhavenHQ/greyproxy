@@ -112,11 +112,11 @@ func handleCertGenerate(force bool) {
 		os.Exit(1)
 	}
 	if err := pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: certDER}); err != nil {
-		certOut.Close()
+		_ = certOut.Close()
 		fmt.Fprintf(os.Stderr, "failed to encode certificate: %v\n", err)
 		os.Exit(1)
 	}
-	certOut.Close()
+	_ = certOut.Close()
 
 	keyBytes, err := x509.MarshalECPrivateKey(privateKey)
 	if err != nil {
@@ -130,11 +130,11 @@ func handleCertGenerate(force bool) {
 		os.Exit(1)
 	}
 	if err := pem.Encode(keyOut, &pem.Block{Type: "EC PRIVATE KEY", Bytes: keyBytes}); err != nil {
-		keyOut.Close()
+		_ = keyOut.Close()
 		fmt.Fprintf(os.Stderr, "failed to encode key: %v\n", err)
 		os.Exit(1)
 	}
-	keyOut.Close()
+	_ = keyOut.Close()
 
 	fmt.Printf("CA certificate: %s\n", certFile)
 	fmt.Printf("CA private key: %s\n", keyFile)
@@ -194,7 +194,7 @@ func handleCertInstall(force bool) {
 	switch runtime.GOOS {
 	case "darwin":
 		// Remove any existing Greyproxy CA cert to avoid errSecDuplicateItem (-25294)
-		exec.Command("security", "delete-certificate", "-c", "Greyproxy CA").Run()
+		_ = exec.Command("security", "delete-certificate", "-c", "Greyproxy CA").Run()
 
 		fmt.Println("Installing CA certificate into system trust store (requires sudo)...")
 		cmd := exec.Command("sudo", "security", "add-trusted-cert",

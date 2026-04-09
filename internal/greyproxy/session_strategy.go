@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
-	"regexp"
 	"time"
 
 	"github.com/greyhavenhq/greyproxy/internal/greyproxy/dissector"
@@ -27,8 +26,6 @@ type SessionStrategy interface {
 // falls back to metadata.user_id regex.
 
 type HeaderFieldStrategy struct{}
-
-var sessionIDRe = regexp.MustCompile(`session_([a-f0-9-]{36})`)
 
 func (s *HeaderFieldStrategy) ExtractSessionID(result *dissector.ExtractionResult, headers http.Header) string {
 	// Already extracted by dissector

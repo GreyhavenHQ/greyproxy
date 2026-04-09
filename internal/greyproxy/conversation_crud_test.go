@@ -92,12 +92,12 @@ func TestQueryConversations(t *testing.T) {
 
 	// Create a parent and a subagent
 	parentID := "session_parent"
-	UpsertConversation(db, ConversationUpsertInput{
+	_ = UpsertConversation(db, ConversationUpsertInput{
 		ID: "session_parent", Model: "claude-opus-4-6", ContainerName: "claude",
 		Provider: "anthropic", StartedAt: "2026-03-13T10:00:00Z", EndedAt: "2026-03-13T10:05:00Z",
 		TurnCount: 2,
 	})
-	UpsertConversation(db, ConversationUpsertInput{
+	_ = UpsertConversation(db, ConversationUpsertInput{
 		ID: "session_parent/subagent_1", Model: "claude-opus-4-6", ContainerName: "claude",
 		Provider: "anthropic", StartedAt: "2026-03-13T10:01:00Z", EndedAt: "2026-03-13T10:02:00Z",
 		TurnCount: 1, ParentConversationID: &parentID,
@@ -134,10 +134,10 @@ func TestQueryConversations(t *testing.T) {
 func TestUpsertConversationReplace(t *testing.T) {
 	db := setupTestDB(t)
 
-	UpsertConversation(db, ConversationUpsertInput{
+	_ = UpsertConversation(db, ConversationUpsertInput{
 		ID: "session_test", Model: "claude-3", TurnCount: 1,
 	})
-	UpsertConversation(db, ConversationUpsertInput{
+	_ = UpsertConversation(db, ConversationUpsertInput{
 		ID: "session_test", Model: "claude-4", TurnCount: 5,
 	})
 
@@ -178,7 +178,7 @@ func TestConversationProcessingState(t *testing.T) {
 	}
 
 	// Update
-	SetConversationProcessingState(db, "last_processed_id", "100")
+	_ = SetConversationProcessingState(db, "last_processed_id", "100")
 	val, _ = GetConversationProcessingState(db, "last_processed_id")
 	if val != "100" {
 		t.Errorf("expected '100', got %q", val)
@@ -203,7 +203,7 @@ func TestUpdateTransactionConversationID(t *testing.T) {
 	}
 
 	// Create a conversation
-	UpsertConversation(db, ConversationUpsertInput{
+	_ = UpsertConversation(db, ConversationUpsertInput{
 		ID: "session_linked", Model: "claude-4", TurnCount: 1,
 	})
 
@@ -226,12 +226,12 @@ func TestUpdateTransactionConversationID(t *testing.T) {
 func TestQueryConversationsWithFilters(t *testing.T) {
 	db := setupTestDB(t)
 
-	UpsertConversation(db, ConversationUpsertInput{
+	_ = UpsertConversation(db, ConversationUpsertInput{
 		ID: "session_1", Model: "claude-opus-4-6", ContainerName: "app1",
 		Provider: "anthropic", StartedAt: "2026-03-13T10:00:00Z", EndedAt: "2026-03-13T10:05:00Z",
 		TurnCount: 3,
 	})
-	UpsertConversation(db, ConversationUpsertInput{
+	_ = UpsertConversation(db, ConversationUpsertInput{
 		ID: "session_2", Model: "claude-haiku-4-5-20251001", ContainerName: "app2",
 		Provider: "anthropic", StartedAt: "2026-03-13T11:00:00Z", EndedAt: "2026-03-13T11:05:00Z",
 		TurnCount: 1,

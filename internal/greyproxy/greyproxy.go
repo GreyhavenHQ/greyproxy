@@ -34,7 +34,7 @@ func (s *Service) Addr() net.Addr {
 
 func (s *Service) Close() error {
 	if s.DB != nil {
-		s.DB.Close()
+		_ = s.DB.Close()
 	}
 	return s.server.Close()
 }
@@ -71,7 +71,7 @@ func NewService(cfg *Config, handler http.Handler) (*Service, error) {
 	}
 
 	if err := db.Migrate(); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, err
 	}
 

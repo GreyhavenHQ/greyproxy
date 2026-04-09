@@ -60,7 +60,7 @@ func CreateRule(db *DB, input RuleCreateInput) (*Rule, error) {
 	}
 
 	// Delete any expired rule with the same unique key so the insert won't conflict
-	db.WriteDB().Exec(
+	_, _ = db.WriteDB().Exec(
 		`DELETE FROM rules
 		 WHERE container_pattern = ? AND destination_pattern = ? AND port_pattern = ? AND action = ?
 		   AND expires_at IS NOT NULL AND expires_at <= datetime('now')`,
@@ -160,7 +160,7 @@ func GetRules(db *DB, f RuleFilter) ([]Rule, int, error) {
 	if err != nil {
 		return nil, 0, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var rules []Rule
 	for rows.Next() {
@@ -295,7 +295,7 @@ func IngestRules(db *DB, rules []IngestRuleInput) (*IngestResult, error) {
 					p.ResolvedHostname.String)
 				if rule != nil && rule.Action == "allow" {
 					db.Lock()
-					deletePendingSiblings(db, &p)
+					_, _ = deletePendingSiblings(db, &p)
 					db.Unlock()
 					result.PendingCleaned++
 				}
@@ -317,7 +317,7 @@ func FindMatchingRule(db *DB, containerName, destHost string, destPort int, reso
 	if err != nil {
 		return nil
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	type scored struct {
 		rule        Rule
@@ -372,7 +372,7 @@ func FindMatchingRule(db *DB, containerName, destHost string, destPort int, reso
 	go func() {
 		db.Lock()
 		defer db.Unlock()
-		db.WriteDB().Exec("UPDATE rules SET last_used_at = datetime('now') WHERE id = ?", winner.ID)
+		_, _ = db.WriteDB().Exec("UPDATE rules SET last_used_at = datetime('now') WHERE id = ?", winner.ID)
 	}()
 
 	return winner
@@ -509,7 +509,7 @@ func GetPendingRequests(db *DB, f PendingFilter) ([]PendingRequest, int, error) 
 	if err != nil {
 		return nil, 0, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var allPending []PendingRequest
 	for rows.Next() {
@@ -661,7 +661,7 @@ func AllowPending(db *DB, id int64, scope, duration string, notes *string) (*Rul
 	existingRule := findExistingRule(db, containerPattern, destPattern, portPattern, "allow")
 	if existingRule != nil {
 		db.Lock()
-		deletePendingSiblings(db, p)
+		_, _ = deletePendingSiblings(db, p)
 		db.Unlock()
 		return existingRule, nil
 	}
@@ -682,7 +682,7 @@ func AllowPending(db *DB, id int64, scope, duration string, notes *string) (*Rul
 
 	// Delete pending and siblings
 	db.Lock()
-	deletePendingSiblings(db, p)
+	_, _ = deletePendingSiblings(db, p)
 	db.Unlock()
 
 	return rule, nil
@@ -702,7 +702,7 @@ func DenyPending(db *DB, id int64, scope, duration string, notes *string) (*Rule
 	existingRule := findExistingRule(db, containerPattern, destPattern, portPattern, "deny")
 	if existingRule != nil {
 		db.Lock()
-		deletePendingSiblings(db, p)
+		_, _ = deletePendingSiblings(db, p)
 		db.Unlock()
 		return existingRule, nil
 	}
@@ -721,7 +721,7 @@ func DenyPending(db *DB, id int64, scope, duration string, notes *string) (*Rule
 	}
 
 	db.Lock()
-	deletePendingSiblings(db, p)
+	_, _ = deletePendingSiblings(db, p)
 	db.Unlock()
 
 	return rule, nil
@@ -938,7 +938,7 @@ func QueryLogs(db *DB, f LogFilter) ([]RequestLog, int, error) {
 	if err != nil {
 		return nil, 0, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var logs []RequestLog
 	for rows.Next() {
@@ -995,7 +995,7 @@ func GetDashboardStats(db *DB, fromDate, toDate time.Time, groupBy string, recen
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
 		var c ContainerStatsItem
@@ -1007,7 +1007,7 @@ func GetDashboardStats(db *DB, fromDate, toDate time.Time, groupBy string, recen
 		}
 		stats.ByContainer = append(stats.ByContainer, c)
 	}
-	rows.Close()
+	_ = rows.Close()
 
 	// Top blocked destinations
 	rows, err = db.ReadDB().Query(
@@ -1033,7 +1033,7 @@ func GetDashboardStats(db *DB, fromDate, toDate time.Time, groupBy string, recen
 		}
 		stats.TopBlocked = append(stats.TopBlocked, b)
 	}
-	rows.Close()
+	_ = rows.Close()
 
 	// Timeline
 	var timeFormat string
@@ -1064,7 +1064,7 @@ func GetDashboardStats(db *DB, fromDate, toDate time.Time, groupBy string, recen
 		}
 		stats.Timeline = append(stats.Timeline, t)
 	}
-	rows.Close()
+	_ = rows.Close()
 
 	// Recent logs
 	recentLogs, _, err := QueryLogs(db, LogFilter{
@@ -1245,7 +1245,7 @@ func QueryHttpTransactions(db *DB, f TransactionFilter) ([]HttpTransaction, int,
 	if err != nil {
 		return nil, 0, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var txns []HttpTransaction
 	for rows.Next() {
@@ -1315,12 +1315,12 @@ func RedactExistingTransactionHeaders(db *DB, redactor *HeaderRedactor, onProgre
 		for rows.Next() {
 			var r row
 			if err := rows.Scan(&r.id, &r.reqHeaders, &r.respHeaders); err != nil {
-				rows.Close()
+				_ = rows.Close()
 				return processed, fmt.Errorf("scan: %w", err)
 			}
 			batch = append(batch, r)
 		}
-		rows.Close()
+		_ = rows.Close()
 
 		if len(batch) == 0 {
 			break

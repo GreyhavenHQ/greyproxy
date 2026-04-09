@@ -393,7 +393,7 @@ func (s *Session) ToJSON(labels map[string]string) SessionJSON {
 	}
 	var metadata map[string]string
 	if s.MetadataJSON != "" && s.MetadataJSON != "{}" {
-		json.Unmarshal([]byte(s.MetadataJSON), &metadata)
+		_ = json.Unmarshal([]byte(s.MetadataJSON), &metadata)
 	}
 	return SessionJSON{
 		SessionID:         s.SessionID,

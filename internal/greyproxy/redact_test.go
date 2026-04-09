@@ -87,19 +87,19 @@ func TestHeaderRedactorCaseInsensitive(t *testing.T) {
 	// but the redactor should still match regardless of the key casing
 	// stored in the map (e.g. from a raw map assignment).
 	h := make(http.Header)
-	h["authorization"] = []string{"Bearer xxx"}
-	h["COOKIE"] = []string{"session=abc"}
-	h["x-api-key"] = []string{"key"}
+	h["authorization"] = []string{"Bearer xxx"} //nolint:staticcheck // intentionally non-canonical
+	h["COOKIE"] = []string{"session=abc"}       //nolint:staticcheck // intentionally non-canonical
+	h["x-api-key"] = []string{"key"}            //nolint:staticcheck // intentionally non-canonical
 	out := r.Redact(h)
 
 	// Access by raw key since these are non-canonical
-	if v := out["authorization"]; len(v) != 1 || v[0] != RedactedValue {
+	if v := out["authorization"]; len(v) != 1 || v[0] != RedactedValue { //nolint:staticcheck
 		t.Errorf("authorization = %v, want [%q]", v, RedactedValue)
 	}
-	if v := out["COOKIE"]; len(v) != 1 || v[0] != RedactedValue {
+	if v := out["COOKIE"]; len(v) != 1 || v[0] != RedactedValue { //nolint:staticcheck
 		t.Errorf("COOKIE = %v, want [%q]", v, RedactedValue)
 	}
-	if v := out["x-api-key"]; len(v) != 1 || v[0] != RedactedValue {
+	if v := out["x-api-key"]; len(v) != 1 || v[0] != RedactedValue { //nolint:staticcheck
 		t.Errorf("x-api-key = %v, want [%q]", v, RedactedValue)
 	}
 }
@@ -190,7 +190,7 @@ func TestSettingsManagerRedactedHeaders(t *testing.T) {
 
 	// Update with extra patterns
 	extra := []string{"*password*"}
-	m.Update(UserSettings{RedactedHeaders: extra})
+	_, _ = m.Update(UserSettings{RedactedHeaders: extra})
 
 	r = m.HeaderRedactor()
 	h = http.Header{
@@ -221,7 +221,7 @@ func TestSettingsManagerRedactedHeadersPersistence(t *testing.T) {
 	m := NewSettingsManager(tmp, true)
 
 	extra := []string{"X-My-Secret"}
-	m.Update(UserSettings{RedactedHeaders: extra})
+	_, _ = m.Update(UserSettings{RedactedHeaders: extra})
 
 	// Read back from disk
 	m2 := NewSettingsManager(tmp, true)
@@ -395,7 +395,7 @@ func TestSettingsFileContainsRedactedHeaders(t *testing.T) {
 	m := NewSettingsManager(tmp, true)
 
 	extra := []string{"X-Custom-Auth"}
-	m.Update(UserSettings{RedactedHeaders: extra})
+	_, _ = m.Update(UserSettings{RedactedHeaders: extra})
 
 	data, err := os.ReadFile(tmp)
 	if err != nil {

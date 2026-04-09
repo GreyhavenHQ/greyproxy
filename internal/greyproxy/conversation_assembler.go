@@ -74,10 +74,10 @@ func (a *ConversationAssembler) RebuildAllConversations() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	slog.Info("assembler: rebuild requested, clearing old conversations and resetting cursor")
-	DeleteAllConversations(a.db)
-	SetConversationProcessingState(a.db, "last_processed_id", "0")
+	_ = DeleteAllConversations(a.db)
+	_ = SetConversationProcessingState(a.db, "last_processed_id", "0")
 	a.processNewTransactionsLocked()
-	SetConversationProcessingState(a.db, "assembler_version", strconv.Itoa(AssemblerVersion))
+	_ = SetConversationProcessingState(a.db, "assembler_version", strconv.Itoa(AssemblerVersion))
 	slog.Info("assembler: rebuild complete")
 }
 
@@ -165,7 +165,7 @@ func (a *ConversationAssembler) processNewTransactionsLocked() {
 	}
 	if len(newTxns) == 0 {
 		if maxID > lastID {
-			SetConversationProcessingState(a.db, "last_processed_id", strconv.FormatInt(maxID, 10))
+			_ = SetConversationProcessingState(a.db, "last_processed_id", strconv.FormatInt(maxID, 10))
 		}
 		return
 	}
@@ -182,7 +182,7 @@ func (a *ConversationAssembler) processNewTransactionsLocked() {
 	}
 
 	if len(affectedSessions) == 0 && len(sessionlessTxns) == 0 {
-		SetConversationProcessingState(a.db, "last_processed_id", strconv.FormatInt(maxID, 10))
+		_ = SetConversationProcessingState(a.db, "last_processed_id", strconv.FormatInt(maxID, 10))
 		return
 	}
 
@@ -264,7 +264,7 @@ func (a *ConversationAssembler) processNewTransactionsLocked() {
 		}
 	}
 
-	SetConversationProcessingState(a.db, "last_processed_id", strconv.FormatInt(maxID, 10))
+	_ = SetConversationProcessingState(a.db, "last_processed_id", strconv.FormatInt(maxID, 10))
 	slog.Info("assembler: processed conversations", "count", len(allConversations), "max_id", maxID)
 }
 
@@ -334,7 +334,7 @@ func (a *ConversationAssembler) loadNewTransactions(sinceID int64) ([]transactio
 	if err != nil {
 		return nil, sinceID, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var entries []transactionEntry
 	maxID := sinceID
@@ -483,7 +483,7 @@ func (a *ConversationAssembler) loadTransactionsForSessions(sessionIDs map[strin
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var entries []transactionEntry
 	for rows.Next() {
@@ -892,14 +892,6 @@ func splitSubagentInvocations(entries []transactionEntry) [][]transactionEntry {
 		invocations = append(invocations, current)
 	}
 	return invocations
-}
-
-func isRealUserMessage(msg dissector.Message) bool {
-	return defaultScaffolding.IsRealUserMessage(msg)
-}
-
-func getUserText(msg dissector.Message) *string {
-	return defaultScaffolding.GetUserText(msg)
 }
 
 // defaultScaffolding is used by legacy code paths that don't yet have
@@ -1612,7 +1604,7 @@ func (a *ConversationAssembler) upsertConversation(conv assembledConversation) e
 
 	// Update http_transactions with conversation_id link
 	for _, txnID := range conv.requestIDs {
-		UpdateTransactionConversationID(a.db, txnID, conv.conversationID)
+		_ = UpdateTransactionConversationID(a.db, txnID, conv.conversationID)
 	}
 
 	return nil

@@ -173,7 +173,7 @@ var funcMap = template.FuncMap{
 	},
 	"credLabels": func(raw string) []string {
 		var labels []string
-		json.Unmarshal([]byte(raw), &labels)
+		_ = json.Unmarshal([]byte(raw), &labels)
 		return labels
 	},
 	"derefStr": func(s *string) string {
@@ -444,13 +444,10 @@ func parseTemplate(name string, files ...string) *template.Template {
 }
 
 var (
-	dashboardTmpl = parseTemplate("base.html", "base.html", "dashboard.html")
-	pendingTmpl   = parseTemplate("base.html", "base.html", "pending.html")
-	rulesTmpl     = parseTemplate("base.html", "base.html", "rules.html")
-	logsTmpl      = parseTemplate("base.html", "base.html", "logs.html")
-	settingsTmpl  = parseTemplate("base.html", "base.html", "settings.html")
-
-	trafficTmpl       = parseTemplate("base.html", "base.html", "traffic.html")
+	dashboardTmpl     = parseTemplate("base.html", "base.html", "dashboard.html")
+	pendingTmpl       = parseTemplate("base.html", "base.html", "pending.html")
+	rulesTmpl         = parseTemplate("base.html", "base.html", "rules.html")
+	settingsTmpl      = parseTemplate("base.html", "base.html", "settings.html")
 	activityTmpl      = parseTemplate("base.html", "base.html", "activity.html")
 	conversationsTmpl = parseTemplate("base.html", "base.html", "conversations.html")
 
@@ -485,7 +482,7 @@ func getContainers(db *greyproxy.DB) []string {
 	if err != nil {
 		return nil
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var containers []string
 	for rows.Next() {
 		var c string
@@ -502,7 +499,7 @@ func RegisterPageRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 	prefix := strings.TrimRight(r.BasePath(), "/")
 
 	r.GET("/dashboard", func(c *gin.Context) {
-		dashboardTmpl.Execute(c.Writer, PageData{
+		_ = dashboardTmpl.Execute(c.Writer, PageData{
 			CurrentPath: c.Request.URL.Path,
 			Prefix:      prefix,
 			CacheBuster: cacheBuster,
@@ -516,7 +513,7 @@ func RegisterPageRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 	})
 
 	r.GET("/pending", func(c *gin.Context) {
-		pendingTmpl.Execute(c.Writer, PageData{
+		_ = pendingTmpl.Execute(c.Writer, PageData{
 			CurrentPath: c.Request.URL.Path,
 			Prefix:      prefix,
 			CacheBuster: cacheBuster,
@@ -526,7 +523,7 @@ func RegisterPageRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 	})
 
 	r.GET("/rules", func(c *gin.Context) {
-		rulesTmpl.Execute(c.Writer, PageData{
+		_ = rulesTmpl.Execute(c.Writer, PageData{
 			CurrentPath: c.Request.URL.Path,
 			Prefix:      prefix,
 			CacheBuster: cacheBuster,
@@ -540,7 +537,7 @@ func RegisterPageRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 	})
 
 	r.GET("/settings", func(c *gin.Context) {
-		settingsTmpl.Execute(c.Writer, PageData{
+		_ = settingsTmpl.Execute(c.Writer, PageData{
 			CurrentPath: c.Request.URL.Path,
 			Prefix:      prefix,
 			CacheBuster: cacheBuster,
@@ -554,7 +551,7 @@ func RegisterPageRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 	})
 
 	r.GET("/activity", func(c *gin.Context) {
-		activityTmpl.Execute(c.Writer, PageData{
+		_ = activityTmpl.Execute(c.Writer, PageData{
 			CurrentPath: c.Request.URL.Path,
 			Prefix:      prefix,
 			CacheBuster: cacheBuster,
@@ -564,7 +561,7 @@ func RegisterPageRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 	})
 
 	r.GET("/conversations", func(c *gin.Context) {
-		conversationsTmpl.Execute(c.Writer, PageData{
+		_ = conversationsTmpl.Execute(c.Writer, PageData{
 			CurrentPath: c.Request.URL.Path,
 			Prefix:      prefix,
 			CacheBuster: cacheBuster,
@@ -607,7 +604,7 @@ func RegisterHTMXRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 		}
 
 		c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
-		dashboardStatsTmpl.Execute(c.Writer, gin.H{
+		_ = dashboardStatsTmpl.Execute(c.Writer, gin.H{
 			"Prefix": prefix,
 			"Stats":  stats,
 			"Period": period,
@@ -637,7 +634,7 @@ func RegisterHTMXRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 		hasFilters := container != "" || destination != ""
 
 		c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
-		pendingListTmpl.Execute(c.Writer, gin.H{
+		_ = pendingListTmpl.Execute(c.Writer, gin.H{
 			"Prefix":     prefix,
 			"Items":      items,
 			"Total":      total,
@@ -870,7 +867,7 @@ func RegisterHTMXRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 		hasFilters := container != "" || destination != "" || result != "" || fromDateStr != "" || toDateStr != ""
 
 		c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
-		logsTableTmpl.Execute(c.Writer, gin.H{
+		_ = logsTableTmpl.Execute(c.Writer, gin.H{
 			"Prefix":     prefix,
 			"Items":      items,
 			"Total":      total,
@@ -920,7 +917,7 @@ func RegisterHTMXRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 		hasFilters := container != "" || destination != "" || method != ""
 
 		c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
-		trafficTableTmpl.Execute(c.Writer, gin.H{
+		_ = trafficTableTmpl.Execute(c.Writer, gin.H{
 			"Prefix":     prefix,
 			"Items":      items,
 			"Total":      total,
@@ -971,7 +968,7 @@ func RegisterHTMXRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 		hasFilters := container != "" || destination != "" || kind != "" || result != ""
 
 		c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
-		activityTableTmpl.Execute(c.Writer, gin.H{
+		_ = activityTableTmpl.Execute(c.Writer, gin.H{
 			"Prefix":     prefix,
 			"Items":      items,
 			"Total":      total,
@@ -998,7 +995,7 @@ func RegisterHTMXRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 			items = append(items, conv.ToJSON(false))
 		}
 		c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
-		convListTmpl.Execute(c.Writer, gin.H{
+		_ = convListTmpl.Execute(c.Writer, gin.H{
 			"Prefix": prefix,
 			"Items":  items,
 			"Total":  total,
@@ -1036,7 +1033,7 @@ func RegisterHTMXRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 
 		c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
 		c.Writer.Header().Set("Cache-Control", "no-store")
-		convDetailTmpl.Execute(c.Writer, gin.H{
+		_ = convDetailTmpl.Execute(c.Writer, gin.H{
 			"Prefix":    prefix,
 			"Conv":      convJSON,
 			"Subagents": subagents,
@@ -1069,7 +1066,7 @@ func renderPendingList(c *gin.Context, db *greyproxy.DB, prefix string, waiters 
 	hasFilters := container != "" || destination != ""
 
 	c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
-	pendingListTmpl.Execute(c.Writer, gin.H{
+	_ = pendingListTmpl.Execute(c.Writer, gin.H{
 		"Prefix":     prefix,
 		"Items":      items,
 		"Total":      total,
@@ -1094,7 +1091,7 @@ func renderRulesList(c *gin.Context, db *greyproxy.DB, prefix string) {
 	hasFilters := container != "" || destination != "" || action != "" || includeExpired
 
 	c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
-	rulesListTmpl.Execute(c.Writer, gin.H{
+	_ = rulesListTmpl.Execute(c.Writer, gin.H{
 		"Prefix":     prefix,
 		"Items":      items,
 		"Total":      total,

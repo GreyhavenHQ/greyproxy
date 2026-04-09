@@ -79,7 +79,7 @@ func (r *EndpointRegistry) reload() {
 		slog.Warn("endpoint_registry: failed to load rules", "error", err)
 		return
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var rules []EndpointRule
 	for rows.Next() {

@@ -161,7 +161,7 @@ func QueryConversations(db *DB, f ConversationFilter) ([]Conversation, int, erro
 	if err != nil {
 		return nil, 0, fmt.Errorf("query conversations: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var results []Conversation
 	for rows.Next() {
@@ -214,7 +214,7 @@ func GetConversation(db *DB, id string) (*Conversation, error) {
 	if err != nil {
 		return nil, fmt.Errorf("query turns: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
 		var t Turn
@@ -260,7 +260,7 @@ func GetTransactionsByConversationID(db *DB, convID string) ([]int64, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var ids []int64
 	for rows.Next() {
@@ -305,10 +305,10 @@ func DeleteAllConversations(db *DB) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
-	tx.Exec("DELETE FROM turns")
-	tx.Exec("DELETE FROM conversations")
-	tx.Exec("UPDATE http_transactions SET conversation_id = NULL WHERE conversation_id IS NOT NULL")
+	defer func() { _ = tx.Rollback() }()
+	_, _ = tx.Exec("DELETE FROM turns")
+	_, _ = tx.Exec("DELETE FROM conversations")
+	_, _ = tx.Exec("UPDATE http_transactions SET conversation_id = NULL WHERE conversation_id IS NOT NULL")
 	return tx.Commit()
 }
 

@@ -75,12 +75,12 @@ func WebSocketHandler(s *Shared) gin.HandlerFunc {
 			log.Errorf("websocket upgrade: %v", err)
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 
 		client := &wsClient{id: randomClientID(), conn: conn}
 
 		// Send connected message
-		client.send(gin.H{
+		_ = client.send(gin.H{
 			"type":      "connected",
 			"message":   "Connected to proxy event stream",
 			"timestamp": time.Now().UTC().Format(time.RFC3339),
@@ -135,7 +135,7 @@ func handleClientCommands(client *wsClient, s *Shared, log logger.Logger) {
 
 		var cmd wsCommand
 		if err := json.Unmarshal(message, &cmd); err != nil {
-			client.send(gin.H{
+			_ = client.send(gin.H{
 				"type":      "error",
 				"error":     "invalid JSON",
 				"timestamp": time.Now().UTC().Format(time.RFC3339),
@@ -145,7 +145,7 @@ func handleClientCommands(client *wsClient, s *Shared, log logger.Logger) {
 
 		switch cmd.Command {
 		case "ping":
-			client.send(gin.H{
+			_ = client.send(gin.H{
 				"type":      "pong",
 				"timestamp": time.Now().UTC().Format(time.RFC3339),
 			})
@@ -166,7 +166,7 @@ func handleClientCommands(client *wsClient, s *Shared, log logger.Logger) {
 
 			rule, err := greyproxy.AllowPending(s.DB, cmd.PendingID, scope, duration, notes)
 			if err != nil {
-				client.send(gin.H{
+				_ = client.send(gin.H{
 					"type":      "error",
 					"error":     err.Error(),
 					"timestamp": time.Now().UTC().Format(time.RFC3339),
@@ -179,7 +179,7 @@ func handleClientCommands(client *wsClient, s *Shared, log logger.Logger) {
 				Data: gin.H{"pending_id": cmd.PendingID, "rule": rule.ToJSON()},
 			})
 
-			client.send(gin.H{
+			_ = client.send(gin.H{
 				"type":       "command_success",
 				"command":    "allow",
 				"pending_id": cmd.PendingID,
@@ -194,7 +194,7 @@ func handleClientCommands(client *wsClient, s *Shared, log logger.Logger) {
 				if err != nil {
 					errMsg = err.Error()
 				}
-				client.send(gin.H{
+				_ = client.send(gin.H{
 					"type":      "error",
 					"error":     errMsg,
 					"timestamp": time.Now().UTC().Format(time.RFC3339),
@@ -207,7 +207,7 @@ func handleClientCommands(client *wsClient, s *Shared, log logger.Logger) {
 				Data: gin.H{"pending_id": cmd.PendingID},
 			})
 
-			client.send(gin.H{
+			_ = client.send(gin.H{
 				"type":       "command_success",
 				"command":    "dismiss",
 				"pending_id": cmd.PendingID,
@@ -216,7 +216,7 @@ func handleClientCommands(client *wsClient, s *Shared, log logger.Logger) {
 
 		case "subscribe":
 			if cmd.EventType == "" {
-				client.send(gin.H{
+				_ = client.send(gin.H{
 					"type":      "error",
 					"error":     "event_type is required for subscribe",
 					"timestamp": time.Now().UTC().Format(time.RFC3339),
@@ -224,7 +224,7 @@ func handleClientCommands(client *wsClient, s *Shared, log logger.Logger) {
 				continue
 			}
 			client.subscribe(cmd.EventType)
-			client.send(gin.H{
+			_ = client.send(gin.H{
 				"type":       "subscribed",
 				"event_type": cmd.EventType,
 				"timestamp":  time.Now().UTC().Format(time.RFC3339),
@@ -232,7 +232,7 @@ func handleClientCommands(client *wsClient, s *Shared, log logger.Logger) {
 
 		case "unsubscribe":
 			if cmd.EventType == "" {
-				client.send(gin.H{
+				_ = client.send(gin.H{
 					"type":      "error",
 					"error":     "event_type is required for unsubscribe",
 					"timestamp": time.Now().UTC().Format(time.RFC3339),
@@ -240,14 +240,14 @@ func handleClientCommands(client *wsClient, s *Shared, log logger.Logger) {
 				continue
 			}
 			client.unsubscribe(cmd.EventType)
-			client.send(gin.H{
+			_ = client.send(gin.H{
 				"type":       "unsubscribed",
 				"event_type": cmd.EventType,
 				"timestamp":  time.Now().UTC().Format(time.RFC3339),
 			})
 
 		default:
-			client.send(gin.H{
+			_ = client.send(gin.H{
 				"type":      "error",
 				"error":     "unknown command: " + cmd.Command,
 				"timestamp": time.Now().UTC().Format(time.RFC3339),

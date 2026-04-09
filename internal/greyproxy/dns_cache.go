@@ -48,7 +48,7 @@ func (c *DNSCache) loadFromDB() {
 	if err != nil {
 		return
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -70,7 +70,7 @@ func (c *DNSCache) persistToDB(ip, hostname string) {
 	go func() {
 		c.db.Lock()
 		defer c.db.Unlock()
-		c.db.WriteDB().Exec(
+		_, _ = c.db.WriteDB().Exec(
 			"INSERT OR REPLACE INTO dns_cache (ip, hostname, updated_at) VALUES (?, ?, datetime('now'))",
 			ip, hostname,
 		)
@@ -156,7 +156,7 @@ func (c *DNSCache) RegisterIPs(hostname string, ips []string) {
 			c.db.Lock()
 			defer c.db.Unlock()
 			for _, ip := range ips {
-				c.db.WriteDB().Exec(
+				_, _ = c.db.WriteDB().Exec(
 					"INSERT OR REPLACE INTO dns_cache (ip, hostname, updated_at) VALUES (?, ?, datetime('now'))",
 					ip, hostname,
 				)

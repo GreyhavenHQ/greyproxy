@@ -19,14 +19,14 @@ func setupTestShared(t *testing.T) *Shared {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tmpFile.Close()
-	t.Cleanup(func() { os.Remove(tmpFile.Name()) })
+	_ = tmpFile.Close()
+	t.Cleanup(func() { _ = os.Remove(tmpFile.Name()) })
 
 	db, err := greyproxy.OpenDB(tmpFile.Name())
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() { _ = db.Close() })
 
 	if err := db.Migrate(); err != nil {
 		t.Fatal(err)
@@ -143,7 +143,7 @@ func TestTransactionsListAPI(t *testing.T) {
 			Items []greyproxy.HttpTransactionJSON `json:"items"`
 			Total int                             `json:"total"`
 		}
-		json.Unmarshal(w.Body.Bytes(), &resp)
+		_ = json.Unmarshal(w.Body.Bytes(), &resp)
 		if resp.Total != 1 {
 			t.Errorf("total: got %d, want 1", resp.Total)
 		}
@@ -161,7 +161,7 @@ func TestTransactionsListAPI(t *testing.T) {
 			Items []greyproxy.HttpTransactionJSON `json:"items"`
 			Total int                             `json:"total"`
 		}
-		json.Unmarshal(w.Body.Bytes(), &resp)
+		_ = json.Unmarshal(w.Body.Bytes(), &resp)
 		if resp.Total != 1 {
 			t.Errorf("total: got %d, want 1", resp.Total)
 		}
@@ -176,7 +176,7 @@ func TestTransactionsListAPI(t *testing.T) {
 			Items []greyproxy.HttpTransactionJSON `json:"items"`
 			Total int                             `json:"total"`
 		}
-		json.Unmarshal(w.Body.Bytes(), &resp)
+		_ = json.Unmarshal(w.Body.Bytes(), &resp)
 		if resp.Total != 1 {
 			t.Errorf("total: got %d, want 1", resp.Total)
 		}
@@ -193,7 +193,7 @@ func TestTransactionsListAPI(t *testing.T) {
 			Page  int                             `json:"page"`
 			Pages int                             `json:"pages"`
 		}
-		json.Unmarshal(w.Body.Bytes(), &resp)
+		_ = json.Unmarshal(w.Body.Bytes(), &resp)
 		if len(resp.Items) != 2 {
 			t.Errorf("items: got %d, want 2", len(resp.Items))
 		}
@@ -214,7 +214,7 @@ func TestTransactionsListAPI(t *testing.T) {
 			Items []greyproxy.HttpTransactionJSON `json:"items"`
 			Total int                             `json:"total"`
 		}
-		json.Unmarshal(w.Body.Bytes(), &resp)
+		_ = json.Unmarshal(w.Body.Bytes(), &resp)
 		if resp.Total != 0 {
 			t.Errorf("total: got %d, want 0", resp.Total)
 		}

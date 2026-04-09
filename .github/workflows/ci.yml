@@ -43,9 +43,7 @@ jobs:
           cache: true
 
       - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v6
-        with:
-          version: latest
+        uses: golangci/golangci-lint-action@v7
 
   test:
     name: Test

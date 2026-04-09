@@ -354,7 +354,7 @@ func tryCertInstall() bool {
 	switch runtime.GOOS {
 	case "darwin":
 		// Remove any existing Greyproxy CA cert to avoid errSecDuplicateItem
-		exec.Command("security", "delete-certificate", "-c", "Greyproxy CA").Run()
+		_ = exec.Command("security", "delete-certificate", "-c", "Greyproxy CA").Run()
 
 		fmt.Println("Installing CA certificate into system trust store (requires sudo)...")
 		cmd := exec.Command("sudo", "security", "add-trusted-cert",
@@ -398,7 +398,7 @@ func tryCertInstall() bool {
 
 func askConfirm() bool {
 	var answer string
-	fmt.Scanln(&answer)
+	_, _ = fmt.Scanln(&answer)
 	if answer == "n" || answer == "N" {
 		fmt.Println("Aborted.")
 		return false
@@ -480,13 +480,13 @@ func copyBinary(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer in.Close()
+	defer func() { _ = in.Close() }()
 
 	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
 	if err != nil {
 		return err
 	}
-	defer out.Close()
+	defer func() { _ = out.Close() }()
 
 	_, err = io.Copy(out, in)
 	return err

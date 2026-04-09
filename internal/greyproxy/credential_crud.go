@@ -132,7 +132,7 @@ func ListSessions(db *DB) ([]Session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list sessions: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var sessions []Session
 	for rows.Next() {
@@ -164,7 +164,7 @@ func DeleteExpiredSessions(db *DB) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("find expired sessions: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var ids []string
 	for rows.Next() {
@@ -212,7 +212,7 @@ func LoadAllSessions(db *DB) ([]Session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load all sessions: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var sessions []Session
 	for rows.Next() {
@@ -327,7 +327,7 @@ func ListGlobalCredentials(db *DB) ([]GlobalCredential, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list global credentials: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var creds []GlobalCredential
 	for rows.Next() {
