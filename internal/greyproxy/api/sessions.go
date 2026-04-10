@@ -83,8 +83,8 @@ func SessionsCreateHandler(s *Shared) gin.HandlerFunc {
 			}
 		}
 
-		if len(input.Mappings) == 0 && len(resolvedGlobals) == 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "no credentials provided (mappings or global_credentials required)"})
+		if len(input.Mappings) == 0 && len(resolvedGlobals) == 0 && len(input.NetworkRules) == 0 && !input.AllowAll {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "no credentials or network rules provided"})
 			return
 		}
 
@@ -105,10 +105,13 @@ func SessionsCreateHandler(s *Shared) gin.HandlerFunc {
 			s.CredentialStore.RegisterSession(session, input.Mappings)
 		}
 
+		rulesCreated := greyproxy.GetSessionRuleCount(s.DB, session.SessionID)
+
 		resp := gin.H{
 			"session_id":       session.SessionID,
 			"expires_at":       session.ExpiresAt.UTC().Format("2006-01-02T15:04:05Z"),
 			"credential_count": len(input.Mappings) + len(resolvedGlobals),
+			"rules_created":    rulesCreated,
 		}
 		if resolvedGlobals != nil {
 			resp["global_credentials"] = resolvedGlobals

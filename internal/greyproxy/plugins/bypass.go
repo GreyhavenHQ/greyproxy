@@ -140,6 +140,16 @@ func (b *Bypass) Contains(ctx context.Context, network, addr string, opts ...byp
 		containerName, containerID = ResolveIdentity(clientID, srcIP)
 	}
 
+	// Per-container allow-all: if this container has an active session with allow_all=true,
+	// bypass ACL evaluation for it (used by greywall --learning mode).
+	if containerName != "" && greyproxy.IsContainerAllowAll(b.db, containerName) {
+		resolvedHostname := b.resolveHostname(host)
+		elapsed := time.Since(start).Milliseconds()
+		go b.logRequest(containerName, containerID, host, port, resolvedHostname, methodFromService(o.Service), "allowed", nil, &elapsed)
+		b.log.Debugf("SESSION-ALLOW-ALL %s -> %s:%d (%s)", containerName, host, port, network)
+		return false // allow
+	}
+
 	// Resolve hostname
 	resolvedHostname := b.resolveHostname(host)
 

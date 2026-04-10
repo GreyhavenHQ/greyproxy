@@ -10,13 +10,15 @@ import (
 // --- Sessions ---
 
 type SessionCreateInput struct {
-	SessionID         string            `json:"session_id"`
-	ContainerName     string            `json:"container_name"`
-	Mappings          map[string]string `json:"mappings"`
-	Labels            map[string]string `json:"labels"`
-	Metadata          map[string]string `json:"metadata"`
-	TTLSeconds        int               `json:"ttl_seconds"`
-	GlobalCredentials []string          `json:"global_credentials,omitempty"`
+	SessionID         string               `json:"session_id"`
+	ContainerName     string               `json:"container_name"`
+	Mappings          map[string]string    `json:"mappings"`
+	Labels            map[string]string    `json:"labels"`
+	Metadata          map[string]string    `json:"metadata"`
+	TTLSeconds        int                  `json:"ttl_seconds"`
+	GlobalCredentials []string             `json:"global_credentials,omitempty"`
+	NetworkRules      []SessionNetworkRule `json:"network_rules,omitempty"`
+	AllowAll          bool                 `json:"allow_all,omitempty"`
 }
 
 // CreateOrUpdateSession creates or upserts a credential substitution session.
@@ -53,9 +55,14 @@ func CreateOrUpdateSession(db *DB, input SessionCreateInput, encryptionKey []byt
 		return nil, fmt.Errorf("marshal metadata: %w", err)
 	}
 
+	allowAllInt := 0
+	if input.AllowAll {
+		allowAllInt = 1
+	}
+
 	_, err = db.WriteDB().Exec(
-		`INSERT INTO sessions (session_id, container_name, mappings_enc, labels_json, metadata_json, ttl_seconds, created_at, expires_at, last_heartbeat)
-		 VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now', '+' || ? || ' seconds'), datetime('now'))
+		`INSERT INTO sessions (session_id, container_name, mappings_enc, labels_json, metadata_json, ttl_seconds, created_at, expires_at, last_heartbeat, allow_all)
+		 VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now', '+' || ? || ' seconds'), datetime('now'), ?)
 		 ON CONFLICT(session_id) DO UPDATE SET
 		   container_name = excluded.container_name,
 		   mappings_enc = excluded.mappings_enc,
@@ -63,12 +70,39 @@ func CreateOrUpdateSession(db *DB, input SessionCreateInput, encryptionKey []byt
 		   metadata_json = excluded.metadata_json,
 		   ttl_seconds = excluded.ttl_seconds,
 		   expires_at = excluded.expires_at,
-		   last_heartbeat = excluded.last_heartbeat`,
+		   last_heartbeat = excluded.last_heartbeat,
+		   allow_all = excluded.allow_all`,
 		input.SessionID, input.ContainerName, mappingsEnc, string(labelsJSON), string(metadataJSON),
-		input.TTLSeconds, input.TTLSeconds,
+		input.TTLSeconds, input.TTLSeconds, allowAllInt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("upsert session: %w", err)
+	}
+
+	// On upsert, delete old session rules before creating new ones.
+	_, _ = db.WriteDB().Exec("DELETE FROM rules WHERE session_id = ?", input.SessionID)
+
+	// Create session-scoped network rules.
+	if len(input.NetworkRules) > 0 {
+		for _, nr := range input.NetworkRules {
+			port := nr.PortPattern
+			if port == "" {
+				port = "*"
+			}
+			action := nr.Action
+			if action == "" {
+				action = "allow"
+			}
+			_, err := db.WriteDB().Exec(
+				`INSERT OR IGNORE INTO rules (container_pattern, destination_pattern, port_pattern, rule_type, action, created_by, session_id, expires_at, notes)
+				 VALUES (?, ?, ?, 'temporary', ?, ?, ?, datetime('now', '+' || ? || ' seconds'), ?)`,
+				input.ContainerName, nr.DestinationPattern, port, action,
+				"session:"+input.SessionID, input.SessionID, input.TTLSeconds, nr.Notes,
+			)
+			if err != nil {
+				return nil, fmt.Errorf("create session rule %q: %w", nr.DestinationPattern, err)
+			}
+		}
 	}
 
 	// Re-read from DB to get the canonical timestamps
@@ -97,13 +131,23 @@ func HeartbeatSession(db *DB, sessionID string) (*Session, error) {
 		return nil, nil // not found or expired
 	}
 
+	// Extend session-scoped rules to match the new session expiry.
+	_, _ = db.WriteDB().Exec(
+		`UPDATE rules SET expires_at = (SELECT expires_at FROM sessions WHERE session_id = ?)
+		 WHERE session_id = ?`,
+		sessionID, sessionID,
+	)
+
 	return getSessionLocked(db, sessionID)
 }
 
-// DeleteSession removes a session from the database.
+// DeleteSession removes a session and its scoped network rules from the database.
 func DeleteSession(db *DB, sessionID string) (bool, error) {
 	db.Lock()
 	defer db.Unlock()
+
+	// Delete session-scoped rules first.
+	_, _ = db.WriteDB().Exec("DELETE FROM rules WHERE session_id = ?", sessionID)
 
 	result, err := db.WriteDB().Exec("DELETE FROM sessions WHERE session_id = ?", sessionID)
 	if err != nil {
@@ -117,7 +161,7 @@ func DeleteSession(db *DB, sessionID string) (bool, error) {
 func GetSession(db *DB, sessionID string) (*Session, error) {
 	return scanSession(db.ReadDB().QueryRow(
 		`SELECT session_id, container_name, mappings_enc, labels_json, metadata_json, ttl_seconds,
-		        created_at, expires_at, last_heartbeat, substitution_count
+		        created_at, expires_at, last_heartbeat, substitution_count, allow_all
 		 FROM sessions WHERE session_id = ?`, sessionID,
 	))
 }
@@ -126,7 +170,7 @@ func GetSession(db *DB, sessionID string) (*Session, error) {
 func ListSessions(db *DB) ([]Session, error) {
 	rows, err := db.ReadDB().Query(
 		`SELECT session_id, container_name, mappings_enc, labels_json, metadata_json, ttl_seconds,
-		        created_at, expires_at, last_heartbeat, substitution_count
+		        created_at, expires_at, last_heartbeat, substitution_count, allow_all
 		 FROM sessions WHERE expires_at > datetime('now') ORDER BY created_at DESC`,
 	)
 	if err != nil {
@@ -179,6 +223,11 @@ func DeleteExpiredSessions(db *DB) ([]string, error) {
 	}
 
 	if len(ids) > 0 {
+		// Delete session-scoped rules for all expired sessions.
+		for _, id := range ids {
+			_, _ = db.WriteDB().Exec("DELETE FROM rules WHERE session_id = ?", id)
+		}
+
 		_, err = db.WriteDB().Exec(
 			"DELETE FROM sessions WHERE expires_at <= ?", now,
 		)
@@ -188,6 +237,26 @@ func DeleteExpiredSessions(db *DB) ([]string, error) {
 	}
 
 	return ids, nil
+}
+
+// IsContainerAllowAll checks if the given container has an active session with allow_all enabled.
+func IsContainerAllowAll(db *DB, containerName string) bool {
+	var count int
+	err := db.ReadDB().QueryRow(
+		`SELECT COUNT(*) FROM sessions
+		 WHERE container_name = ? AND allow_all = 1 AND expires_at > datetime('now')`,
+		containerName,
+	).Scan(&count)
+	return err == nil && count > 0
+}
+
+// GetSessionRuleCount returns the number of active session-scoped rules for a session.
+func GetSessionRuleCount(db *DB, sessionID string) int {
+	var count int
+	_ = db.ReadDB().QueryRow(
+		"SELECT COUNT(*) FROM rules WHERE session_id = ?", sessionID,
+	).Scan(&count)
+	return count
 }
 
 // IncrementSubstitutionCount atomically increments the substitution counter for a session.
@@ -206,7 +275,7 @@ func IncrementSubstitutionCount(db *DB, sessionID string, delta int64) error {
 func LoadAllSessions(db *DB) ([]Session, error) {
 	rows, err := db.ReadDB().Query(
 		`SELECT session_id, container_name, mappings_enc, labels_json, metadata_json, ttl_seconds,
-		        created_at, expires_at, last_heartbeat, substitution_count
+		        created_at, expires_at, last_heartbeat, substitution_count, allow_all
 		 FROM sessions ORDER BY created_at`,
 	)
 	if err != nil {
@@ -229,7 +298,7 @@ func LoadAllSessions(db *DB) ([]Session, error) {
 func getSessionLocked(db *DB, sessionID string) (*Session, error) {
 	return scanSession(db.WriteDB().QueryRow(
 		`SELECT session_id, container_name, mappings_enc, labels_json, metadata_json, ttl_seconds,
-		        created_at, expires_at, last_heartbeat, substitution_count
+		        created_at, expires_at, last_heartbeat, substitution_count, allow_all
 		 FROM sessions WHERE session_id = ?`, sessionID,
 	))
 }
@@ -242,7 +311,7 @@ func scanSession(row scannable) (*Session, error) {
 	var s Session
 	err := row.Scan(
 		&s.SessionID, &s.ContainerName, &s.MappingsEnc, &s.LabelsJSON, &s.MetadataJSON,
-		&s.TTLSeconds, &s.CreatedAt, &s.ExpiresAt, &s.LastHeartbeat, &s.SubstitutionCount,
+		&s.TTLSeconds, &s.CreatedAt, &s.ExpiresAt, &s.LastHeartbeat, &s.SubstitutionCount, &s.AllowAll,
 	)
 	if err != nil {
 		return nil, err

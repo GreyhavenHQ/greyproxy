@@ -19,6 +19,34 @@ type Rule struct {
 	LastUsedAt         sql.NullTime   `json:"last_used_at"`
 	CreatedBy          string         `json:"created_by"`
 	Notes              sql.NullString `json:"notes"`
+	SessionID          sql.NullString `json:"session_id"`
+}
+
+// RuleSource returns the source layer for rule resolution priority.
+// Global (human-created) > Session (profile-scoped) > Builtin (localhost defaults).
+func (r *Rule) RuleSource() string {
+	if r.CreatedBy == "builtin" {
+		return "builtin"
+	}
+	if r.SessionID.Valid && r.SessionID.String != "" {
+		return "session"
+	}
+	return "global"
+}
+
+// RuleSourcePriority returns the numeric priority for the source layer.
+// Higher = stronger.
+func (r *Rule) RuleSourcePriority() int {
+	switch r.RuleSource() {
+	case "global":
+		return 3
+	case "session":
+		return 2
+	case "builtin":
+		return 1
+	default:
+		return 0
+	}
 }
 
 type RuleJSON struct {
@@ -34,6 +62,8 @@ type RuleJSON struct {
 	CreatedBy          string  `json:"created_by"`
 	Notes              *string `json:"notes"`
 	IsActive           bool    `json:"is_active"`
+	SessionID          *string `json:"session_id,omitempty"`
+	Source             string  `json:"source"` // "global", "session", or "builtin"
 }
 
 func (r *Rule) ToJSON() RuleJSON {
@@ -47,6 +77,7 @@ func (r *Rule) ToJSON() RuleJSON {
 		CreatedAt:          r.CreatedAt.UTC().Format(time.RFC3339),
 		CreatedBy:          r.CreatedBy,
 		IsActive:           !r.ExpiresAt.Valid || r.ExpiresAt.Time.After(time.Now()),
+		Source:             r.RuleSource(),
 	}
 	if r.ExpiresAt.Valid {
 		s := r.ExpiresAt.Time.UTC().Format(time.RFC3339)
@@ -58,6 +89,9 @@ func (r *Rule) ToJSON() RuleJSON {
 	}
 	if r.Notes.Valid {
 		j.Notes = &r.Notes.String
+	}
+	if r.SessionID.Valid {
+		j.SessionID = &r.SessionID.String
 	}
 	return j
 }
@@ -359,6 +393,15 @@ type TimelinePoint struct {
 	Blocked   int    `json:"blocked"`
 }
 
+// SessionNetworkRule is a network rule sent by greywall as part of session creation.
+// These rules are scoped to the session lifetime and auto-deleted on session end.
+type SessionNetworkRule struct {
+	DestinationPattern string `json:"destination_pattern"`
+	PortPattern        string `json:"port_pattern,omitempty"` // default "*"
+	Action             string `json:"action,omitempty"`       // default "allow"
+	Notes              string `json:"notes,omitempty"`
+}
+
 // Session represents a credential substitution session registered by greywall.
 type Session struct {
 	SessionID         string    `json:"session_id"`
@@ -371,6 +414,7 @@ type Session struct {
 	ExpiresAt         time.Time `json:"expires_at"`
 	LastHeartbeat     time.Time `json:"last_heartbeat"`
 	SubstitutionCount int64     `json:"substitution_count"`
+	AllowAll          bool      `json:"allow_all"`
 }
 
 type SessionJSON struct {
@@ -384,6 +428,7 @@ type SessionJSON struct {
 	ExpiresAt         string            `json:"expires_at"`
 	LastHeartbeat     string            `json:"last_heartbeat"`
 	SubstitutionCount int64             `json:"substitution_count"`
+	AllowAll          bool              `json:"allow_all"`
 }
 
 func (s *Session) ToJSON(labels map[string]string) SessionJSON {
@@ -406,6 +451,7 @@ func (s *Session) ToJSON(labels map[string]string) SessionJSON {
 		ExpiresAt:         s.ExpiresAt.UTC().Format(time.RFC3339),
 		LastHeartbeat:     s.LastHeartbeat.UTC().Format(time.RFC3339),
 		SubstitutionCount: s.SubstitutionCount,
+		AllowAll:          s.AllowAll,
 	}
 }
 

@@ -33,6 +33,15 @@ func setupTestDB(t *testing.T) *DB {
 	return db
 }
 
+// clearBuiltinRules removes the seeded localhost rules so tests start with a clean slate.
+func clearBuiltinRules(t *testing.T, db *DB) {
+	t.Helper()
+	_, err := db.WriteDB().Exec("DELETE FROM rules WHERE created_by = 'builtin'")
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestCreateAndGetRule(t *testing.T) {
 	db := setupTestDB(t)
 
@@ -115,6 +124,7 @@ func TestCreateRuleWithExpiration(t *testing.T) {
 
 func TestTemporaryRuleVisibleInGetRules(t *testing.T) {
 	db := setupTestDB(t)
+	clearBuiltinRules(t, db)
 
 	// Create a temporary rule with 1h expiry
 	expires := int64(3600)
@@ -151,6 +161,7 @@ func TestTemporaryRuleVisibleInGetRules(t *testing.T) {
 
 func TestGetRules(t *testing.T) {
 	db := setupTestDB(t)
+	clearBuiltinRules(t, db)
 
 	// Create some rules
 	for _, dest := range []string{"a.com", "b.com", "c.com"} {
@@ -178,6 +189,7 @@ func TestGetRules(t *testing.T) {
 
 func TestGetRulesFilter(t *testing.T) {
 	db := setupTestDB(t)
+	clearBuiltinRules(t, db)
 
 	_, _ = CreateRule(db, RuleCreateInput{ContainerPattern: "myapp", DestinationPattern: "a.com", Action: "allow"})
 	_, _ = CreateRule(db, RuleCreateInput{ContainerPattern: "other", DestinationPattern: "b.com", Action: "deny"})
@@ -637,8 +649,8 @@ func TestMigrations(t *testing.T) {
 	// Verify migration versions were recorded
 	var count int
 	_ = db.ReadDB().QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&count)
-	if count != 11 {
-		t.Errorf("expected 11 migration versions, got %d", count)
+	if count != 12 {
+		t.Errorf("expected 12 migration versions, got %d", count)
 	}
 }
 
@@ -1153,5 +1165,397 @@ func TestUpdateLatestLogMitmSkipReasonMatchesResolvedHostname(t *testing.T) {
 	}
 	if !logs[0].MitmSkipReason.Valid || logs[0].MitmSkipReason.String != "mitm_error" {
 		t.Errorf("got mitm_skip_reason %v, want 'mitm_error'", logs[0].MitmSkipReason)
+	}
+}
+
+// --- Session-scoped network rules tests ---
+
+func TestSessionNetworkRulesCreatedOnSessionCreate(t *testing.T) {
+	db := setupTestDB(t)
+	clearBuiltinRules(t, db)
+	key := testEncryptionKey()
+
+	_, err := CreateOrUpdateSession(db, SessionCreateInput{
+		SessionID:     "gw-netrules1",
+		ContainerName: "codex",
+		Mappings:      map[string]string{"p": "v"},
+		Labels:        map[string]string{},
+		TTLSeconds:    300,
+		NetworkRules: []SessionNetworkRule{
+			{DestinationPattern: "api.openai.com", PortPattern: "443", Action: "allow"},
+			{DestinationPattern: "**.openai.com", PortPattern: "443"},
+			{DestinationPattern: "*.evil.com", Action: "deny"},
+		},
+	}, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify rules were created
+	rules, total, err := GetRules(db, RuleFilter{Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 3 {
+		t.Fatalf("expected 3 session rules, got %d", total)
+	}
+
+	// Verify session_id is set on all rules
+	for _, r := range rules {
+		if !r.SessionID.Valid || r.SessionID.String != "gw-netrules1" {
+			t.Errorf("expected session_id 'gw-netrules1', got %v", r.SessionID)
+		}
+		if r.RuleSource() != "session" {
+			t.Errorf("expected source 'session', got %q", r.RuleSource())
+		}
+	}
+
+	// Verify default values (port_pattern defaults to *, action defaults to allow)
+	ruleByDest := map[string]*Rule{}
+	for i := range rules {
+		ruleByDest[rules[i].DestinationPattern] = &rules[i]
+	}
+
+	if r := ruleByDest["**.openai.com"]; r.Action != "allow" {
+		t.Errorf("expected default action 'allow', got %q", r.Action)
+	}
+	if r := ruleByDest["*.evil.com"]; r.Action != "deny" {
+		t.Errorf("expected deny action, got %q", r.Action)
+	}
+	if r := ruleByDest["*.evil.com"]; r.PortPattern != "*" {
+		t.Errorf("expected default port '*', got %q", r.PortPattern)
+	}
+}
+
+func TestSessionRulesDeletedOnSessionDelete(t *testing.T) {
+	db := setupTestDB(t)
+	clearBuiltinRules(t, db)
+	key := testEncryptionKey()
+
+	_, err := CreateOrUpdateSession(db, SessionCreateInput{
+		SessionID:     "gw-del-rules",
+		ContainerName: "codex",
+		Mappings:      map[string]string{"p": "v"},
+		Labels:        map[string]string{},
+		TTLSeconds:    300,
+		NetworkRules: []SessionNetworkRule{
+			{DestinationPattern: "api.openai.com", PortPattern: "443"},
+		},
+	}, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Rule exists
+	_, total, _ := GetRules(db, RuleFilter{Limit: 100})
+	if total != 1 {
+		t.Fatalf("expected 1 rule before delete, got %d", total)
+	}
+
+	// Delete session
+	deleted, err := DeleteSession(db, "gw-del-rules")
+	if err != nil || !deleted {
+		t.Fatal("session delete failed")
+	}
+
+	// Rules should be gone
+	_, total, _ = GetRules(db, RuleFilter{Limit: 100})
+	if total != 0 {
+		t.Errorf("expected 0 rules after session delete, got %d", total)
+	}
+}
+
+func TestSessionRulesReplacedOnUpsert(t *testing.T) {
+	db := setupTestDB(t)
+	clearBuiltinRules(t, db)
+	key := testEncryptionKey()
+
+	// Create session with rule A
+	_, err := CreateOrUpdateSession(db, SessionCreateInput{
+		SessionID:     "gw-upsert-rules",
+		ContainerName: "codex",
+		Mappings:      map[string]string{"p": "v"},
+		Labels:        map[string]string{},
+		TTLSeconds:    300,
+		NetworkRules: []SessionNetworkRule{
+			{DestinationPattern: "old-api.com", PortPattern: "443"},
+		},
+	}, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Upsert session with rule B
+	_, err = CreateOrUpdateSession(db, SessionCreateInput{
+		SessionID:     "gw-upsert-rules",
+		ContainerName: "codex",
+		Mappings:      map[string]string{"p": "v2"},
+		Labels:        map[string]string{},
+		TTLSeconds:    300,
+		NetworkRules: []SessionNetworkRule{
+			{DestinationPattern: "new-api.com", PortPattern: "443"},
+		},
+	}, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Only rule B should exist
+	rules, total, _ := GetRules(db, RuleFilter{Limit: 100})
+	if total != 1 {
+		t.Fatalf("expected 1 rule after upsert, got %d", total)
+	}
+	if rules[0].DestinationPattern != "new-api.com" {
+		t.Errorf("expected new-api.com, got %s", rules[0].DestinationPattern)
+	}
+}
+
+func TestHeartbeatExtendsSessionRuleExpiry(t *testing.T) {
+	db := setupTestDB(t)
+	clearBuiltinRules(t, db)
+	key := testEncryptionKey()
+
+	_, err := CreateOrUpdateSession(db, SessionCreateInput{
+		SessionID:     "gw-hb-rules",
+		ContainerName: "codex",
+		Mappings:      map[string]string{"p": "v"},
+		Labels:        map[string]string{},
+		TTLSeconds:    300,
+		NetworkRules: []SessionNetworkRule{
+			{DestinationPattern: "api.openai.com", PortPattern: "443"},
+		},
+	}, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Get rule expiry before heartbeat
+	rules, _, _ := GetRules(db, RuleFilter{Limit: 100})
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 rule, got %d", len(rules))
+	}
+	expiryBefore := rules[0].ExpiresAt.Time
+
+	// Wait for SQLite datetime('now') to advance (1-second resolution)
+	time.Sleep(1100 * time.Millisecond)
+
+	// Heartbeat
+	_, err = HeartbeatSession(db, "gw-hb-rules")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Get rule expiry after heartbeat
+	rules, _, _ = GetRules(db, RuleFilter{Limit: 100})
+	expiryAfter := rules[0].ExpiresAt.Time
+
+	if !expiryAfter.After(expiryBefore) {
+		t.Errorf("expected rule expiry to extend after heartbeat, before=%v after=%v", expiryBefore, expiryAfter)
+	}
+}
+
+func TestLayeredRuleResolution(t *testing.T) {
+	db := setupTestDB(t)
+	clearBuiltinRules(t, db)
+	key := testEncryptionKey()
+
+	// Create a global deny rule
+	_, err := CreateRule(db, RuleCreateInput{
+		ContainerPattern:   "*",
+		DestinationPattern: "blocked.com",
+		Action:             "deny",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a session with allow rule for the same destination
+	_, err = CreateOrUpdateSession(db, SessionCreateInput{
+		SessionID:     "gw-layer-test",
+		ContainerName: "codex",
+		Mappings:      map[string]string{"p": "v"},
+		Labels:        map[string]string{},
+		TTLSeconds:    300,
+		NetworkRules: []SessionNetworkRule{
+			{DestinationPattern: "blocked.com", PortPattern: "443", Action: "allow"},
+		},
+	}, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Global deny should win over session allow (strict mode)
+	rule := FindMatchingRule(db, "codex", "blocked.com", 443, "")
+	if rule == nil {
+		t.Fatal("expected to find a matching rule")
+	}
+	if rule.Action != "deny" {
+		t.Errorf("expected global deny to win over session allow, got action=%q source=%q", rule.Action, rule.RuleSource())
+	}
+	if rule.RuleSource() != "global" {
+		t.Errorf("expected winning rule source 'global', got %q", rule.RuleSource())
+	}
+}
+
+func TestSessionRuleMatchesContainer(t *testing.T) {
+	db := setupTestDB(t)
+	clearBuiltinRules(t, db)
+	key := testEncryptionKey()
+
+	_, err := CreateOrUpdateSession(db, SessionCreateInput{
+		SessionID:     "gw-container-match",
+		ContainerName: "codex",
+		Mappings:      map[string]string{"p": "v"},
+		Labels:        map[string]string{},
+		TTLSeconds:    300,
+		NetworkRules: []SessionNetworkRule{
+			{DestinationPattern: "api.openai.com", PortPattern: "443"},
+		},
+	}, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Should match for the session's container
+	rule := FindMatchingRule(db, "codex", "api.openai.com", 443, "")
+	if rule == nil {
+		t.Fatal("expected rule to match for container 'codex'")
+	}
+
+	// Should NOT match for a different container
+	rule = FindMatchingRule(db, "aider", "api.openai.com", 443, "")
+	if rule != nil {
+		t.Errorf("expected no rule for container 'aider', got %+v", rule)
+	}
+}
+
+func TestBuiltinLocalhostRules(t *testing.T) {
+	db := setupTestDB(t)
+	// Don't clear built-in rules - we're testing them
+
+	// 127.0.0.1 should be allowed for any container
+	rule := FindMatchingRule(db, "anycontainer", "127.0.0.1", 8080, "")
+	if rule == nil {
+		t.Fatal("expected built-in rule to match 127.0.0.1")
+	}
+	if rule.Action != "allow" {
+		t.Errorf("expected allow, got %s", rule.Action)
+	}
+	if rule.RuleSource() != "builtin" {
+		t.Errorf("expected source 'builtin', got %q", rule.RuleSource())
+	}
+
+	// ::1 should also be allowed
+	rule = FindMatchingRule(db, "anycontainer", "::1", 3000, "")
+	if rule == nil {
+		t.Fatal("expected built-in rule to match ::1")
+	}
+
+	// localhost via resolved hostname should also match
+	rule = FindMatchingRule(db, "anycontainer", "192.168.1.1", 3000, "localhost")
+	if rule == nil {
+		t.Fatal("expected built-in rule to match resolved hostname 'localhost'")
+	}
+}
+
+func TestContainerAllowAll(t *testing.T) {
+	db := setupTestDB(t)
+	key := testEncryptionKey()
+
+	// No allow_all session: should return false
+	if IsContainerAllowAll(db, "codex") {
+		t.Error("expected IsContainerAllowAll=false before session creation")
+	}
+
+	// Create session with allow_all=true
+	_, err := CreateOrUpdateSession(db, SessionCreateInput{
+		SessionID:     "gw-allowall",
+		ContainerName: "codex",
+		Mappings:      map[string]string{"p": "v"},
+		Labels:        map[string]string{},
+		TTLSeconds:    300,
+		AllowAll:      true,
+	}, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !IsContainerAllowAll(db, "codex") {
+		t.Error("expected IsContainerAllowAll=true after session creation with allow_all")
+	}
+
+	// Different container should not be affected
+	if IsContainerAllowAll(db, "aider") {
+		t.Error("expected IsContainerAllowAll=false for different container")
+	}
+
+	// Delete session, should revert
+	_, _ = DeleteSession(db, "gw-allowall")
+	if IsContainerAllowAll(db, "codex") {
+		t.Error("expected IsContainerAllowAll=false after session deletion")
+	}
+}
+
+func TestSessionRulesDeletedOnExpiry(t *testing.T) {
+	db := setupTestDB(t)
+	clearBuiltinRules(t, db)
+	key := testEncryptionKey()
+
+	_, err := CreateOrUpdateSession(db, SessionCreateInput{
+		SessionID:     "gw-expire-rules",
+		ContainerName: "codex",
+		Mappings:      map[string]string{"p": "v"},
+		Labels:        map[string]string{},
+		TTLSeconds:    1,
+		NetworkRules: []SessionNetworkRule{
+			{DestinationPattern: "api.openai.com", PortPattern: "443"},
+		},
+	}, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait for session to expire
+	time.Sleep(2 * time.Second)
+
+	// Delete expired sessions
+	ids, err := DeleteExpiredSessions(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 1 || ids[0] != "gw-expire-rules" {
+		t.Errorf("expected expired session gw-expire-rules, got %v", ids)
+	}
+
+	// Session rules should be gone
+	_, total, _ := GetRules(db, RuleFilter{Limit: 100})
+	if total != 0 {
+		t.Errorf("expected 0 rules after session expiry cleanup, got %d", total)
+	}
+}
+
+func TestSessionNetworkRulesWithoutCredentials(t *testing.T) {
+	db := setupTestDB(t)
+	clearBuiltinRules(t, db)
+	key := testEncryptionKey()
+
+	// Session with only network rules (no credentials)
+	_, err := CreateOrUpdateSession(db, SessionCreateInput{
+		SessionID:     "gw-norules-only",
+		ContainerName: "codex",
+		Mappings:      map[string]string{},
+		Labels:        map[string]string{},
+		TTLSeconds:    300,
+		NetworkRules: []SessionNetworkRule{
+			{DestinationPattern: "api.openai.com", PortPattern: "443"},
+		},
+	}, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	count := GetSessionRuleCount(db, "gw-norules-only")
+	if count != 1 {
+		t.Errorf("expected 1 session rule, got %d", count)
 	}
 }

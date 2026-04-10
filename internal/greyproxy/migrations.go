@@ -178,7 +178,7 @@ var migrations = []string{
 	);`,
 
 	// Migration 11: Endpoint rules for dynamic URL pattern -> decoder mapping,
-	// and client_name on conversations for detected client identity
+	// and client_name on conversations for detected client identity.
 	`CREATE TABLE IF NOT EXISTS endpoint_rules (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		host_pattern TEXT NOT NULL,
@@ -194,6 +194,25 @@ var migrations = []string{
 	    ON endpoint_rules(host_pattern, path_pattern, method, user_defined);
 
 	ALTER TABLE conversations ADD COLUMN client_name TEXT;`,
+
+	// Migration 12: Session-scoped network rules and per-container allow-all.
+	//
+	// - session_id on rules links a rule to a session lifetime (auto-deleted on session end/expire).
+	//   Source layer is derived: session_id IS NOT NULL = session rule, created_by = 'builtin' = built-in,
+	//   everything else = global. rule_type stays 'permanent'/'temporary' (CHECK constraint from migration 1).
+	// - allow_all on sessions enables per-container learning mode (skip ACL for that container).
+	// - Built-in localhost rules seed 127.0.0.1, ::1, and localhost as lowest-priority allows.
+	`ALTER TABLE rules ADD COLUMN session_id TEXT DEFAULT NULL;
+	CREATE INDEX IF NOT EXISTS idx_rules_session_id ON rules(session_id);
+
+	ALTER TABLE sessions ADD COLUMN allow_all INTEGER NOT NULL DEFAULT 0;
+
+	INSERT OR IGNORE INTO rules (container_pattern, destination_pattern, port_pattern, rule_type, action, created_by)
+	VALUES ('*', '127.0.0.1', '*', 'permanent', 'allow', 'builtin');
+	INSERT OR IGNORE INTO rules (container_pattern, destination_pattern, port_pattern, rule_type, action, created_by)
+	VALUES ('*', '::1', '*', 'permanent', 'allow', 'builtin');
+	INSERT OR IGNORE INTO rules (container_pattern, destination_pattern, port_pattern, rule_type, action, created_by)
+	VALUES ('*', 'localhost', '*', 'permanent', 'allow', 'builtin');`,
 }
 
 func runMigrations(db *sql.DB) error {

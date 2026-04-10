@@ -35,6 +35,11 @@
                             <span class="text-xs text-accent ml-1">Temporary</span>
                         {{end}}
                     {{end}}
+                    {{if .SessionID.Valid}}
+                        <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-accent/10 text-accent ml-1">session</span>
+                    {{else if eq .CreatedBy "builtin"}}
+                        <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-muted text-muted-foreground ml-1">builtin</span>
+                    {{end}}
                 </td>
                 <td class="px-6 py-4 whitespace-nowrap">
                     <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary/10 text-primary cursor-pointer hover:underline hover:bg-primary/20"
