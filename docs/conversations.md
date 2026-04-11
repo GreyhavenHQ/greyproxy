@@ -5,7 +5,7 @@ title: LLM Conversation Tracking
 
 # LLM Conversation Tracking
 
-![LLM conversations view](/img/greyproxy/conversations.png)
+![LLM conversations view](./img/conversations.png)
 
 Greyproxy can intercept traffic to popular LLM APIs and reconstruct it into structured conversations. When enabled, requests to providers such as Anthropic, OpenAI, and Google Gemini are parsed into messages, tool calls, and assistant responses, then grouped by client and displayed in the dashboard.
 

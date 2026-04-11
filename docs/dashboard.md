@@ -5,7 +5,7 @@ title: Dashboard
 
 # Dashboard
 
-![Greyproxy dashboard](/img/greyproxy/dashboard.png)
+![Greyproxy dashboard](./img/dashboard.png)
 
 The Greyproxy dashboard is available at [http://localhost:43080](http://localhost:43080) once greyproxy is running. It provides a real-time view of proxy traffic and a management interface for rules and pending requests.
 

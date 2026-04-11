@@ -5,7 +5,7 @@ title: Credential Substitution
 
 # Credential Substitution
 
-![Global credentials settings](/img/greyproxy/credentials.png)
+![Global credentials settings](./img/credentials.png)
 
 Greyproxy can transparently inject real API keys into outgoing requests while the sandboxed process only ever sees opaque placeholders. This lets you run AI coding tools or other scripts inside greywall without exposing real credentials to the sandbox, and without modifying the tool itself.
 

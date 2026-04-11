@@ -7,7 +7,7 @@ slug: /greyproxy
 
 # Greyproxy
 
-![Greyproxy dashboard](/img/greyproxy/dashboard.png)
+![Greyproxy dashboard](./img/dashboard.png)
 
 Greyproxy is a managed network proxy with a built-in web dashboard, rule engine, and REST API. It wraps powerful multi-protocol tunneling capabilities with an intuitive management layer for controlling and monitoring network traffic.
 
