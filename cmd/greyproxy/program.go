@@ -676,6 +676,12 @@ func (p *program) buildGreyproxyService() error {
 		return nil
 	})
 
+	// Endpoint registry (LLM endpoint → decoder mapping). Created here
+	// rather than next to the assembler below so the middleware hooks can
+	// consult it for the `llm` filter. The same instance is reused by the
+	// assembler, so toggling a rule in the UI affects both paths atomically.
+	endpointRegistry := greyproxy.NewEndpointRegistry(shared.DB)
+
 	// Wire middleware WebSocket client if configured
 	mwURL := middlewareURLFlag
 	if mwURL == "" && gaCfg.Middleware != nil {
@@ -734,7 +740,8 @@ func (p *program) buildGreyproxyService() error {
 			rh := *reqHook // capture for closures
 			gostx.GlobalProxyRequestHook = func(ctx context.Context, req *http.Request, container string) *gostx.ProxyRequestDecision {
 				ct := req.Header.Get("Content-Type")
-				if !middleware.MatchesFilter(rh.Filters, req.Host, req.URL.Path, req.Method, ct, container, false) {
+				isLLM := endpointRegistry.Match(req.URL.Path, req.Method, req.Host) != ""
+				if !middleware.MatchesFilter(rh.Filters, req.Host, req.URL.Path, req.Method, ct, container, false, isLLM) {
 					return nil
 				}
 				body, _ := io.ReadAll(req.Body)
@@ -751,7 +758,8 @@ func (p *program) buildGreyproxyService() error {
 			// MITM request hook (Step 1.5)
 			gostx.SetGlobalMitmRequestMiddlewareHook(func(ctx context.Context, req *http.Request, container string) error {
 				ct := req.Header.Get("Content-Type")
-				if !middleware.MatchesFilter(rh.Filters, req.Host, req.URL.Path, req.Method, ct, container, true) {
+				isLLM := endpointRegistry.Match(req.URL.Path, req.Method, req.Host) != ""
+				if !middleware.MatchesFilter(rh.Filters, req.Host, req.URL.Path, req.Method, ct, container, true, isLLM) {
 					return nil
 				}
 				body, _ := io.ReadAll(req.Body)
@@ -784,7 +792,8 @@ func (p *program) buildGreyproxyService() error {
 			rh := *respHook // capture for closures
 			gostx.GlobalProxyResponseHook = func(ctx context.Context, req *http.Request, resp *http.Response, container string) *gostx.ProxyResponseDecision {
 				respCT := resp.Header.Get("Content-Type")
-				if !middleware.MatchesFilter(rh.Filters, req.Host, req.URL.Path, req.Method, respCT, container, false) {
+				isLLM := endpointRegistry.Match(req.URL.Path, req.Method, req.Host) != ""
+				if !middleware.MatchesFilter(rh.Filters, req.Host, req.URL.Path, req.Method, respCT, container, false, isLLM) {
 					return nil
 				}
 				reqBody := middleware.RequestBodyFromContext(ctx)
@@ -808,7 +817,8 @@ func (p *program) buildGreyproxyService() error {
 			// MITM response hook
 			gostx.SetGlobalMitmResponseHook(func(ctx context.Context, info gostx.MitmRoundTripInfo) *gostx.MitmResponseDecision {
 				respCT := info.ResponseHeaders.Get("Content-Type")
-				if !middleware.MatchesFilter(rh.Filters, info.Host, info.URI, info.Method, respCT, info.ContainerName, true) {
+				isLLM := endpointRegistry.Match(info.URI, info.Method, info.Host) != ""
+				if !middleware.MatchesFilter(rh.Filters, info.Host, info.URI, info.Method, respCT, info.ContainerName, true, isLLM) {
 					return nil
 				}
 				respBody := truncateBody(info.ResponseBody)
@@ -884,7 +894,6 @@ func (p *program) buildGreyproxyService() error {
 	// Start conversation assembler (dissects LLM API transactions into conversations)
 	assemblerCtx, assemblerCancel := context.WithCancel(context.Background())
 	p.assemblerCancel = assemblerCancel
-	endpointRegistry := greyproxy.NewEndpointRegistry(shared.DB)
 	assembler := greyproxy.NewConversationAssembler(shared.DB, shared.Bus, endpointRegistry)
 	assembler.SetEnabled(resolvedSettings.ConversationsEnabled)
 	shared.Assembler = assembler

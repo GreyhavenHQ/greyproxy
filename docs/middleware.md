@@ -134,11 +134,30 @@ Filters are evaluated inside greyproxy before anything is sent over WebSocket. N
 | `content_type` | Glob | `application/json`, `text/*` |
 | `container` | Glob | `my-app-*` |
 | `tls` | Boolean | `true` (HTTPS only) |
+| `llm` | Boolean | `true` (LLM traffic only), `false` (non-LLM only) |
 
 Semantics:
 - Within a field: **OR** (any match passes)
 - Across fields: **AND** (all specified fields must match)
 - Absent field: matches everything
+
+#### The `llm` filter
+
+Greyproxy ships with a built-in mapping from host/method/path to LLM decoders (Anthropic, OpenAI, Google AI, OpenRouter, plus any user-defined rules). The `llm` filter lets a middleware piggyback on that mapping instead of duplicating it:
+
+```json
+{
+  "type": "hello",
+  "hooks": [
+    { "type": "http-request",  "filters": { "llm": true } },
+    { "type": "http-response", "filters": { "llm": true } }
+  ]
+}
+```
+
+With this hello the middleware receives every request greyproxy currently considers LLM traffic, including user-defined providers added later at runtime. Adding a new provider rule in the UI takes effect on the very next request with no middleware restart. Disabling a rule immediately stops matching requests from being forwarded, so `llm: true` always means "whatever greyproxy currently dissects as LLM", never a stale snapshot.
+
+`llm: false` is the inverse: useful for "audit everything *except* LLM calls". Omit the field entirely to disable LLM-based gating.
 
 ### Request message
 

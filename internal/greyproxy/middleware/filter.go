@@ -55,13 +55,24 @@ func PrecompileFilters(hooks []HookSpec) {
 // MatchesFilter evaluates a HookFilter against request/response metadata.
 // Returns true if the middleware should be called.
 // nil filter = always true.
-func MatchesFilter(f *HookFilter, host, path, method, contentType, container string, tls bool) bool {
+//
+// isLLM must reflect the live state of the endpoint registry at call time
+// (i.e. endpointRegistry.Match(...) != ""). We intentionally don't cache
+// this: the registry is authoritative, and a user toggling a rule off in
+// the UI should take effect on the very next request without any middleware
+// reconnect or cache invalidation.
+func MatchesFilter(f *HookFilter, host, path, method, contentType, container string, tls, isLLM bool) bool {
 	if f == nil {
 		return true
 	}
 
 	// TLS filter
 	if f.TLS != nil && *f.TLS != tls {
+		return false
+	}
+
+	// LLM filter
+	if f.LLM != nil && *f.LLM != isLLM {
 		return false
 	}
 

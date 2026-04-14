@@ -26,6 +26,11 @@ type HookFilter struct {
 	ContentType []string `json:"content_type,omitempty"` // glob: application/json, text/*
 	Container   []string `json:"container,omitempty"`    // glob: my-app-*
 	TLS         *bool    `json:"tls,omitempty"`          // nil = both; true = HTTPS only
+	// LLM gates on whether the proxy's endpoint registry currently resolves
+	// a decoder for this request. nil = don't care, true = LLM only,
+	// false = non-LLM only. Lets middleware subscribe to "LLM traffic"
+	// without duplicating greyproxy's endpoint→decoder mapping.
+	LLM *bool `json:"llm,omitempty"`
 }
 
 // RequestMsg is sent for every intercepted HTTP request that passes filters.
