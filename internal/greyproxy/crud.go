@@ -92,6 +92,10 @@ func CreateRule(db *DB, input RuleCreateInput) (*Rule, error) {
 const ruleColumns = `id, container_pattern, destination_pattern, port_pattern,
 	rule_type, action, created_at, expires_at, last_used_at, created_by, notes, session_id`
 
+// ruleColumnsQualified is the SELECT list with rules. prefix for use in JOIN queries.
+const ruleColumnsQualified = `rules.id, rules.container_pattern, rules.destination_pattern, rules.port_pattern,
+	rules.rule_type, rules.action, rules.created_at, rules.expires_at, rules.last_used_at, rules.created_by, rules.notes, rules.session_id`
+
 func GetRule(db *DB, id int64) (*Rule, error) {
 	row := db.ReadDB().QueryRow(
 		`SELECT `+ruleColumns+` FROM rules WHERE id = ?`, id,
@@ -318,10 +322,29 @@ func IngestRules(db *DB, rules []IngestRuleInput) (*IngestResult, error) {
 // The highest-layer match wins. Within the same layer, highest specificity wins,
 // and deny beats allow at the same specificity.
 func FindMatchingRule(db *DB, containerName, destHost string, destPort int, resolvedHostname string) *Rule {
-	// Get all non-expired rules
+	// Get all non-expired rules. For session-scoped rules, JOIN with sessions and
+	// enforce two conditions:
+	//   1. The session itself is still active (not expired/deleted).
+	//   2. The session is the most recently created active session for this container.
+	//      This prevents an older session's rules from bleeding into a newer session
+	//      that was started with a different (or empty) rule set.
+	// Global and built-in rules (session_id IS NULL) are unaffected.
 	rows, err := db.ReadDB().Query(
-		`SELECT `+ruleColumns+` FROM rules
-		 WHERE expires_at IS NULL OR expires_at > datetime('now')`,
+		`SELECT `+ruleColumnsQualified+`
+		 FROM rules
+		 LEFT JOIN sessions ON rules.session_id = sessions.session_id
+		 WHERE (rules.expires_at IS NULL OR rules.expires_at > datetime('now'))
+		   AND (rules.session_id IS NULL
+		        OR (sessions.session_id IS NOT NULL
+		            AND sessions.expires_at > datetime('now')
+		            AND sessions.session_id = (
+		                SELECT session_id FROM sessions
+		                WHERE container_name = ?
+		                  AND expires_at > datetime('now')
+		                ORDER BY created_at DESC, rowid DESC
+		                LIMIT 1
+		            )))`,
+		containerName,
 	)
 	if err != nil {
 		return nil

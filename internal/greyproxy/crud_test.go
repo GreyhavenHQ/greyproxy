@@ -1429,6 +1429,95 @@ func TestSessionRuleMatchesContainer(t *testing.T) {
 	}
 }
 
+func TestSessionRuleDoesNotMatchAfterSessionDeleted(t *testing.T) {
+	db := setupTestDB(t)
+	clearBuiltinRules(t, db)
+	key := testEncryptionKey()
+
+	_, err := CreateOrUpdateSession(db, SessionCreateInput{
+		SessionID:     "gw-deleted-session",
+		ContainerName: "codex",
+		Mappings:      map[string]string{"p": "v"},
+		Labels:        map[string]string{},
+		TTLSeconds:    300,
+		NetworkRules: []SessionNetworkRule{
+			{DestinationPattern: "api.openai.com", PortPattern: "443"},
+		},
+	}, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Rule matches while session is active
+	rule := FindMatchingRule(db, "codex", "api.openai.com", 443, "")
+	if rule == nil {
+		t.Fatal("expected rule to match while session is active")
+	}
+
+	// Delete the session
+	_, err = DeleteSession(db, "gw-deleted-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Rule must NOT match once the session is gone
+	rule = FindMatchingRule(db, "codex", "api.openai.com", 443, "")
+	if rule != nil {
+		t.Errorf("expected no rule after session deletion, got rule %d (session_id=%v)", rule.ID, rule.SessionID)
+	}
+}
+
+// TestNewerSessionSupersedesOlderSessionRules verifies that when a second session is
+// created for the same container, the first session's rules no longer apply -- even
+// while session 1 is still active. This is the core "session isolation" invariant:
+// the most recently created active session defines the effective rule set.
+func TestNewerSessionSupersedesOlderSessionRules(t *testing.T) {
+	db := setupTestDB(t)
+	clearBuiltinRules(t, db)
+	key := testEncryptionKey()
+
+	// Session 1: created with network rules (e.g. greywall --profile llm-coding)
+	_, err := CreateOrUpdateSession(db, SessionCreateInput{
+		SessionID:     "gw-session-1",
+		ContainerName: "claude",
+		Mappings:      map[string]string{"p1": "v1"},
+		Labels:        map[string]string{},
+		TTLSeconds:    300,
+		NetworkRules: []SessionNetworkRule{
+			{DestinationPattern: "api.anthropic.com", PortPattern: "443"},
+		},
+	}, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Session 1 is active: its rule must match
+	rule := FindMatchingRule(db, "claude", "api.anthropic.com", 443, "")
+	if rule == nil {
+		t.Fatal("expected rule to match for session 1")
+	}
+
+	// Session 2: same container, no network rules (e.g. greywall --no-network-rules)
+	// Session 1 is still alive (not deleted, not expired).
+	_, err = CreateOrUpdateSession(db, SessionCreateInput{
+		SessionID:     "gw-session-2",
+		ContainerName: "claude",
+		Mappings:      map[string]string{"p2": "v2"},
+		Labels:        map[string]string{},
+		TTLSeconds:    300,
+		NetworkRules:  nil,
+	}, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Session 2 is the current session: session 1's rules must NOT match anymore
+	rule = FindMatchingRule(db, "claude", "api.anthropic.com", 443, "")
+	if rule != nil {
+		t.Errorf("session 1 rule must not apply when session 2 is active, got rule %d (session_id=%v)", rule.ID, rule.SessionID)
+	}
+}
+
 func TestBuiltinLocalhostRules(t *testing.T) {
 	db := setupTestDB(t)
 	// Don't clear built-in rules - we're testing them
