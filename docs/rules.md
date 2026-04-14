@@ -18,15 +18,37 @@ The greyproxy rule engine controls which network connections are allowed or deni
 | `notes` | string | Optional free-form annotation. |
 | `expires_at` | string | Optional RFC 3339 timestamp; the rule becomes inactive after this time. |
 
+## Rule Sources
+
+Every rule belongs to one of three source layers, each with a different lifetime and priority:
+
+| Layer | Priority | Lifetime | Created by |
+|-------|----------|----------|------------|
+| **Global** | Highest | Persistent until deleted | Dashboard, REST API, `IngestRules` |
+| **Session** | Middle | Tied to a session's lifetime; auto-deleted when the session ends, expires, or is superseded | Greywall (or any client) at session creation |
+| **Built-in** | Lowest | Persistent (loopback defaults: `127.0.0.1`, `::1`, `localhost`) | Migration seed |
+
+The dashboard tags each rule with its source so you can tell at a glance whether a rule came from a human, from a session, or from the built-in defaults.
+
 ## Evaluation Order
 
-For every incoming connection, the rule engine evaluates rules in this order:
+For every incoming connection, the rule engine evaluates all rules across all source layers and picks a winner using the following ordering:
 
-1. **Deny rules first**: if the connection matches any deny rule, it is blocked immediately.
-2. **Allow rules second**: if the connection matches any allow rule, it is forwarded.
-3. **No match**: the connection is either blocked or queued as a **pending request** (see [Pending Requests](#pending-requests)).
+1. **Source layer**: global beats session, session beats built-in.
+2. **Specificity**: within the same layer, the most specific pattern wins (an exact hostname beats a wildcard).
+3. **Action tiebreak**: at equal specificity, deny beats allow.
+4. **No match**: the connection is queued as a **pending request** (see [Pending Requests](#pending-requests)).
 
-Deny rules always take precedence over allow rules, regardless of creation order.
+Because deny rules win at equal specificity, you can still combine `deny telemetry.example.com` with `allow *` to block specific destinations while letting everything else through.
+
+## Session-Scoped Rules
+
+Session rules are pushed by clients (typically [Greywall](./using-with-greywall)) when a session is created, and they live and die with that session:
+
+- Their `container_pattern` is set to the exact container the session was created for, so they never match traffic from a different container.
+- They expire when the session expires, are deleted when the session is deleted, and their TTL is extended on every session heartbeat.
+- They only match while their session is the **current session** for the connecting container. If a newer session is created for the same container (even one with no rules at all, e.g. `greywall --no-network-rules`), the older session's rules immediately stop matching. This prevents an old session's allow list from leaking into a freshly started session that wants a different (or empty) policy.
+- Because session rules sit below global rules in the resolution order, a global deny rule still overrides them. You can use this to enforce hard organizational deny lists that no session can override.
 
 ## Pattern Syntax
 

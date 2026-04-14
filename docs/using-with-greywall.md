@@ -88,6 +88,18 @@ A common workflow when introducing greywall + greyproxy to a new project:
 
 This iterative approach lets you build a minimal, precise allow list rather than guessing upfront.
 
+## Session-Scoped Network Rules
+
+When greywall starts a sandboxed command with a profile, it pushes the profile's network rules to greyproxy as part of session creation. These rules:
+
+- Are scoped to the container greywall is sandboxing (they never match traffic from a different container).
+- Live for the duration of the session and are auto-deleted when the session ends, expires, or is superseded.
+- Show up in the dashboard tagged with the **session** source so you can tell them apart from rules you created by hand.
+
+If you start a second greywall command for the same container, the new session's rules replace the old session's rules immediately, even if the old session is still technically alive. To run a command without inheriting any profile-sourced rules, pass `--no-network-rules` to greywall: the new session is created with an empty rule set, and the previous session's rules stop matching the moment that new session is registered.
+
+Global rules you created in the dashboard always take priority over session rules, so an organizational deny list is never overridden by a profile.
+
 ## Credential Substitution
 
 When a sandboxed process needs API keys (for example an AI coding tool running under greywall), you usually do not want the real credentials to land in the sandbox environment. Greyproxy and greywall can cooperate to hide them: greywall registers placeholder tokens with greyproxy at session creation, and greyproxy injects the real values into outgoing requests at the MITM layer. The sandboxed process only ever sees opaque placeholders.
