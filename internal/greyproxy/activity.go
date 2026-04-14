@@ -27,6 +27,9 @@ type ActivityItem struct {
 	DurationMs             sql.NullInt64
 	ConversationID         sql.NullString
 	SubstitutedCredentials sql.NullString
+	// Middleware events attached by a secondary query. Ordered by cascade
+	// sequence. Empty when no middleware touched this transaction.
+	MiddlewareEvents []MiddlewareEventSummary
 }
 
 // ActivityFilter specifies filters for the unified activity query.
@@ -157,6 +160,15 @@ func QueryActivity(db *DB, f ActivityFilter) ([]ActivityItem, int, error) {
 			item.Timestamp, _ = time.Parse(time.RFC3339, ts)
 		}
 		items = append(items, item)
+	}
+
+	// Attach middleware events in a second pass. Failures here are non-fatal:
+	// the activity page still renders, just without middleware visibility.
+	if events, err := LoadMiddlewareEventsForActivity(db, items); err == nil && len(events) > 0 {
+		for i := range items {
+			key := fmt.Sprintf("%s:%d", items[i].Kind, items[i].ID)
+			items[i].MiddlewareEvents = events[key]
+		}
 	}
 
 	return items, total, nil

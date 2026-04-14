@@ -572,6 +572,25 @@ func (p *program) buildGreyproxyService() error {
 				log.Warnf("failed to store HTTP transaction: %v", err)
 				return
 			}
+			// Flush any middleware events stashed during the MITM response
+			// cascade now that we have the http_transactions row ID.
+			for _, ev := range middleware.DrainEvents(info.RequestID) {
+				if werr := greyproxy.WriteMiddlewareEvent(shared.DB, greyproxy.MiddlewareEventInsert{
+					TransactionID:   txn.ID,
+					TransactionKind: "http",
+					Sequence:        ev.Sequence,
+					MiddlewareURL:   ev.MiddlewareURL,
+					Hook:            ev.Hook,
+					Action:          ev.Action,
+					StatusCode:      ev.StatusCode,
+					HeadersChanged:  ev.HeadersChanged,
+					BodyRewritten:   ev.BodyRewritten,
+					Tags:            ev.Tags,
+					DurationMs:      ev.DurationMs,
+				}); werr != nil {
+					log.Warnf("failed to store middleware event: %v", werr)
+				}
+			}
 			shared.Bus.Publish(greyproxy.Event{
 				Type: greyproxy.EventTransactionNew,
 				Data: txn.ToJSON(false),
@@ -692,28 +711,32 @@ func (p *program) buildGreyproxyService() error {
 
 		type clientHook struct {
 			client  *middleware.Client
+			url     string
 			filters *middleware.HookFilter
 		}
 
 		// Start one client per config entry, in order.
 		clients := make([]*middleware.Client, 0, len(mwConfigs))
+		clientURLs := make([]string, 0, len(mwConfigs))
 		for _, cfg := range mwConfigs {
 			c := middleware.New(cfg)
 			go c.Start(mwCtx)
 			clients = append(clients, c)
+			clientURLs = append(clientURLs, cfg.URL)
 		}
 
 		// Per hook type, collect the clients that declared that hook.
 		var reqHooks, respHooks []clientHook
-		for _, c := range clients {
+		for i, c := range clients {
 			specs := c.HookSpecs() // blocks briefly for hello exchange
-			log.Infof("middleware connected: hooks=%d, max_body_bytes=%d", len(specs), c.MaxBodyBytes())
-			for i := range specs {
-				switch specs[i].Type {
+			log.Infof("middleware connected: url=%s hooks=%d max_body_bytes=%d", clientURLs[i], len(specs), c.MaxBodyBytes())
+			for j := range specs {
+				ch := clientHook{client: c, url: clientURLs[i], filters: specs[j].Filters}
+				switch specs[j].Type {
 				case "http-request":
-					reqHooks = append(reqHooks, clientHook{c, specs[i].Filters})
+					reqHooks = append(reqHooks, ch)
 				case "http-response":
-					respHooks = append(respHooks, clientHook{c, specs[i].Filters})
+					respHooks = append(respHooks, ch)
 				}
 			}
 		}
@@ -886,6 +909,7 @@ func (p *program) buildGreyproxyService() error {
 				workStatus := info.StatusCode
 				workHeaders := info.ResponseHeaders.Clone()
 				rewritten := false
+				seq := 0
 
 				for _, h := range hooks {
 					respCT := workHeaders.Get("Content-Type")
@@ -894,20 +918,29 @@ func (p *program) buildGreyproxyService() error {
 					}
 					mwBody := truncateBody(workBody)
 					mwBody, _ = middleware.DecompressBody(mwBody, workHeaders.Get("Content-Encoding"))
+					preHeaders := workHeaders.Clone()
+					preBody := workBody
 					msg := middleware.ResponseMsg{
 						Type: "http-response", ID: newUUID(),
 						Host: info.Host, Method: info.Method, URI: info.URI,
 						StatusCode:      workStatus,
 						RequestHeaders:  info.RequestHeaders,
 						RequestBody:     truncateBody(info.RequestBody),
-						ResponseHeaders: workHeaders.Clone(),
+						ResponseHeaders: preHeaders,
 						ResponseBody:    mwBody,
 						Container:       info.ContainerName,
 						DurationMs:      info.DurationMs,
 					}
+					stepStart := time.Now()
 					d, _ := h.client.Send(ctx, msg)
+					stepMs := time.Since(stepStart).Milliseconds()
 					switch d.Action {
 					case "block":
+						middleware.StashEvent(info.RequestID, middleware.PendingEvent{
+							Sequence: seq, MiddlewareURL: h.url, Hook: "mitm-response",
+							Action: "block", StatusCode: d.StatusCode,
+							Tags: d.Tags, DurationMs: stepMs, CreatedAt: time.Now(),
+						})
 						return &gostx.MitmResponseDecision{
 							Block:      true,
 							StatusCode: d.StatusCode,
@@ -924,7 +957,28 @@ func (p *program) buildGreyproxyService() error {
 						for k, v := range d.Headers {
 							workHeaders[k] = v
 						}
+						middleware.StashEvent(info.RequestID, middleware.PendingEvent{
+							Sequence: seq, MiddlewareURL: h.url, Hook: "mitm-response",
+							Action: "rewrite", StatusCode: d.StatusCode,
+							HeadersChanged: middleware.DiffHeaderNames(preHeaders, workHeaders),
+							BodyRewritten:  d.Body != nil && !bytes.Equal(d.Body, preBody),
+							Tags:           d.Tags, DurationMs: stepMs, CreatedAt: time.Now(),
+						})
+					default:
+						// allow / passthrough: only stash if tags were emitted.
+						if len(d.Tags) > 0 {
+							action := "tagged-allow"
+							if d.Action == "passthrough" {
+								action = "tagged-passthrough"
+							}
+							middleware.StashEvent(info.RequestID, middleware.PendingEvent{
+								Sequence: seq, MiddlewareURL: h.url, Hook: "mitm-response",
+								Action: action, Tags: d.Tags,
+								DurationMs: stepMs, CreatedAt: time.Now(),
+							})
+						}
 					}
+					seq++
 				}
 
 				if !rewritten {

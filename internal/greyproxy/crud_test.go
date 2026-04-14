@@ -649,8 +649,8 @@ func TestMigrations(t *testing.T) {
 	// Verify migration versions were recorded
 	var count int
 	_ = db.ReadDB().QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&count)
-	if count != 12 {
-		t.Errorf("expected 12 migration versions, got %d", count)
+	if count != 13 {
+		t.Errorf("expected 13 migration versions, got %d", count)
 	}
 }
 

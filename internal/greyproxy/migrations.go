@@ -213,6 +213,27 @@ var migrations = []string{
 	VALUES ('*', '::1', '*', 'permanent', 'allow', 'builtin');
 	INSERT OR IGNORE INTO rules (container_pattern, destination_pattern, port_pattern, rule_type, action, created_by)
 	VALUES ('*', 'localhost', '*', 'permanent', 'allow', 'builtin');`,
+
+	// Migration 13: middleware_events table — records non-trivial decisions
+	// made by external middlewares during the cascade. Rows are only inserted
+	// for mutating actions (deny/block/rewrite) or decisions that emitted
+	// structured tags; silent allow/passthrough produces no row.
+	`CREATE TABLE IF NOT EXISTS middleware_events (
+		id               INTEGER PRIMARY KEY AUTOINCREMENT,
+		transaction_id   INTEGER NOT NULL,
+		transaction_kind TEXT    NOT NULL,
+		sequence         INTEGER NOT NULL,
+		middleware_url   TEXT    NOT NULL,
+		hook             TEXT    NOT NULL,
+		action           TEXT    NOT NULL,
+		status_code      INTEGER,
+		headers_changed  TEXT,
+		body_rewritten   INTEGER NOT NULL DEFAULT 0,
+		tags             TEXT,
+		duration_ms      INTEGER,
+		created_at       DATETIME NOT NULL DEFAULT (datetime('now'))
+	);
+	CREATE INDEX IF NOT EXISTS idx_mw_events_tx ON middleware_events(transaction_kind, transaction_id);`,
 }
 
 func runMigrations(db *sql.DB) error {

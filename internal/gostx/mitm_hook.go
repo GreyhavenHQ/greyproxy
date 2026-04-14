@@ -10,6 +10,11 @@ import (
 // MitmRoundTripInfo contains decrypted HTTP request/response data from a MITM round-trip.
 // This re-exports the internal sniffing type for use outside the gostx/internal package.
 type MitmRoundTripInfo struct {
+	// RequestID uniquely identifies one MITM round-trip. Threaded through
+	// both the middleware response hook and the round-trip persistence hook
+	// so subscribers can correlate decisions back to the http_transactions
+	// row created for this request.
+	RequestID              string
 	Host                   string
 	Method                 string
 	URI                    string
@@ -75,6 +80,7 @@ func SetGlobalMitmHook(hook func(info MitmRoundTripInfo)) {
 	}
 	sniffing.GlobalHTTPRoundTripHook = func(info sniffing.HTTPRoundTripInfo) {
 		hook(MitmRoundTripInfo{
+			RequestID:              info.RequestID,
 			Host:                   info.Host,
 			Method:                 info.Method,
 			URI:                    info.URI,
@@ -200,6 +206,7 @@ func SetGlobalMitmResponseHook(
 	}
 	sniffing.GlobalMitmResponseHook = func(ctx context.Context, info sniffing.HTTPRoundTripInfo) *sniffing.MitmResponseDecision {
 		d := hook(ctx, MitmRoundTripInfo{
+			RequestID:       info.RequestID,
 			Host:            info.Host,
 			Method:          info.Method,
 			URI:             info.URI,

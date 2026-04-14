@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto"
+	cryptorand "crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
@@ -105,6 +106,11 @@ func WithLog(log logger.Logger) HandleOption {
 
 // HTTPRoundTripInfo contains decrypted HTTP request/response data from a MITM round-trip.
 type HTTPRoundTripInfo struct {
+	// RequestID uniquely identifies one MITM round-trip. Generated once per
+	// request and threaded through both the middleware response hook and the
+	// round-trip persistence hook so listeners can correlate decisions back
+	// to the http_transactions row created for this request.
+	RequestID              string
 	Host                   string
 	Method                 string
 	URI                    string
@@ -430,6 +436,14 @@ func (h *Sniffer) serveH2(ctx context.Context, network string, conn net.Conn, ho
 	return nil
 }
 
+// newRequestID returns a short random hex id used to correlate middleware
+// decisions with the http_transactions row created for the same round-trip.
+func newRequestID() string {
+	var buf [8]byte
+	_, _ = cryptorand.Read(buf[:])
+	return hex.EncodeToString(buf[:])
+}
+
 func (h *Sniffer) httpRoundTrip(ctx context.Context, rw, cc io.ReadWriteCloser, req *http.Request, ro *xrecorder.HandlerRecorderObject, pStats stats.Stats, log logger.Logger) (close bool, err error) {
 	close = true
 
@@ -437,6 +451,7 @@ func (h *Sniffer) httpRoundTrip(ctx context.Context, rw, cc io.ReadWriteCloser, 
 	*ro2 = *ro
 	ro = ro2
 
+	requestID := newRequestID()
 	ro.Time = time.Now()
 	log.Infof("%s <-> %s", ro.RemoteAddr, req.Host)
 	defer func() {
@@ -630,6 +645,7 @@ func (h *Sniffer) httpRoundTrip(ctx context.Context, rw, cc io.ReadWriteCloser, 
 				containerName = ro.ClientID
 			}
 			info := HTTPRoundTripInfo{
+				RequestID:       requestID,
 				Host:            req.Host,
 				Method:          req.Method,
 				URI:             req.RequestURI,
@@ -688,6 +704,7 @@ func (h *Sniffer) httpRoundTrip(ctx context.Context, rw, cc io.ReadWriteCloser, 
 		}
 		// Build info with what we have so far
 		mwInfo := HTTPRoundTripInfo{
+			RequestID:       requestID,
 			Host:            req.Host,
 			Method:          req.Method,
 			URI:             req.RequestURI,
@@ -762,6 +779,7 @@ func (h *Sniffer) httpRoundTrip(ctx context.Context, rw, cc io.ReadWriteCloser, 
 			containerName = ro.ClientID
 		}
 		info := HTTPRoundTripInfo{
+			RequestID:       requestID,
 			Host:            req.Host,
 			Method:          req.Method,
 			URI:             req.RequestURI,
