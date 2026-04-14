@@ -8,6 +8,16 @@ import (
 	"strings"
 )
 
+// stubResolvConfPath is the file systemd-resolved writes with its stub
+// listener (127.0.0.53) as the only nameserver. We read it when
+// /etc/resolv.conf is missing so queries still go through resolved and
+// benefit from its DoT/DNSSEC/split-DNS handling.
+//
+// We deliberately never read /run/systemd/resolve/resolv.conf: that file
+// contains the raw upstream nameservers and using it bypasses
+// systemd-resolved entirely, breaking DoT-only setups (see issue #47).
+const stubResolvConfPath = "/run/systemd/resolve/stub-resolv.conf"
+
 // systemDNSServers returns the host's configured DNS resolver addresses in
 // "host:53" form. Falls back to ["8.8.8.8:53"] when detection fails so the
 // DNS proxy always has a working upstream.
@@ -24,42 +34,22 @@ func systemDNSServers() []string {
 	return servers
 }
 
-// linuxMacDNSServers reads DNS servers from /etc/resolv.conf.
+// linuxMacDNSServers reads DNS servers from /etc/resolv.conf verbatim.
 //
-// systemd-resolved typically sets /etc/resolv.conf to contain only
-// "nameserver 127.0.0.53" (its stub listener). That address is reachable on
-// the host, but NOT inside containers (127.x.x.x is the container's own
-// loopback, not the host's). In that case we fall back to
-// /run/systemd/resolve/resolv.conf which systemd-resolved writes with the
-// real upstream nameservers.
+// On systemd-resolved hosts /etc/resolv.conf usually contains only
+// "nameserver 127.0.0.53" (the stub listener). We keep that address as-is
+// so queries are handled by resolved and go through whatever DoT/DNSSEC/
+// split-DNS config the user has set up. Bypassing the stub would drop all
+// of that (see issue #47).
+//
+// If /etc/resolv.conf is missing (rare, but possible on minimal images) we
+// fall back to /run/systemd/resolve/stub-resolv.conf, which also points at
+// the stub listener and keeps queries flowing through resolved.
 func linuxMacDNSServers() []string {
-	servers := resolvConfServers("/etc/resolv.conf")
-
-	// If every server is the systemd stub (127.0.0.53) try to get the real
-	// upstreams. Other loopback resolvers (dnsmasq on 127.0.0.1, etc.) are
-	// left alone because they are intentionally local.
-	if allSystemdStub(servers) {
-		if real := resolvConfServers("/run/systemd/resolve/resolv.conf"); len(real) > 0 {
-			return real
-		}
+	if servers := resolvConfServers("/etc/resolv.conf"); len(servers) > 0 {
+		return servers
 	}
-
-	return servers
-}
-
-// allSystemdStub reports whether every server address is the systemd-resolved
-// stub listener (127.0.0.53). A single non-stub address makes this false.
-func allSystemdStub(servers []string) bool {
-	if len(servers) == 0 {
-		return false
-	}
-	for _, s := range servers {
-		host, _, _ := net.SplitHostPort(s)
-		if host != "127.0.0.53" {
-			return false
-		}
-	}
-	return true
+	return resolvConfServers(stubResolvConfPath)
 }
 
 // resolvConfServers parses nameserver lines from a resolv.conf-style file.
