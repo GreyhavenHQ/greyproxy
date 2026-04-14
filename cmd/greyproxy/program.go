@@ -682,160 +682,259 @@ func (p *program) buildGreyproxyService() error {
 	// assembler, so toggling a rule in the UI affects both paths atomically.
 	endpointRegistry := greyproxy.NewEndpointRegistry(shared.DB)
 
-	// Wire middleware WebSocket client if configured
-	mwURL := middlewareURLFlag
-	if mwURL == "" && gaCfg.Middleware != nil {
-		mwURL = gaCfg.Middleware.URL
-	}
-
-	if mwURL != "" {
-		mwCfg := middleware.Config{
-			URL:          mwURL,
-			TimeoutMs:    2000,
-			OnDisconnect: "allow",
-		}
-		if gaCfg.Middleware != nil {
-			if gaCfg.Middleware.TimeoutMs > 0 {
-				mwCfg.TimeoutMs = gaCfg.Middleware.TimeoutMs
-			}
-			if gaCfg.Middleware.OnDisconnect != "" {
-				mwCfg.OnDisconnect = gaCfg.Middleware.OnDisconnect
-			}
-			mwCfg.AuthHeader = gaCfg.Middleware.AuthHeader
-		}
-
-		mwClient := middleware.New(mwCfg)
+	// Wire middleware WebSocket clients if configured. Multiple middlewares
+	// cascade in declaration order: each sees the previous one's output as
+	// its input; deny/block short-circuits the chain.
+	mwConfigs := buildMiddlewareConfigs(middlewareURLFlags, gaCfg.Middlewares)
+	if len(mwConfigs) > 0 {
 		mwCtx, mwCancel := context.WithCancel(context.Background())
 		p.mwCancel = mwCancel
-		go mwClient.Start(mwCtx)
 
-		// Block briefly for hello exchange so hooks are wired correctly
-		hookSpecs := mwClient.HookSpecs()
+		type clientHook struct {
+			client  *middleware.Client
+			filters *middleware.HookFilter
+		}
 
-		log.Infof("middleware connected: %s, hooks: %d, max_body_bytes: %d",
-			mwURL, len(hookSpecs), mwClient.MaxBodyBytes())
+		// Start one client per config entry, in order.
+		clients := make([]*middleware.Client, 0, len(mwConfigs))
+		for _, cfg := range mwConfigs {
+			c := middleware.New(cfg)
+			go c.Start(mwCtx)
+			clients = append(clients, c)
+		}
 
-		// Index hook specs by type for fast lookup
-		var reqHook, respHook *middleware.HookSpec
-		for i := range hookSpecs {
-			switch hookSpecs[i].Type {
-			case "http-request":
-				reqHook = &hookSpecs[i]
-			case "http-response":
-				respHook = &hookSpecs[i]
+		// Per hook type, collect the clients that declared that hook.
+		var reqHooks, respHooks []clientHook
+		for _, c := range clients {
+			specs := c.HookSpecs() // blocks briefly for hello exchange
+			log.Infof("middleware connected: hooks=%d, max_body_bytes=%d", len(specs), c.MaxBodyBytes())
+			for i := range specs {
+				switch specs[i].Type {
+				case "http-request":
+					reqHooks = append(reqHooks, clientHook{c, specs[i].Filters})
+				case "http-response":
+					respHooks = append(respHooks, clientHook{c, specs[i].Filters})
+				}
 			}
 		}
 
-		// Helper: truncate body per middleware-declared limit
+		// truncateBody uses the smallest max_body_bytes across all clients
+		// that declared a limit. 0 = no limit.
 		truncateBody := func(body []byte) []byte {
-			max := mwClient.MaxBodyBytes()
+			var max int64
+			for _, c := range clients {
+				m := c.MaxBodyBytes()
+				if m > 0 && (max == 0 || m < max) {
+					max = m
+				}
+			}
 			if max > 0 && int64(len(body)) > max {
-				return nil // sent as null in JSON
+				return nil
 			}
 			return body
 		}
 
-		// Plain HTTP + MITM request hooks
-		if reqHook != nil {
-			rh := *reqHook // capture for closures
+		// ---- Plain HTTP request cascade ---------------------------------
+		if len(reqHooks) > 0 {
+			hooks := reqHooks
 			gostx.GlobalProxyRequestHook = func(ctx context.Context, req *http.Request, container string) *gostx.ProxyRequestDecision {
-				ct := req.Header.Get("Content-Type")
-				isLLM := endpointRegistry.Match(req.URL.Path, req.Method, req.Host) != ""
-				if !middleware.MatchesFilter(rh.Filters, req.Host, req.URL.Path, req.Method, ct, container, false, isLLM) {
-					return nil
-				}
 				body, _ := io.ReadAll(req.Body)
 				req.Body = io.NopCloser(bytes.NewReader(body))
-				msg := middleware.RequestMsg{
-					Type: "http-request", ID: newUUID(),
-					Host: req.Host, Method: req.Method, URI: req.RequestURI,
-					Proto: req.Proto, Headers: req.Header.Clone(),
-					Body: truncateBody(body), Container: container, TLS: false,
-				}
-				d, _ := mwClient.Send(ctx, msg)
-				return mapRequestDecision(d)
-			}
-			// MITM request hook (Step 1.5)
-			gostx.SetGlobalMitmRequestMiddlewareHook(func(ctx context.Context, req *http.Request, container string) error {
-				ct := req.Header.Get("Content-Type")
 				isLLM := endpointRegistry.Match(req.URL.Path, req.Method, req.Host) != ""
-				if !middleware.MatchesFilter(rh.Filters, req.Host, req.URL.Path, req.Method, ct, container, true, isLLM) {
-					return nil
-				}
-				body, _ := io.ReadAll(req.Body)
-				req.Body = io.NopCloser(bytes.NewReader(body))
-				msg := middleware.RequestMsg{
-					Type: "http-request", ID: newUUID(),
-					Host: req.Host, Method: req.Method, URI: req.RequestURI,
-					Proto: req.Proto, Headers: req.Header.Clone(),
-					Body: truncateBody(body), Container: container, TLS: true,
-				}
-				d, _ := mwClient.Send(ctx, msg)
-				switch d.Action {
-				case "deny":
-					return gostx.ErrRequestDenied
-				case "rewrite":
-					if d.Body != nil {
-						req.Body = io.NopCloser(bytes.NewReader(d.Body))
-						req.ContentLength = int64(len(d.Body))
+
+				for _, h := range hooks {
+					ct := req.Header.Get("Content-Type")
+					if !middleware.MatchesFilter(h.filters, req.Host, req.URL.Path, req.Method, ct, container, false, isLLM) {
+						continue
 					}
-					for k, v := range d.Headers {
-						req.Header[k] = v
+					msg := middleware.RequestMsg{
+						Type: "http-request", ID: newUUID(),
+						Host: req.Host, Method: req.Method, URI: req.RequestURI,
+						Proto: req.Proto, Headers: req.Header.Clone(),
+						Body: truncateBody(body), Container: container, TLS: false,
+					}
+					d, _ := h.client.Send(ctx, msg)
+					switch d.Action {
+					case "deny":
+						return &gostx.ProxyRequestDecision{
+							Deny:       true,
+							StatusCode: d.StatusCode,
+							DenyBody:   string(d.Body),
+						}
+					case "rewrite":
+						if d.Body != nil {
+							body = d.Body
+							req.Body = io.NopCloser(bytes.NewReader(body))
+							req.ContentLength = int64(len(body))
+						}
+						for k, v := range d.Headers {
+							req.Header[k] = v
+						}
+					}
+				}
+				return nil
+			}
+
+			// ---- MITM request cascade -----------------------------------
+			gostx.SetGlobalMitmRequestMiddlewareHook(func(ctx context.Context, req *http.Request, container string) error {
+				body, _ := io.ReadAll(req.Body)
+				req.Body = io.NopCloser(bytes.NewReader(body))
+				isLLM := endpointRegistry.Match(req.URL.Path, req.Method, req.Host) != ""
+
+				for _, h := range hooks {
+					ct := req.Header.Get("Content-Type")
+					if !middleware.MatchesFilter(h.filters, req.Host, req.URL.Path, req.Method, ct, container, true, isLLM) {
+						continue
+					}
+					msg := middleware.RequestMsg{
+						Type: "http-request", ID: newUUID(),
+						Host: req.Host, Method: req.Method, URI: req.RequestURI,
+						Proto: req.Proto, Headers: req.Header.Clone(),
+						Body: truncateBody(body), Container: container, TLS: true,
+					}
+					d, _ := h.client.Send(ctx, msg)
+					switch d.Action {
+					case "deny":
+						return gostx.ErrRequestDenied
+					case "rewrite":
+						if d.Body != nil {
+							body = d.Body
+							req.Body = io.NopCloser(bytes.NewReader(body))
+							req.ContentLength = int64(len(body))
+						}
+						for k, v := range d.Headers {
+							req.Header[k] = v
+						}
 					}
 				}
 				return nil
 			})
 		}
 
-		// Plain HTTP + MITM response hooks
-		if respHook != nil {
-			rh := *respHook // capture for closures
+		// ---- Plain HTTP response cascade --------------------------------
+		if len(respHooks) > 0 {
+			hooks := respHooks
 			gostx.GlobalProxyResponseHook = func(ctx context.Context, req *http.Request, resp *http.Response, container string) *gostx.ProxyResponseDecision {
-				respCT := resp.Header.Get("Content-Type")
-				isLLM := endpointRegistry.Match(req.URL.Path, req.Method, req.Host) != ""
-				if !middleware.MatchesFilter(rh.Filters, req.Host, req.URL.Path, req.Method, respCT, container, false, isLLM) {
-					return nil
-				}
 				reqBody := middleware.RequestBodyFromContext(ctx)
 				respBody, _ := io.ReadAll(resp.Body)
 				resp.Body = io.NopCloser(bytes.NewReader(respBody))
-				mwBody := truncateBody(respBody)
-				mwBody, _ = middleware.DecompressBody(mwBody, resp.Header.Get("Content-Encoding"))
-				msg := middleware.ResponseMsg{
-					Type: "http-response", ID: newUUID(),
-					Host: req.Host, Method: req.Method, URI: req.RequestURI,
-					StatusCode:      resp.StatusCode,
-					RequestHeaders:  req.Header.Clone(),
-					RequestBody:     truncateBody(reqBody),
-					ResponseHeaders: resp.Header.Clone(),
-					ResponseBody:    mwBody,
-					Container:       container,
+				isLLM := endpointRegistry.Match(req.URL.Path, req.Method, req.Host) != ""
+
+				// Working copy: mutations between cascade steps apply here,
+				// then we flush back to resp at the end via the returned decision.
+				workBody := respBody
+				workStatus := resp.StatusCode
+				workHeaders := resp.Header.Clone()
+				rewritten := false
+
+				for _, h := range hooks {
+					respCT := workHeaders.Get("Content-Type")
+					if !middleware.MatchesFilter(h.filters, req.Host, req.URL.Path, req.Method, respCT, container, false, isLLM) {
+						continue
+					}
+					mwBody := truncateBody(workBody)
+					mwBody, _ = middleware.DecompressBody(mwBody, workHeaders.Get("Content-Encoding"))
+					msg := middleware.ResponseMsg{
+						Type: "http-response", ID: newUUID(),
+						Host: req.Host, Method: req.Method, URI: req.RequestURI,
+						StatusCode:      workStatus,
+						RequestHeaders:  req.Header.Clone(),
+						RequestBody:     truncateBody(reqBody),
+						ResponseHeaders: workHeaders.Clone(),
+						ResponseBody:    mwBody,
+						Container:       container,
+					}
+					d, _ := h.client.Send(ctx, msg)
+					switch d.Action {
+					case "block":
+						return &gostx.ProxyResponseDecision{
+							Block:      true,
+							StatusCode: d.StatusCode,
+							BlockBody:  string(d.Body),
+						}
+					case "rewrite":
+						rewritten = true
+						if d.StatusCode != 0 {
+							workStatus = d.StatusCode
+						}
+						if d.Body != nil {
+							workBody = d.Body
+						}
+						for k, v := range d.Headers {
+							workHeaders[k] = v
+						}
+					}
 				}
-				d, _ := mwClient.Send(ctx, msg)
-				return mapResponseDecision(d)
-			}
-			// MITM response hook
-			gostx.SetGlobalMitmResponseHook(func(ctx context.Context, info gostx.MitmRoundTripInfo) *gostx.MitmResponseDecision {
-				respCT := info.ResponseHeaders.Get("Content-Type")
-				isLLM := endpointRegistry.Match(info.URI, info.Method, info.Host) != ""
-				if !middleware.MatchesFilter(rh.Filters, info.Host, info.URI, info.Method, respCT, info.ContainerName, true, isLLM) {
+
+				if !rewritten {
 					return nil
 				}
-				respBody := truncateBody(info.ResponseBody)
-				respBody, _ = middleware.DecompressBody(respBody, info.ResponseHeaders.Get("Content-Encoding"))
-				msg := middleware.ResponseMsg{
-					Type: "http-response", ID: newUUID(),
-					Host: info.Host, Method: info.Method, URI: info.URI,
-					StatusCode:      info.StatusCode,
-					RequestHeaders:  info.RequestHeaders,
-					RequestBody:     truncateBody(info.RequestBody),
-					ResponseHeaders: info.ResponseHeaders,
-					ResponseBody:    respBody,
-					Container:       info.ContainerName,
-					DurationMs:      info.DurationMs,
+				return &gostx.ProxyResponseDecision{
+					NewStatusCode: workStatus,
+					NewHeaders:    workHeaders,
+					NewBody:       workBody,
 				}
-				d, _ := mwClient.Send(ctx, msg)
-				return mapMitmResponseDecision(d)
+			}
+
+			// ---- MITM response cascade ----------------------------------
+			gostx.SetGlobalMitmResponseHook(func(ctx context.Context, info gostx.MitmRoundTripInfo) *gostx.MitmResponseDecision {
+				isLLM := endpointRegistry.Match(info.URI, info.Method, info.Host) != ""
+
+				// Working copy. info is passed by value, so we can't mutate
+				// "the live response" — we accumulate changes and return them.
+				workBody := info.ResponseBody
+				workStatus := info.StatusCode
+				workHeaders := info.ResponseHeaders.Clone()
+				rewritten := false
+
+				for _, h := range hooks {
+					respCT := workHeaders.Get("Content-Type")
+					if !middleware.MatchesFilter(h.filters, info.Host, info.URI, info.Method, respCT, info.ContainerName, true, isLLM) {
+						continue
+					}
+					mwBody := truncateBody(workBody)
+					mwBody, _ = middleware.DecompressBody(mwBody, workHeaders.Get("Content-Encoding"))
+					msg := middleware.ResponseMsg{
+						Type: "http-response", ID: newUUID(),
+						Host: info.Host, Method: info.Method, URI: info.URI,
+						StatusCode:      workStatus,
+						RequestHeaders:  info.RequestHeaders,
+						RequestBody:     truncateBody(info.RequestBody),
+						ResponseHeaders: workHeaders.Clone(),
+						ResponseBody:    mwBody,
+						Container:       info.ContainerName,
+						DurationMs:      info.DurationMs,
+					}
+					d, _ := h.client.Send(ctx, msg)
+					switch d.Action {
+					case "block":
+						return &gostx.MitmResponseDecision{
+							Block:      true,
+							StatusCode: d.StatusCode,
+							BlockBody:  string(d.Body),
+						}
+					case "rewrite":
+						rewritten = true
+						if d.StatusCode != 0 {
+							workStatus = d.StatusCode
+						}
+						if d.Body != nil {
+							workBody = d.Body
+						}
+						for k, v := range d.Headers {
+							workHeaders[k] = v
+						}
+					}
+				}
+
+				if !rewritten {
+					return nil
+				}
+				return &gostx.MitmResponseDecision{
+					NewStatusCode: workStatus,
+					NewHeaders:    workHeaders,
+					NewBody:       workBody,
+				}
 			})
 		}
 	}
@@ -1058,60 +1157,32 @@ func applyDockerEnvOverrides(cfg *greyproxy.Config) {
 	}
 }
 
-func mapRequestDecision(d middleware.Decision) *gostx.ProxyRequestDecision {
-	switch d.Action {
-	case "deny":
-		return &gostx.ProxyRequestDecision{
-			Deny:       true,
-			StatusCode: d.StatusCode,
-			DenyBody:   string(d.Body),
+// buildMiddlewareConfigs merges CLI flags and YAML config into the ordered
+// list of middleware clients to instantiate. CLI entries come first, then
+// YAML entries. Defaults: timeout_ms=2000, on_disconnect=allow.
+func buildMiddlewareConfigs(cliURLs []string, yamlEntries []greyproxy.MiddlewareConfig) []middleware.Config {
+	out := make([]middleware.Config, 0, len(cliURLs)+len(yamlEntries))
+	for _, u := range cliURLs {
+		if u == "" {
+			continue
 		}
-	case "rewrite":
-		return &gostx.ProxyRequestDecision{
-			NewHeaders: d.Headers,
-			NewBody:    d.Body,
-		}
-	default: // "allow" or empty
-		return nil
+		out = append(out, middleware.Config{URL: u, TimeoutMs: 2000, OnDisconnect: "allow"})
 	}
-}
-
-func mapResponseDecision(d middleware.Decision) *gostx.ProxyResponseDecision {
-	switch d.Action {
-	case "block":
-		return &gostx.ProxyResponseDecision{
-			Block:      true,
-			StatusCode: d.StatusCode,
-			BlockBody:  string(d.Body),
+	for _, y := range yamlEntries {
+		if y.URL == "" {
+			continue
 		}
-	case "rewrite":
-		return &gostx.ProxyResponseDecision{
-			NewStatusCode: d.StatusCode,
-			NewHeaders:    d.Headers,
-			NewBody:       d.Body,
+		cfg := middleware.Config{URL: y.URL, TimeoutMs: 2000, OnDisconnect: "allow"}
+		if y.TimeoutMs > 0 {
+			cfg.TimeoutMs = y.TimeoutMs
 		}
-	default: // "passthrough" or "allow" or empty
-		return nil
+		if y.OnDisconnect != "" {
+			cfg.OnDisconnect = y.OnDisconnect
+		}
+		cfg.AuthHeader = y.AuthHeader
+		out = append(out, cfg)
 	}
-}
-
-func mapMitmResponseDecision(d middleware.Decision) *gostx.MitmResponseDecision {
-	switch d.Action {
-	case "block":
-		return &gostx.MitmResponseDecision{
-			Block:      true,
-			StatusCode: d.StatusCode,
-			BlockBody:  string(d.Body),
-		}
-	case "rewrite":
-		return &gostx.MitmResponseDecision{
-			NewStatusCode: d.StatusCode,
-			NewHeaders:    d.Headers,
-			NewBody:       d.Body,
-		}
-	default:
-		return nil
-	}
+	return out
 }
 
 func newUUID() string {

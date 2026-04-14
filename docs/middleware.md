@@ -56,20 +56,29 @@ All examples are intentionally simplified for illustration and are **not meant f
 greyproxy serve --middleware ws://localhost:9000/middleware
 ```
 
+The flag is repeatable and middlewares cascade in declaration order. Each middleware sees the previous one's (possibly rewritten) output as its input; `deny`/`block` short-circuits the chain.
+
+```bash
+greyproxy serve \
+  --middleware ws://localhost:9000/secret-scanner \
+  --middleware ws://localhost:9001/cost-tracker
+```
+
 The flag accepts `http://` and `https://` as aliases (automatically converted to `ws://` and `wss://`).
 
 ### Config file (greyproxy.yml)
 
 ```yaml
 greyproxy:
-  middleware:
-    url: "ws://localhost:9000/middleware"
-    timeout_ms: 2000              # per-request timeout (default: 2000)
-    on_disconnect: allow          # allow | deny (default: allow)
-    auth_header: "X-Secret: mysecret"  # optional, sent as WS header
+  middlewares:
+    - url: "ws://localhost:9000/secret-scanner"
+      timeout_ms: 2000              # per-request timeout (default: 2000)
+      on_disconnect: allow          # allow | deny (default: allow)
+      auth_header: "X-Secret: mysecret"  # optional, sent as WS header
+    - url: "ws://localhost:9001/cost-tracker"
 ```
 
-The CLI flag takes precedence over the config file.
+CLI entries come first in the cascade, then YAML entries. `on_disconnect` is per-middleware: a disconnected middleware configured `allow` skips to the next step; one configured `deny` kills the request immediately.
 
 ## Protocol
 

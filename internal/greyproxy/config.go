@@ -13,7 +13,7 @@ type Config struct {
 	Resolver      string              `yaml:"resolver" json:"resolver"`
 	Notifications NotificationsConfig `yaml:"notifications" json:"notifications"`
 	Docker        DockerConfig        `yaml:"docker" json:"docker"`
-	Middleware    *MiddlewareConfig   `yaml:"middleware,omitempty" json:"middleware,omitempty"`
+	Middlewares   []MiddlewareConfig  `yaml:"middlewares,omitempty" json:"middlewares,omitempty"`
 }
 
 // NotificationsConfig controls OS desktop notifications for pending requests.
@@ -21,7 +21,9 @@ type NotificationsConfig struct {
 	Enabled bool `yaml:"enabled" json:"enabled"`
 }
 
-// MiddlewareConfig holds configuration for the external middleware WebSocket service.
+// MiddlewareConfig holds configuration for one external middleware WebSocket
+// service. Multiple entries cascade in declaration order: each middleware sees
+// the previous one's output as its input; deny/block short-circuits the chain.
 type MiddlewareConfig struct {
 	URL          string `yaml:"url" json:"url"`
 	TimeoutMs    int    `yaml:"timeout_ms" json:"timeout_ms"`

@@ -35,8 +35,8 @@ var (
 	debug             bool
 	trace             bool
 	metricsAddr       string
-	silentAllow       bool
-	middlewareURLFlag string
+	silentAllow        bool
+	middlewareURLFlags stringList
 )
 
 func init() {
@@ -95,14 +95,17 @@ func parseFlags() {
 	flag.BoolVar(&trace, "DD", false, "trace mode")
 	flag.StringVar(&metricsAddr, "metrics", "", "metrics service address")
 	flag.BoolVar(&silentAllow, "silent-allow", false, "activate silent allow-all mode until restart")
-	flag.StringVar(&middlewareURLFlag, "middleware", "", "middleware service URL (ws:// or http://)")
+	flag.Var(&middlewareURLFlags, "middleware", "middleware service URL (ws:// or http://); repeatable, cascades in declaration order")
 	flag.Parse()
 
-	// Normalize http(s):// to ws(s):// for the middleware URL
-	if strings.HasPrefix(middlewareURLFlag, "http://") {
-		middlewareURLFlag = "ws://" + strings.TrimPrefix(middlewareURLFlag, "http://")
-	} else if strings.HasPrefix(middlewareURLFlag, "https://") {
-		middlewareURLFlag = "wss://" + strings.TrimPrefix(middlewareURLFlag, "https://")
+	// Normalize http(s):// to ws(s):// for each middleware URL
+	for i, u := range middlewareURLFlags {
+		switch {
+		case strings.HasPrefix(u, "http://"):
+			middlewareURLFlags[i] = "ws://" + strings.TrimPrefix(u, "http://")
+		case strings.HasPrefix(u, "https://"):
+			middlewareURLFlags[i] = "wss://" + strings.TrimPrefix(u, "https://")
+		}
 	}
 
 	if printVersion {

@@ -72,6 +72,11 @@ type Decision struct {
 	StatusCode int         `json:"status_code,omitempty"` // for deny/block
 	Body       []byte      `json:"body,omitempty"`        // for deny/block/rewrite
 	Headers    http.Header `json:"headers,omitempty"`     // for rewrite
+	// Tags is a structlog-style bag the middleware can emit on any action,
+	// including allow/passthrough. Keys are middleware-defined; greyproxy
+	// preserves them verbatim per middleware (no cross-middleware merging)
+	// so that two middlewares emitting the same key never clobber each other.
+	Tags map[string]any `json:"tags,omitempty"`
 }
 
 // Config holds configuration for the middleware WebSocket client.
