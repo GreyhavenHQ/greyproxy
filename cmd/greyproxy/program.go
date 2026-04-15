@@ -598,6 +598,89 @@ func (p *program) buildGreyproxyService() error {
 		}()
 	})
 
+	// Wire plain-HTTP round-trip hook to store transactions in the database.
+	// Mirrors SetGlobalMitmHook above but for the non-MITM path (plain HTTP
+	// upstreams, local HTTP servers, etc.). Without this, plain HTTP
+	// traffic was invisible in Activity -- only the TCP connection rows
+	// from request_logs would show, no HTTP detail or middleware badges.
+	gostx.GlobalProxyRoundTripHook = func(ctx context.Context, info gostx.ProxyRoundTripInfo) {
+		host, portStr, _ := net.SplitHostPort(info.Host)
+		if host == "" {
+			host = info.Host
+		}
+		port, _ := strconv.Atoi(portStr)
+		if port == 0 {
+			port = 80
+		}
+		containerName, _ := greyproxy_plugins.ResolveIdentity(info.ContainerName, "")
+
+		reqCT := info.RequestHeaders.Get("Content-Type")
+		respCT := info.ResponseHeaders.Get("Content-Type")
+		var reqBody, respBody []byte
+		if isTextContentType(reqCT) {
+			reqBody = decompressBody(info.RequestBody, info.RequestHeaders.Get("Content-Encoding"))
+		}
+		if isTextContentType(respCT) {
+			respBody = decompressBody(info.ResponseBody, info.ResponseHeaders.Get("Content-Encoding"))
+		}
+
+		redactor := shared.Settings.HeaderRedactor()
+		redactedReqHeaders := redactor.Redact(info.RequestHeaders)
+		redactedRespHeaders := redactor.Redact(info.ResponseHeaders)
+
+		// URL as seen by the proxy. For a client using greyproxy as an HTTP
+		// proxy, req.URL is absolute (e.g. "http://host/path"), so info.URL
+		// already carries the scheme. If it somehow doesn't, fall back to
+		// the host + URI shape MITM uses.
+		url := info.URL
+		if url == "" || !strings.HasPrefix(url, "http") {
+			url = "http://" + info.Host + info.URL
+		}
+
+		txn, err := greyproxy.CreateHttpTransaction(shared.DB, greyproxy.HttpTransactionCreateInput{
+			ContainerName:       containerName,
+			DestinationHost:     host,
+			DestinationPort:     port,
+			Method:              info.Method,
+			URL:                 url,
+			RequestHeaders:      redactedReqHeaders,
+			RequestBody:         reqBody,
+			RequestContentType:  reqCT,
+			StatusCode:          info.StatusCode,
+			ResponseHeaders:     redactedRespHeaders,
+			ResponseBody:        respBody,
+			ResponseContentType: respCT,
+			DurationMs:          info.DurationMs,
+			Result:              "auto",
+		})
+		if err != nil {
+			log.Warnf("failed to store plain-HTTP transaction: %v", err)
+			return
+		}
+		// Flush middleware events stashed during the plain-HTTP cascade.
+		for _, ev := range middleware.DrainEvents(info.RequestID) {
+			if werr := greyproxy.WriteMiddlewareEvent(shared.DB, greyproxy.MiddlewareEventInsert{
+				TransactionID:   txn.ID,
+				TransactionKind: "http",
+				Sequence:        ev.Sequence,
+				MiddlewareURL:   ev.MiddlewareURL,
+				Hook:            ev.Hook,
+				Action:          ev.Action,
+				StatusCode:      ev.StatusCode,
+				HeadersChanged:  ev.HeadersChanged,
+				BodyRewritten:   ev.BodyRewritten,
+				Tags:            ev.Tags,
+				DurationMs:      ev.DurationMs,
+			}); werr != nil {
+				log.Warnf("failed to store middleware event: %v", werr)
+			}
+		}
+		shared.Bus.Publish(greyproxy.Event{
+			Type: greyproxy.EventTransactionNew,
+			Data: txn.ToJSON(false),
+		})
+	}
+
 	// Wire connection-finish hook to update log entries with MITM skip reason
 	gostx.SetGlobalConnectionFinishHook(func(info gostx.ConnectionFinishInfo) {
 		if info.MitmSkipReason == "" {
@@ -761,24 +844,35 @@ func (p *program) buildGreyproxyService() error {
 		if len(reqHooks) > 0 {
 			hooks := reqHooks
 			gostx.GlobalProxyRequestHook = func(ctx context.Context, req *http.Request, container string) *gostx.ProxyRequestDecision {
+				requestID := gostx.RequestIDFromContext(ctx)
 				body, _ := io.ReadAll(req.Body)
 				req.Body = io.NopCloser(bytes.NewReader(body))
 				isLLM := endpointRegistry.Match(req.URL.Path, req.Method, req.Host) != ""
+				seq := 0
 
 				for _, h := range hooks {
 					ct := req.Header.Get("Content-Type")
 					if !middleware.MatchesFilter(h.filters, req.Host, req.URL.Path, req.Method, ct, container, false, isLLM) {
 						continue
 					}
+					preHeaders := req.Header.Clone()
+					preBody := body
 					msg := middleware.RequestMsg{
 						Type: "http-request", ID: newUUID(),
 						Host: req.Host, Method: req.Method, URI: req.RequestURI,
-						Proto: req.Proto, Headers: req.Header.Clone(),
+						Proto: req.Proto, Headers: preHeaders,
 						Body: truncateBody(body), Container: container, TLS: false,
 					}
+					stepStart := time.Now()
 					d, _ := h.client.Send(ctx, msg)
+					stepMs := time.Since(stepStart).Milliseconds()
 					switch d.Action {
 					case "deny":
+						middleware.StashEvent(requestID, middleware.PendingEvent{
+							Sequence: seq, MiddlewareURL: h.url, Hook: "http-request",
+							Action: "deny", StatusCode: d.StatusCode,
+							Tags: d.Tags, DurationMs: stepMs, CreatedAt: time.Now(),
+						})
 						return &gostx.ProxyRequestDecision{
 							Deny:       true,
 							StatusCode: d.StatusCode,
@@ -793,7 +887,27 @@ func (p *program) buildGreyproxyService() error {
 						for k, v := range d.Headers {
 							req.Header[k] = v
 						}
+						middleware.StashEvent(requestID, middleware.PendingEvent{
+							Sequence: seq, MiddlewareURL: h.url, Hook: "http-request",
+							Action: "rewrite", StatusCode: d.StatusCode,
+							HeadersChanged: middleware.DiffHeaderNames(preHeaders, req.Header),
+							BodyRewritten:  d.Body != nil && !bytes.Equal(d.Body, preBody),
+							Tags:           d.Tags, DurationMs: stepMs, CreatedAt: time.Now(),
+						})
+					default:
+						if len(d.Tags) > 0 {
+							action := "tagged-allow"
+							if d.Action == "passthrough" {
+								action = "tagged-passthrough"
+							}
+							middleware.StashEvent(requestID, middleware.PendingEvent{
+								Sequence: seq, MiddlewareURL: h.url, Hook: "http-request",
+								Action: action, Tags: d.Tags,
+								DurationMs: stepMs, CreatedAt: time.Now(),
+							})
+						}
 					}
+					seq++
 				}
 				return nil
 			}
@@ -838,6 +952,7 @@ func (p *program) buildGreyproxyService() error {
 		if len(respHooks) > 0 {
 			hooks := respHooks
 			gostx.GlobalProxyResponseHook = func(ctx context.Context, req *http.Request, resp *http.Response, container string) *gostx.ProxyResponseDecision {
+				requestID := gostx.RequestIDFromContext(ctx)
 				reqBody := middleware.RequestBodyFromContext(ctx)
 				respBody, _ := io.ReadAll(resp.Body)
 				resp.Body = io.NopCloser(bytes.NewReader(respBody))
@@ -849,6 +964,7 @@ func (p *program) buildGreyproxyService() error {
 				workStatus := resp.StatusCode
 				workHeaders := resp.Header.Clone()
 				rewritten := false
+				seq := 0
 
 				for _, h := range hooks {
 					respCT := workHeaders.Get("Content-Type")
@@ -857,19 +973,28 @@ func (p *program) buildGreyproxyService() error {
 					}
 					mwBody := truncateBody(workBody)
 					mwBody, _ = middleware.DecompressBody(mwBody, workHeaders.Get("Content-Encoding"))
+					preHeaders := workHeaders.Clone()
+					preBody := workBody
 					msg := middleware.ResponseMsg{
 						Type: "http-response", ID: newUUID(),
 						Host: req.Host, Method: req.Method, URI: req.RequestURI,
 						StatusCode:      workStatus,
 						RequestHeaders:  req.Header.Clone(),
 						RequestBody:     truncateBody(reqBody),
-						ResponseHeaders: workHeaders.Clone(),
+						ResponseHeaders: preHeaders,
 						ResponseBody:    mwBody,
 						Container:       container,
 					}
+					stepStart := time.Now()
 					d, _ := h.client.Send(ctx, msg)
+					stepMs := time.Since(stepStart).Milliseconds()
 					switch d.Action {
 					case "block":
+						middleware.StashEvent(requestID, middleware.PendingEvent{
+							Sequence: seq, MiddlewareURL: h.url, Hook: "http-response",
+							Action: "block", StatusCode: d.StatusCode,
+							Tags: d.Tags, DurationMs: stepMs, CreatedAt: time.Now(),
+						})
 						return &gostx.ProxyResponseDecision{
 							Block:      true,
 							StatusCode: d.StatusCode,
@@ -886,7 +1011,27 @@ func (p *program) buildGreyproxyService() error {
 						for k, v := range d.Headers {
 							workHeaders[k] = v
 						}
+						middleware.StashEvent(requestID, middleware.PendingEvent{
+							Sequence: seq, MiddlewareURL: h.url, Hook: "http-response",
+							Action: "rewrite", StatusCode: d.StatusCode,
+							HeadersChanged: middleware.DiffHeaderNames(preHeaders, workHeaders),
+							BodyRewritten:  d.Body != nil && !bytes.Equal(d.Body, preBody),
+							Tags:           d.Tags, DurationMs: stepMs, CreatedAt: time.Now(),
+						})
+					default:
+						if len(d.Tags) > 0 {
+							action := "tagged-allow"
+							if d.Action == "passthrough" {
+								action = "tagged-passthrough"
+							}
+							middleware.StashEvent(requestID, middleware.PendingEvent{
+								Sequence: seq, MiddlewareURL: h.url, Hook: "http-response",
+								Action: action, Tags: d.Tags,
+								DurationMs: stepMs, CreatedAt: time.Now(),
+							})
+						}
 					}
+					seq++
 				}
 
 				if !rewritten {
