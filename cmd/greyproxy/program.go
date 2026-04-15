@@ -918,24 +918,35 @@ func (p *program) buildGreyproxyService() error {
 
 			// ---- MITM request cascade -----------------------------------
 			gostx.SetGlobalMitmRequestMiddlewareHook(func(ctx context.Context, req *http.Request, container string) error {
+				requestID := gostx.RequestIDFromContext(ctx)
 				body, _ := io.ReadAll(req.Body)
 				req.Body = io.NopCloser(bytes.NewReader(body))
 				isLLM := endpointRegistry.Match(req.URL.Path, req.Method, req.Host) != ""
+				seq := 0
 
 				for _, h := range hooks {
 					ct := req.Header.Get("Content-Type")
 					if !middleware.MatchesFilter(h.filters, req.Host, req.URL.Path, req.Method, ct, container, true, isLLM) {
 						continue
 					}
+					preHeaders := req.Header.Clone()
+					preBody := body
 					msg := middleware.RequestMsg{
 						Type: "http-request", ID: newUUID(),
 						Host: req.Host, Method: req.Method, URI: req.RequestURI,
-						Proto: req.Proto, Headers: req.Header.Clone(),
+						Proto: req.Proto, Headers: preHeaders,
 						Body: truncateBody(body), Container: container, TLS: true,
 					}
+					stepStart := time.Now()
 					d, _ := h.client.Send(ctx, msg)
+					stepMs := time.Since(stepStart).Milliseconds()
 					switch d.Action {
 					case "deny":
+						middleware.StashEvent(requestID, middleware.PendingEvent{
+							Sequence: seq, MiddlewareName: h.name, MiddlewareURL: h.url, Hook: "mitm-request",
+							Action: "deny", StatusCode: d.StatusCode,
+							Tags: d.Tags, DurationMs: stepMs, CreatedAt: time.Now(),
+						})
 						return gostx.ErrRequestDenied
 					case "rewrite":
 						if d.Body != nil {
@@ -946,7 +957,27 @@ func (p *program) buildGreyproxyService() error {
 						for k, v := range d.Headers {
 							req.Header[k] = v
 						}
+						middleware.StashEvent(requestID, middleware.PendingEvent{
+							Sequence: seq, MiddlewareName: h.name, MiddlewareURL: h.url, Hook: "mitm-request",
+							Action: "rewrite", StatusCode: d.StatusCode,
+							HeadersChanged: middleware.DiffHeaderNames(preHeaders, req.Header),
+							BodyRewritten:  d.Body != nil && !bytes.Equal(d.Body, preBody),
+							Tags:           d.Tags, DurationMs: stepMs, CreatedAt: time.Now(),
+						})
+					default:
+						if len(d.Tags) > 0 {
+							action := "tagged-allow"
+							if d.Action == "passthrough" {
+								action = "tagged-passthrough"
+							}
+							middleware.StashEvent(requestID, middleware.PendingEvent{
+								Sequence: seq, MiddlewareName: h.name, MiddlewareURL: h.url, Hook: "mitm-request",
+								Action: action, Tags: d.Tags,
+								DurationMs: stepMs, CreatedAt: time.Now(),
+							})
+						}
 					}
+					seq++
 				}
 				return nil
 			})

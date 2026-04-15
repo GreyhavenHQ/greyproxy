@@ -1,34 +1,31 @@
 package gostx
 
 import (
-	cryptorand "crypto/rand"
 	"context"
-	"encoding/hex"
 	"net/http"
+
+	"github.com/greyhavenhq/greyproxy/internal/gostx/internal/util/sniffing"
 )
 
-// requestIDKey carries a short random id through ctx across the plain-HTTP
-// request/response/round-trip hooks so subscribers (e.g. the middleware
-// cascade and the transaction persistence hook) can correlate events back
-// to one specific round-trip.
-type requestIDKey struct{}
+// Request ID ctx helpers. The implementation lives in the sniffing
+// package (the lowest-level package in the sniff→gostx chain) so both
+// the sniffer's httpRoundTrip (which generates and writes the id) and
+// the cmd layer's hook closures (which read it) agree on a single
+// unexported ctx key. These wrappers exist for ergonomic access from
+// handler/http/handler.go and cmd/greyproxy/program.go.
 
-// NewRequestID returns a fresh short hex id.
-func NewRequestID() string {
-	var buf [8]byte
-	_, _ = cryptorand.Read(buf[:])
-	return hex.EncodeToString(buf[:])
-}
+// NewRequestID returns a fresh 16-char hex id suitable for threading
+// through ctx across the hooks of one round-trip.
+func NewRequestID() string { return sniffing.NewRequestID() }
 
 // WithRequestID stores id in ctx.
 func WithRequestID(ctx context.Context, id string) context.Context {
-	return context.WithValue(ctx, requestIDKey{}, id)
+	return sniffing.WithRequestID(ctx, id)
 }
 
 // RequestIDFromContext retrieves the id stored by WithRequestID, or "".
 func RequestIDFromContext(ctx context.Context) string {
-	id, _ := ctx.Value(requestIDKey{}).(string)
-	return id
+	return sniffing.RequestIDFromContext(ctx)
 }
 
 // ProxyRequestDecision controls what happens to a plain-HTTP request before

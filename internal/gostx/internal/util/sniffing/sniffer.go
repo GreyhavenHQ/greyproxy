@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"crypto"
-	cryptorand "crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
@@ -436,14 +435,6 @@ func (h *Sniffer) serveH2(ctx context.Context, network string, conn net.Conn, ho
 	return nil
 }
 
-// newRequestID returns a short random hex id used to correlate middleware
-// decisions with the http_transactions row created for the same round-trip.
-func newRequestID() string {
-	var buf [8]byte
-	_, _ = cryptorand.Read(buf[:])
-	return hex.EncodeToString(buf[:])
-}
-
 func (h *Sniffer) httpRoundTrip(ctx context.Context, rw, cc io.ReadWriteCloser, req *http.Request, ro *xrecorder.HandlerRecorderObject, pStats stats.Stats, log logger.Logger) (close bool, err error) {
 	close = true
 
@@ -451,7 +442,12 @@ func (h *Sniffer) httpRoundTrip(ctx context.Context, rw, cc io.ReadWriteCloser, 
 	*ro2 = *ro
 	ro = ro2
 
-	requestID := newRequestID()
+	// Correlate middleware decisions with the http_transactions row that
+	// will be persisted at the end of this round-trip. Threaded via ctx
+	// (for the request/response middleware hooks) and via HTTPRoundTripInfo
+	// (for the persistence hook, which takes no ctx). Same id in both.
+	requestID := NewRequestID()
+	ctx = WithRequestID(ctx, requestID)
 	ro.Time = time.Now()
 	log.Infof("%s <-> %s", ro.RemoteAddr, req.Host)
 	defer func() {

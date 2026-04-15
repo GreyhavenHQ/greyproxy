@@ -16,16 +16,21 @@ How it works:
    tool_result blocks (Anthropic) or role=tool messages (OpenAI).
 3. For each tool result, find the paired tool_use/tool_call to recover
    the *command that produced this output* (bash command, tool name).
-4. Pick an rtk stdin mode based on the command shape (diff/json/log/skip).
+4. Pick an rtk stdin mode based on the command shape (diff/json/log).
+   Content-first: if the output looks like a diff or JSON, trust that
+   regardless of what produced it. Otherwise route by command.
 5. Shell out to rtk as a pure text transformer -- rtk never executes any
-   command, it only reads the already-captured output from stdin.
+   command, it only reads the already-captured output from stdin. If
+   rtk fails or has nothing to strip the middleware falls through.
 6. Return a `rewrite` decision with the reduced body.
 
 Scope:
 - Handles Anthropic /v1/messages and OpenAI /v1/chat/completions shapes.
-- Only compresses outputs that look like diffs, JSON, or logs. Unknown
-  shapes pass through untouched -- applying rtk blindly would risk
-  garbling plain text.
+- Only routes to rtk when we are confident the mode makes sense:
+  diff/json by content, log by command family. Unknown shapes pass
+  through untouched. `rtk log` is NOT a universal fallback -- it
+  summarises by severity level and destroys content (e.g. `ls -la`)
+  that has no log markers.
 
 WARNING: This is an example only and is NOT meant for production use.
 The command-shape heuristics are intentionally naive and will miss many
@@ -96,7 +101,13 @@ if not RTK_BIN:
 
 DIFF_SNIFF = re.compile(r"^(diff --git|---\s|\+\+\+\s|@@\s)", re.MULTILINE)
 JSON_SNIFF = re.compile(r"^\s*[\[{]")
-LOG_CMD = re.compile(r"\b(tail|journalctl|dmesg|less|more)\b|/var/log/|\.log(\s|$)")
+# Commands whose stdout is structured as severity-tagged log lines
+# (Apr 15 ... [error] ...). `rtk log` expects this shape and produces a
+# useful summary; applied to non-log text it destroys content by
+# summarising to "0 errors 0 warnings".
+LOG_CMD = re.compile(
+    r"\b(tail|journalctl|dmesg|less|more)\b|/var/log/|\.log(\s|$)"
+)
 DIFF_CMD = re.compile(r"\bgit\s+(diff|show|log\s+-p)\b|\bdiff\s+-[a-zA-Z]*u")
 JSON_CMD = re.compile(r"\bjq\b|\.json(\s|$)|curl[^|]*\|\s*jq")
 
@@ -104,8 +115,11 @@ JSON_CMD = re.compile(r"\bjq\b|\.json(\s|$)|curl[^|]*\|\s*jq")
 def pick_mode(command: str, output_head: str) -> str | None:
     """Return the rtk subcommand to run, or None to skip compression.
 
-    Heuristics are content-first, command-second: if the output *looks* like
-    a diff or JSON, trust that regardless of what produced it.
+    Heuristics are content-first, command-second: if the output *looks*
+    like a diff or JSON, trust that regardless of what produced it.
+    Unknown shapes return None so the tool_result passes through
+    untouched -- rtk has no generic text compressor and mode-mismatched
+    invocations (e.g. rtk log on ls output) silently destroy content.
     """
     if DIFF_SNIFF.search(output_head):
         return "diff"
@@ -121,14 +135,25 @@ def pick_mode(command: str, output_head: str) -> str | None:
 
 
 def rtk_compress(text: str, mode: str) -> str | None:
-    """Pipe text through `rtk <mode> -`. Returns compressed text, or None
-    on any failure (empty output, timeout, non-zero exit). Caller falls
-    through to the original text on None."""
+    """Pipe text through rtk's stdin-accepting subcommand for `mode`.
+    Returns compressed text, or None on any failure (empty output,
+    timeout, non-zero exit). Caller falls through to the original text
+    on None.
+
+    rtk's stdin conventions differ by subcommand:
+      log  -- bare `rtk log`; a `-` arg is treated as a literal filename
+      json -- `rtk json -`; the `-` is accepted as stdin
+      diff -- `rtk diff -`; `-` is documented as stdin for unified diff
+    """
     if not RTK_BIN:
         return None
+    if mode == "log":
+        args = [RTK_BIN, "log"]
+    else:
+        args = [RTK_BIN, mode, "-"]
     try:
         result = subprocess.run(
-            [RTK_BIN, mode, "-"],
+            args,
             input=text,
             capture_output=True,
             text=True,
@@ -320,6 +345,7 @@ def rewrite_request(rid: str, body: bytes, tags: dict | None = None) -> dict:
 
 
 def handle_request(msg: dict) -> dict:
+    print("type=%s method=%s uri=%s" % (msg["type"], msg["method"], msg["uri"]))
     rid = msg["id"]
     raw = decode_body(msg.get("body"))
     if not raw:
@@ -327,14 +353,17 @@ def handle_request(msg: dict) -> dict:
 
     try:
         body = json.loads(raw)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as e:
+        print("ERROR:JSONDECODEERROR")
         return allow(rid)
     if not isinstance(body, dict):
+        print("ERROR:NOTADICT")
         return allow(rid)
 
     before = len(raw)
     rewritten = rewrite_anthropic(body) + rewrite_openai(body)
     if rewritten == 0:
+        print("ERROR:NOREWRITE")
         return allow(rid)
 
     new_raw = json.dumps(body).encode("utf-8")
