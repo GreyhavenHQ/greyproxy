@@ -12,6 +12,7 @@ import (
 // ActivityItem. Ordered by `Sequence` within the cascade.
 type MiddlewareEventSummary struct {
 	Sequence       int            `json:"sequence"`
+	MiddlewareName string         `json:"middleware_name,omitempty"`
 	MiddlewareURL  string         `json:"middleware_url"`
 	Hook           string         `json:"hook"`
 	Action         string         `json:"action"`
@@ -23,6 +24,16 @@ type MiddlewareEventSummary struct {
 	CreatedAt      time.Time      `json:"created_at"`
 }
 
+// DisplayLabel returns the preferred human identifier for this event's
+// middleware: the friendly name if the middleware declared one, otherwise
+// the URL. Used by the Activity UI template.
+func (m MiddlewareEventSummary) DisplayLabel() string {
+	if m.MiddlewareName != "" {
+		return m.MiddlewareName
+	}
+	return m.MiddlewareURL
+}
+
 // MiddlewareEventInsert is the input shape for WriteMiddlewareEvent. All
 // fields are treated as-given: the caller is responsible for applying the
 // "row-worthy" rule (mutating action OR tags).
@@ -30,6 +41,7 @@ type MiddlewareEventInsert struct {
 	TransactionID   int64
 	TransactionKind string // "http" | "connection"
 	Sequence        int
+	MiddlewareName  string
 	MiddlewareURL   string
 	Hook            string
 	Action          string
@@ -42,7 +54,7 @@ type MiddlewareEventInsert struct {
 
 // WriteMiddlewareEvent inserts one middleware_events row.
 func WriteMiddlewareEvent(db *DB, ev MiddlewareEventInsert) error {
-	var headersJSON, tagsJSON sql.NullString
+	var headersJSON, tagsJSON, nameNS sql.NullString
 	if len(ev.HeadersChanged) > 0 {
 		if b, err := json.Marshal(ev.HeadersChanged); err == nil {
 			headersJSON = sql.NullString{String: string(b), Valid: true}
@@ -53,16 +65,19 @@ func WriteMiddlewareEvent(db *DB, ev MiddlewareEventInsert) error {
 			tagsJSON = sql.NullString{String: string(b), Valid: true}
 		}
 	}
+	if ev.MiddlewareName != "" {
+		nameNS = sql.NullString{String: ev.MiddlewareName, Valid: true}
+	}
 	body := 0
 	if ev.BodyRewritten {
 		body = 1
 	}
 	_, err := db.WriteDB().Exec(`INSERT INTO middleware_events
-		(transaction_id, transaction_kind, sequence, middleware_url, hook,
+		(transaction_id, transaction_kind, sequence, middleware_url, middleware_name, hook,
 		 action, status_code, headers_changed, body_rewritten, tags, duration_ms)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
 		ev.TransactionID, ev.TransactionKind, ev.Sequence,
-		ev.MiddlewareURL, ev.Hook, ev.Action, ev.StatusCode,
+		ev.MiddlewareURL, nameNS, ev.Hook, ev.Action, ev.StatusCode,
 		headersJSON, body, tagsJSON, ev.DurationMs,
 	)
 	if err != nil {
@@ -97,7 +112,7 @@ func LoadMiddlewareEventsForActivity(db *DB, items []ActivityItem) (map[string][
 		}
 		placeholders := strings.Repeat("?,", len(ids))
 		placeholders = placeholders[:len(placeholders)-1]
-		q := fmt.Sprintf(`SELECT transaction_id, sequence, middleware_url, hook,
+		q := fmt.Sprintf(`SELECT transaction_id, sequence, middleware_url, middleware_name, hook,
 			action, COALESCE(status_code, 0), headers_changed, body_rewritten,
 			tags, COALESCE(duration_ms, 0), created_at
 			FROM middleware_events
@@ -111,16 +126,19 @@ func LoadMiddlewareEventsForActivity(db *DB, items []ActivityItem) (map[string][
 		defer func() { _ = rows.Close() }()
 		for rows.Next() {
 			var (
-				txID                  int64
-				sum                   MiddlewareEventSummary
-				headersJSON, tagsJSON sql.NullString
-				bodyRewritten         int
-				createdAt             string
+				txID                          int64
+				sum                           MiddlewareEventSummary
+				nameNS, headersJSON, tagsJSON sql.NullString
+				bodyRewritten                 int
+				createdAt                     string
 			)
-			if err := rows.Scan(&txID, &sum.Sequence, &sum.MiddlewareURL,
+			if err := rows.Scan(&txID, &sum.Sequence, &sum.MiddlewareURL, &nameNS,
 				&sum.Hook, &sum.Action, &sum.StatusCode,
 				&headersJSON, &bodyRewritten, &tagsJSON, &sum.DurationMs, &createdAt); err != nil {
 				return fmt.Errorf("scan middleware_event: %w", err)
+			}
+			if nameNS.Valid {
+				sum.MiddlewareName = nameNS.String
 			}
 			sum.BodyRewritten = bodyRewritten != 0
 			if headersJSON.Valid {

@@ -4,9 +4,13 @@ import "net/http"
 
 // HelloMsg is sent by the proxy on connect and returned by middleware with hooks.
 type HelloMsg struct {
-	Type         string     `json:"type"`                    // "hello"
-	Version      int        `json:"version,omitempty"`       // 1 (sent by proxy)
-	Hooks        []HookSpec `json:"hooks,omitempty"`         // populated in response
+	Type    string `json:"type"`              // "hello"
+	Version int    `json:"version,omitempty"` // 1 (sent by proxy)
+	// Name is an optional human-friendly identifier the middleware returns
+	// in its hello response. Displayed in the greyproxy Activity view
+	// alongside middleware events. If empty, the middleware URL is used.
+	Name         string     `json:"name,omitempty"`
+	Hooks        []HookSpec `json:"hooks,omitempty"`          // populated in response
 	MaxBodyBytes int64      `json:"max_body_bytes,omitempty"` // 0 = no limit
 }
 

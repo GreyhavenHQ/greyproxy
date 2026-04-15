@@ -25,6 +25,7 @@ type Client struct {
 
 	hooks        []HookSpec
 	maxBodyBytes int64
+	name         string        // middleware-declared friendly name, may be empty
 	ready        chan struct{} // closed after first successful hello exchange
 	readyOnce    sync.Once
 
@@ -144,6 +145,7 @@ func (c *Client) connectAndRun() error {
 	c.mu.Lock()
 	c.hooks = resp.Hooks
 	c.maxBodyBytes = resp.MaxBodyBytes
+	c.name = resp.Name
 	c.mu.Unlock()
 
 	// Precompile regex filters for hot-path performance
@@ -152,7 +154,7 @@ func (c *Client) connectAndRun() error {
 	// Signal that hooks are available
 	c.readyOnce.Do(func() { close(c.ready) })
 
-	logger.Default().Infof("middleware hello: hooks=%d, max_body_bytes=%d", len(resp.Hooks), resp.MaxBodyBytes)
+	logger.Default().Infof("middleware hello: name=%q hooks=%d max_body_bytes=%d", resp.Name, len(resp.Hooks), resp.MaxBodyBytes)
 
 	// Read loop: dispatch incoming decisions to waiting channels
 	for {
@@ -195,6 +197,14 @@ func (c *Client) MaxBodyBytes() int64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.maxBodyBytes
+}
+
+// Name returns the middleware-declared friendly name, or "" if the
+// middleware did not provide one in its hello response.
+func (c *Client) Name() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.name
 }
 
 // Send sends a message to the middleware and waits for the corresponding decision.

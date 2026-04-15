@@ -579,6 +579,7 @@ func (p *program) buildGreyproxyService() error {
 					TransactionID:   txn.ID,
 					TransactionKind: "http",
 					Sequence:        ev.Sequence,
+					MiddlewareName:  ev.MiddlewareName,
 					MiddlewareURL:   ev.MiddlewareURL,
 					Hook:            ev.Hook,
 					Action:          ev.Action,
@@ -663,6 +664,7 @@ func (p *program) buildGreyproxyService() error {
 				TransactionID:   txn.ID,
 				TransactionKind: "http",
 				Sequence:        ev.Sequence,
+				MiddlewareName:  ev.MiddlewareName,
 				MiddlewareURL:   ev.MiddlewareURL,
 				Hook:            ev.Hook,
 				Action:          ev.Action,
@@ -795,6 +797,7 @@ func (p *program) buildGreyproxyService() error {
 		type clientHook struct {
 			client  *middleware.Client
 			url     string
+			name    string // friendly name from hello (may be "")
 			filters *middleware.HookFilter
 		}
 
@@ -812,9 +815,10 @@ func (p *program) buildGreyproxyService() error {
 		var reqHooks, respHooks []clientHook
 		for i, c := range clients {
 			specs := c.HookSpecs() // blocks briefly for hello exchange
-			log.Infof("middleware connected: url=%s hooks=%d max_body_bytes=%d", clientURLs[i], len(specs), c.MaxBodyBytes())
+			name := c.Name()
+			log.Infof("middleware connected: name=%q url=%s hooks=%d max_body_bytes=%d", name, clientURLs[i], len(specs), c.MaxBodyBytes())
 			for j := range specs {
-				ch := clientHook{client: c, url: clientURLs[i], filters: specs[j].Filters}
+				ch := clientHook{client: c, url: clientURLs[i], name: name, filters: specs[j].Filters}
 				switch specs[j].Type {
 				case "http-request":
 					reqHooks = append(reqHooks, ch)
@@ -869,7 +873,7 @@ func (p *program) buildGreyproxyService() error {
 					switch d.Action {
 					case "deny":
 						middleware.StashEvent(requestID, middleware.PendingEvent{
-							Sequence: seq, MiddlewareURL: h.url, Hook: "http-request",
+							Sequence: seq, MiddlewareName: h.name, MiddlewareURL: h.url, Hook: "http-request",
 							Action: "deny", StatusCode: d.StatusCode,
 							Tags: d.Tags, DurationMs: stepMs, CreatedAt: time.Now(),
 						})
@@ -888,7 +892,7 @@ func (p *program) buildGreyproxyService() error {
 							req.Header[k] = v
 						}
 						middleware.StashEvent(requestID, middleware.PendingEvent{
-							Sequence: seq, MiddlewareURL: h.url, Hook: "http-request",
+							Sequence: seq, MiddlewareName: h.name, MiddlewareURL: h.url, Hook: "http-request",
 							Action: "rewrite", StatusCode: d.StatusCode,
 							HeadersChanged: middleware.DiffHeaderNames(preHeaders, req.Header),
 							BodyRewritten:  d.Body != nil && !bytes.Equal(d.Body, preBody),
@@ -901,7 +905,7 @@ func (p *program) buildGreyproxyService() error {
 								action = "tagged-passthrough"
 							}
 							middleware.StashEvent(requestID, middleware.PendingEvent{
-								Sequence: seq, MiddlewareURL: h.url, Hook: "http-request",
+								Sequence: seq, MiddlewareName: h.name, MiddlewareURL: h.url, Hook: "http-request",
 								Action: action, Tags: d.Tags,
 								DurationMs: stepMs, CreatedAt: time.Now(),
 							})
@@ -991,7 +995,7 @@ func (p *program) buildGreyproxyService() error {
 					switch d.Action {
 					case "block":
 						middleware.StashEvent(requestID, middleware.PendingEvent{
-							Sequence: seq, MiddlewareURL: h.url, Hook: "http-response",
+							Sequence: seq, MiddlewareName: h.name, MiddlewareURL: h.url, Hook: "http-response",
 							Action: "block", StatusCode: d.StatusCode,
 							Tags: d.Tags, DurationMs: stepMs, CreatedAt: time.Now(),
 						})
@@ -1012,7 +1016,7 @@ func (p *program) buildGreyproxyService() error {
 							workHeaders[k] = v
 						}
 						middleware.StashEvent(requestID, middleware.PendingEvent{
-							Sequence: seq, MiddlewareURL: h.url, Hook: "http-response",
+							Sequence: seq, MiddlewareName: h.name, MiddlewareURL: h.url, Hook: "http-response",
 							Action: "rewrite", StatusCode: d.StatusCode,
 							HeadersChanged: middleware.DiffHeaderNames(preHeaders, workHeaders),
 							BodyRewritten:  d.Body != nil && !bytes.Equal(d.Body, preBody),
@@ -1025,7 +1029,7 @@ func (p *program) buildGreyproxyService() error {
 								action = "tagged-passthrough"
 							}
 							middleware.StashEvent(requestID, middleware.PendingEvent{
-								Sequence: seq, MiddlewareURL: h.url, Hook: "http-response",
+								Sequence: seq, MiddlewareName: h.name, MiddlewareURL: h.url, Hook: "http-response",
 								Action: action, Tags: d.Tags,
 								DurationMs: stepMs, CreatedAt: time.Now(),
 							})
@@ -1082,7 +1086,7 @@ func (p *program) buildGreyproxyService() error {
 					switch d.Action {
 					case "block":
 						middleware.StashEvent(info.RequestID, middleware.PendingEvent{
-							Sequence: seq, MiddlewareURL: h.url, Hook: "mitm-response",
+							Sequence: seq, MiddlewareName: h.name, MiddlewareURL: h.url, Hook: "mitm-response",
 							Action: "block", StatusCode: d.StatusCode,
 							Tags: d.Tags, DurationMs: stepMs, CreatedAt: time.Now(),
 						})
@@ -1103,7 +1107,7 @@ func (p *program) buildGreyproxyService() error {
 							workHeaders[k] = v
 						}
 						middleware.StashEvent(info.RequestID, middleware.PendingEvent{
-							Sequence: seq, MiddlewareURL: h.url, Hook: "mitm-response",
+							Sequence: seq, MiddlewareName: h.name, MiddlewareURL: h.url, Hook: "mitm-response",
 							Action: "rewrite", StatusCode: d.StatusCode,
 							HeadersChanged: middleware.DiffHeaderNames(preHeaders, workHeaders),
 							BodyRewritten:  d.Body != nil && !bytes.Equal(d.Body, preBody),
@@ -1117,7 +1121,7 @@ func (p *program) buildGreyproxyService() error {
 								action = "tagged-passthrough"
 							}
 							middleware.StashEvent(info.RequestID, middleware.PendingEvent{
-								Sequence: seq, MiddlewareURL: h.url, Hook: "mitm-response",
+								Sequence: seq, MiddlewareName: h.name, MiddlewareURL: h.url, Hook: "mitm-response",
 								Action: action, Tags: d.Tags,
 								DurationMs: stepMs, CreatedAt: time.Now(),
 							})

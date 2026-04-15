@@ -11,6 +11,7 @@ import (
 // can be attached via transaction_id.
 type PendingEvent struct {
 	Sequence       int
+	MiddlewareName string // friendly name from hello, may be empty
 	MiddlewareURL  string
 	Hook           string // "http-request" | "http-response" | "mitm-request" | "mitm-response"
 	Action         string // "deny" | "block" | "rewrite" | "tagged-allow" | "tagged-passthrough"

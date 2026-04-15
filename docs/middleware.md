@@ -103,6 +103,7 @@ If the connection drops, greyproxy reconnects with exponential backoff (100ms to
 ```json
 {
   "type": "hello",
+  "name": "openai-pii-redactor",
   "hooks": [
     {
       "type": "http-request",
@@ -123,6 +124,8 @@ If the connection drops, greyproxy reconnects with exponential backoff (100ms to
   "max_body_bytes": 1048576
 }
 ```
+
+`name` is optional but recommended. When the middleware takes a mutating action or emits tags, the Activity view shows the event badge labeled with this name (falling back to the middleware URL when `name` is absent). Keep it short — it's rendered inline in the activity rows.
 
 ### Hook types
 

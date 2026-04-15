@@ -234,6 +234,11 @@ var migrations = []string{
 		created_at       DATETIME NOT NULL DEFAULT (datetime('now'))
 	);
 	CREATE INDEX IF NOT EXISTS idx_mw_events_tx ON middleware_events(transaction_kind, transaction_id);`,
+
+	// Migration 14: middleware_events.middleware_name — friendly identifier
+	// returned by the middleware in its hello response. NULL for middlewares
+	// that did not declare a name; the UI falls back to middleware_url.
+	`ALTER TABLE middleware_events ADD COLUMN middleware_name TEXT;`,
 }
 
 func runMigrations(db *sql.DB) error {
