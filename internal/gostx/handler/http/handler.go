@@ -668,7 +668,11 @@ func (h *httpHandler) proxyRoundTrip(ctx context.Context, rw io.ReadWriteCloser,
 		resp.Body = respBody
 	}
 
-	err = resp.Write(rw)
+	bw := bufio.NewWriterSize(rw, 8192)
+	err = resp.Write(bw)
+	if fErr := bw.Flush(); err == nil {
+		err = fErr
+	}
 
 	if respBody != nil {
 		ro.HTTP.Response.Body = respBody.Content()
