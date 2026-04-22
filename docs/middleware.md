@@ -103,11 +103,15 @@ If the connection drops, greyproxy reconnects with exponential backoff (100ms do
 {"type": "hello", "version": 1}
 ```
 
+The `version` field is the protocol version the proxy currently speaks. Middlewares should use it to tell apart proxy generations if they ever need to branch their behaviour; in most cases they can ignore it and just declare their own supported range.
+
 **Middleware responds (within 5 seconds):**
 ```json
 {
   "type": "hello",
   "name": "openai-pii-redactor",
+  "min_version": 1,
+  "max_version": 1,
   "hooks": [
     {
       "type": "http-request",
@@ -130,6 +134,14 @@ If the connection drops, greyproxy reconnects with exponential backoff (100ms do
 ```
 
 `name` is optional but recommended. When the middleware takes a mutating action or emits tags, the Activity view shows the event badge labeled with this name (falling back to the middleware URL when `name` is absent). Keep it short — it's rendered inline in the activity rows.
+
+#### Version negotiation
+
+`min_version` and `max_version` declare the inclusive range of protocol versions the middleware supports. After the proxy receives the hello response it picks the highest integer in the overlap of `[min_version, max_version]` and `[1, ProxyMaxVersion]`. On success, the agreed version is logged and the connection proceeds. On no overlap, the connection is refused with an error naming both ranges so the operator can see exactly which side is lagging.
+
+Omitting both fields (the common case today) is equivalent to declaring `min_version: 1, max_version: 1` — existing v1 middlewares keep working without changes as the proxy protocol evolves. New middlewares should set the range explicitly so that a future proxy bump can pick a higher version when both sides are ready.
+
+The current proxy protocol version is **1**. A middleware that wants to be forward-compatible with future proxies should widen its `max_version` once the new version ships *and* its own code handles the new fields.
 
 ### Hook types
 

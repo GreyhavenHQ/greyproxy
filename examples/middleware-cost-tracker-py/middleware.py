@@ -49,6 +49,8 @@ COSTS_FILE = Path("costs.jsonl")
 HELLO_RESPONSE = {
     "type": "hello",
     "name": "cost-tracker",
+    "min_version": 1,
+    "max_version": 1,
     "hooks": [
         {
             "type": "http-response",

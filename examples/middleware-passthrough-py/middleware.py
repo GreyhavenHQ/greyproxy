@@ -38,6 +38,8 @@ PORT = 9000
 HELLO_RESPONSE = {
     "type": "hello",
     "name": "passthrough",
+    "min_version": 1,
+    "max_version": 1,
     "hooks": [
         {"type": "http-request"},
         {"type": "http-response"},

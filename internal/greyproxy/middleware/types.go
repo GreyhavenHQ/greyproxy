@@ -6,10 +6,29 @@ import (
 	"sync"
 )
 
-// HelloMsg is sent by the proxy on connect and returned by middleware with hooks.
+// HelloMsg is the hello exchange on both sides.
+//
+// Proxy → middleware:
+//
+//	{"type":"hello","version":<current>}
+//
+// Middleware → proxy:
+//
+//	{"type":"hello","min_version":1,"max_version":1,"name":"...","hooks":[...]}
+//
+// Version negotiation: the proxy picks the highest integer in the overlap
+// of [middleware.MinVersion, middleware.MaxVersion] and [1, ProtocolVersion].
+// If there is no overlap the connection is refused with a readable error.
+// A middleware that omits both version bounds is assumed to speak v1, so
+// existing v1 middlewares keep working unchanged as the proxy evolves.
 type HelloMsg struct {
 	Type    string `json:"type"`              // "hello"
-	Version int    `json:"version,omitempty"` // 1 (sent by proxy)
+	Version int    `json:"version,omitempty"` // current protocol version the proxy is speaking
+	// MinVersion and MaxVersion are set by the *middleware* in its hello
+	// response to declare the inclusive range of protocol versions it
+	// supports. Both zero means "assume v1" for backwards compatibility.
+	MinVersion int `json:"min_version,omitempty"`
+	MaxVersion int `json:"max_version,omitempty"`
 	// Name is an optional human-friendly identifier the middleware returns
 	// in its hello response. Displayed in the greyproxy Activity view
 	// alongside middleware events. If empty, the middleware URL is used.

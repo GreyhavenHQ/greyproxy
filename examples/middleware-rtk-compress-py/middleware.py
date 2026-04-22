@@ -70,6 +70,8 @@ PORT = 9000
 HELLO_RESPONSE = {
     "type": "hello",
     "name": "rtk-compress",
+    "min_version": 1,
+    "max_version": 1,
     "hooks": [
         {
             "type": "http-request",

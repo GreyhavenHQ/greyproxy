@@ -40,6 +40,8 @@ PORT = 9000
 HELLO_RESPONSE = {
     "type": "hello",
     "name": "secret-scanner",
+    "min_version": 1,
+    "max_version": 1,
     "hooks": [
         # Only outbound requests -- we are scanning for leaked secrets.
         {"type": "http-request"},

@@ -155,6 +155,47 @@ func TestBodyChanged(t *testing.T) {
 	}
 }
 
+func TestNegotiateVersion(t *testing.T) {
+	cases := []struct {
+		name            string
+		proxy, min, max int
+		wantAgreed      int
+		wantErr         bool
+	}{
+		// Back-compat: middleware omitted both → assume v1.
+		{"omitted both, proxy v1", 1, 0, 0, 1, false},
+		// Exact match.
+		{"v1 on both sides", 1, 1, 1, 1, false},
+		// Proxy newer than middleware: agree on middleware's max.
+		{"proxy v3, mw v1..2", 3, 1, 2, 2, false},
+		{"proxy v5, mw v1..1", 5, 1, 1, 1, false},
+		// Middleware newer than proxy: agree on proxy's version.
+		{"proxy v2, mw v1..5", 2, 1, 5, 2, false},
+		// No overlap: middleware requires v2+, proxy only has v1.
+		{"no overlap: mw requires v2+", 1, 2, 3, 0, true},
+		// Invalid ranges are rejected.
+		{"invalid: min>max", 3, 5, 2, 0, true},
+		{"invalid: min=0 with nonzero max", 3, 0, 2, 0, true}, // 0,2 means middleware declared mw_max but not min
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := negotiateVersion(tc.proxy, tc.min, tc.max)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("want error, got agreed=%d", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.wantAgreed {
+				t.Fatalf("agreed = %d, want %d", got, tc.wantAgreed)
+			}
+		})
+	}
+}
+
 func TestNewID_UniqueAndHex(t *testing.T) {
 	seen := make(map[string]bool)
 	for i := 0; i < 64; i++ {

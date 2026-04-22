@@ -208,6 +208,69 @@ func TestClient_SkipsMalformedFrame(t *testing.T) {
 	}
 }
 
+// TestClient_RejectsIncompatibleVersion asserts that a middleware
+// declaring a min_version higher than the proxy's ProtocolVersion causes
+// the connection to be refused. The failure must not silently mark the
+// client ready — otherwise an operator could connect a v2-only middleware
+// to a v1 proxy and watch fields they declared in their hello (and rely
+// on later) just disappear.
+func TestClient_RejectsIncompatibleVersion(t *testing.T) {
+	url, stop := startMockServer(t, func(t *testing.T, c *websocket.Conn) {
+		readHello(t, c)
+		// Middleware requires at least v2; this proxy only speaks v1.
+		_ = c.WriteJSON(HelloMsg{
+			Type: "hello", Name: "future-mw",
+			MinVersion: ProtocolVersion + 1,
+			MaxVersion: ProtocolVersion + 5,
+		})
+	})
+	defer stop()
+
+	c := New(Config{URL: url, TimeoutMs: 500})
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	go c.Start(ctx)
+
+	select {
+	case <-c.ready:
+		t.Fatal("client marked ready after version mismatch")
+	case <-time.After(300 * time.Millisecond):
+	}
+	cancel()
+	c.Close()
+}
+
+// TestClient_OmittedVersionsAssumeV1 asserts that a middleware that omits
+// both version bounds (the shape of every example in the repo) still
+// negotiates successfully and is assigned protocol v1. This is the
+// backwards-compatibility guarantee the docs promise.
+func TestClient_OmittedVersionsAssumeV1(t *testing.T) {
+	url, stop := startMockServer(t, func(t *testing.T, c *websocket.Conn) {
+		readHello(t, c)
+		_ = c.WriteJSON(HelloMsg{Type: "hello", Name: "legacy"})
+		for {
+			if _, _, err := c.ReadMessage(); err != nil {
+				return
+			}
+		}
+	})
+	defer stop()
+
+	c := New(Config{URL: url, TimeoutMs: 500})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go c.Start(ctx)
+
+	select {
+	case <-c.ready:
+	case <-time.After(1 * time.Second):
+		t.Fatal("client not ready after 1s")
+	}
+	if v := c.ProtocolVersion(); v != 1 {
+		t.Fatalf("ProtocolVersion = %d, want 1 (back-compat default)", v)
+	}
+}
+
 // TestClient_DefaultTimeoutGenerous pins the default timeout to a value
 // that accommodates middlewares which offload their decision to another
 // LLM or slow scanner. If this regresses to something like 2s, policy

@@ -55,11 +55,12 @@ type Client struct {
 	conn    *websocket.Conn
 	pending map[string]pendingEntry
 
-	hooks        []HookSpec
-	maxBodyBytes int64
-	name         string        // middleware-declared friendly name, may be empty
-	ready        chan struct{} // closed after first successful hello exchange
-	readyOnce    sync.Once
+	hooks           []HookSpec
+	maxBodyBytes    int64
+	name            string        // middleware-declared friendly name, may be empty
+	protocolVersion int           // agreed version after hello negotiation
+	ready           chan struct{} // closed after first successful hello exchange
+	readyOnce       sync.Once
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -192,8 +193,8 @@ func (c *Client) connectAndRun() error {
 		c.mu.Unlock()
 	}()
 
-	// Send hello
-	hello := HelloMsg{Type: "hello", Version: 1}
+	// Send hello (proxy declares its current protocol version).
+	hello := HelloMsg{Type: "hello", Version: ProtocolVersion}
 	if err := conn.WriteJSON(hello); err != nil {
 		return err
 	}
@@ -210,10 +211,16 @@ func (c *Client) connectAndRun() error {
 		return fmt.Errorf("middleware hello: unexpected type %q (want %q)", resp.Type, "hello")
 	}
 
+	agreed, err := negotiateVersion(ProtocolVersion, resp.MinVersion, resp.MaxVersion)
+	if err != nil {
+		return fmt.Errorf("middleware %s: %w", c.url, err)
+	}
+
 	c.mu.Lock()
 	c.hooks = resp.Hooks
 	c.maxBodyBytes = resp.MaxBodyBytes
 	c.name = resp.Name
+	c.protocolVersion = agreed
 	c.mu.Unlock()
 
 	// Precompile regex filters for hot-path performance
@@ -222,7 +229,8 @@ func (c *Client) connectAndRun() error {
 	// Signal that hooks are available
 	c.readyOnce.Do(func() { close(c.ready) })
 
-	logger.Default().Infof("middleware hello: name=%q hooks=%d max_body_bytes=%d", resp.Name, len(resp.Hooks), resp.MaxBodyBytes)
+	logger.Default().Infof("middleware hello: name=%q url=%s protocol=v%d hooks=%d max_body_bytes=%d",
+		resp.Name, c.url, agreed, len(resp.Hooks), resp.MaxBodyBytes)
 
 	// Read loop: dispatch incoming decisions to waiting channels.
 	// A malformed frame is logged and skipped; only transport errors drop
@@ -286,6 +294,14 @@ func (c *Client) Name() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.name
+}
+
+// ProtocolVersion returns the agreed protocol version after hello
+// negotiation. Returns 0 if the hello exchange hasn't completed.
+func (c *Client) ProtocolVersion() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.protocolVersion
 }
 
 // Send sends a message to the middleware and waits for the corresponding

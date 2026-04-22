@@ -5,8 +5,46 @@ import (
 	"context"
 	cryptorand "crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"net/http"
 )
+
+// ProtocolVersion is the highest version of the middleware wire protocol
+// this proxy speaks. Bump this in the same commit that introduces a
+// breaking wire change; leaving it untouched for additive/backward-
+// compatible changes is correct.
+//
+// A proxy running at version N still talks to a middleware that only
+// supports some version M<N, as long as the middleware's declared
+// [min_version, max_version] range includes M and the proxy still
+// implements M. Negotiation picks the highest common integer.
+const ProtocolVersion = 1
+
+// negotiateVersion returns the agreed protocol version for the connection.
+// mwMin/mwMax are what the middleware declared in its hello; both zero
+// means the middleware didn't bother and is assumed to speak v1 for
+// backwards compatibility with middlewares written before versioning
+// existed. An error is returned if there's no overlap with what the proxy
+// supports ([1, proxyVersion]).
+func negotiateVersion(proxyVersion, mwMin, mwMax int) (int, error) {
+	if mwMin == 0 && mwMax == 0 {
+		mwMin, mwMax = 1, 1
+	}
+	if mwMin < 1 || mwMax < mwMin {
+		return 0, fmt.Errorf("middleware declared invalid version range [%d,%d]", mwMin, mwMax)
+	}
+	if mwMin > proxyVersion {
+		return 0, fmt.Errorf("middleware requires protocol v>=%d; proxy only speaks up to v%d", mwMin, proxyVersion)
+	}
+	if mwMax < 1 {
+		return 0, fmt.Errorf("middleware max_version=%d; proxy requires v>=1", mwMax)
+	}
+	agreed := proxyVersion
+	if mwMax < agreed {
+		agreed = mwMax
+	}
+	return agreed, nil
+}
 
 // CascadeHook describes one middleware participating in a cascade. The cmd
 // layer builds these once at startup; the cascade runners below consume them.
