@@ -4,51 +4,35 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"sync"
 )
 
-// compiledFilter caches compiled regexes for a HookFilter's path patterns.
-type compiledFilter struct {
-	pathRegexes []*regexp.Regexp
-}
-
-var (
-	filterCacheMu sync.RWMutex
-	filterCache   = make(map[*HookFilter]*compiledFilter)
-)
-
-func getCompiledFilter(f *HookFilter) *compiledFilter {
+// compiledPaths returns the regexes compiled from f.Path. Compilation is
+// cached on the HookFilter itself (see HookFilter.compiled) so the result is
+// GC'd together with the filter. The previous implementation kept a global
+// map keyed by *HookFilter pointer, which leaked one entry per reconnect
+// since each hello response produced a fresh filter pointer.
+func (f *HookFilter) compiledPaths() []*regexp.Regexp {
 	if f == nil {
 		return nil
 	}
-	filterCacheMu.RLock()
-	cf := filterCache[f]
-	filterCacheMu.RUnlock()
-	if cf != nil {
-		return cf
-	}
-
-	cf = &compiledFilter{}
-	for _, p := range f.Path {
-		re, err := regexp.Compile(p)
-		if err != nil {
-			continue
+	f.compileOnce.Do(func() {
+		for _, p := range f.Path {
+			re, err := regexp.Compile(p)
+			if err != nil {
+				continue
+			}
+			f.compiled = append(f.compiled, re)
 		}
-		cf.pathRegexes = append(cf.pathRegexes, re)
-	}
-
-	filterCacheMu.Lock()
-	filterCache[f] = cf
-	filterCacheMu.Unlock()
-	return cf
+	})
+	return f.compiled
 }
 
-// PrecompileFilters precompiles regex patterns in all hook specs for hot-path performance.
+// PrecompileFilters precompiles regex patterns in all hook specs for
+// hot-path performance. It is safe (but not necessary) to skip — the first
+// match call would compile on demand.
 func PrecompileFilters(hooks []HookSpec) {
 	for i := range hooks {
-		if hooks[i].Filters != nil {
-			getCompiledFilter(hooks[i].Filters)
-		}
+		_ = hooks[i].Filters.compiledPaths()
 	}
 }
 
@@ -85,8 +69,7 @@ func MatchesFilter(f *HookFilter, host, path, method, contentType, container str
 
 	// Path filter (regex)
 	if len(f.Path) > 0 {
-		cf := getCompiledFilter(f)
-		if !matchAnyRegex(cf.pathRegexes, path) {
+		if !matchAnyRegex(f.compiledPaths(), path) {
 			return false
 		}
 	}

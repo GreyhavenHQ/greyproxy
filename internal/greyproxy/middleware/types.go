@@ -1,6 +1,10 @@
 package middleware
 
-import "net/http"
+import (
+	"net/http"
+	"regexp"
+	"sync"
+)
 
 // HelloMsg is sent by the proxy on connect and returned by middleware with hooks.
 type HelloMsg struct {
@@ -35,18 +39,26 @@ type HookFilter struct {
 	// false = non-LLM only. Lets middleware subscribe to "LLM traffic"
 	// without duplicating greyproxy's endpoint→decoder mapping.
 	LLM *bool `json:"llm,omitempty"`
+
+	// compiled is populated lazily by compiledPaths() on first match and
+	// kept for the lifetime of the HookFilter. Storing it inline avoids
+	// the global `map[*HookFilter]*compiledFilter` cache the earlier
+	// implementation used, which leaked on every reconnect because each
+	// hello response produced a fresh filter pointer.
+	compileOnce sync.Once
+	compiled    []*regexp.Regexp
 }
 
 // RequestMsg is sent for every intercepted HTTP request that passes filters.
 type RequestMsg struct {
-	Type      string      `json:"type"`      // "http-request"
-	ID        string      `json:"id"`        // UUID correlation
+	Type      string      `json:"type"` // "http-request"
+	ID        string      `json:"id"`   // UUID correlation
 	Host      string      `json:"host"`
 	Method    string      `json:"method"`
 	URI       string      `json:"uri"`
 	Proto     string      `json:"proto"`
 	Headers   http.Header `json:"headers"`
-	Body      []byte      `json:"body"`      // JSON marshaller encodes as base64; null if over max_body_bytes
+	Body      []byte      `json:"body"` // JSON marshaller encodes as base64; null if over max_body_bytes
 	Container string      `json:"container"`
 	TLS       bool        `json:"tls"`
 }
@@ -54,7 +66,7 @@ type RequestMsg struct {
 // ResponseMsg is sent after upstream responds. Includes full original request
 // context so the middleware can correlate (e.g., "what prompt generated this?").
 type ResponseMsg struct {
-	Type            string      `json:"type"`             // "http-response"
+	Type            string      `json:"type"` // "http-response"
 	ID              string      `json:"id"`
 	Host            string      `json:"host"`
 	Method          string      `json:"method"`
@@ -70,7 +82,7 @@ type ResponseMsg struct {
 
 // Decision is returned by the middleware for both request and response hooks.
 type Decision struct {
-	Type       string      `json:"type"`                  // "decision"
+	Type       string      `json:"type"` // "decision"
 	ID         string      `json:"id"`
 	Action     string      `json:"action"`                // allow|deny|rewrite|passthrough|block
 	StatusCode int         `json:"status_code,omitempty"` // for deny/block
@@ -81,6 +93,11 @@ type Decision struct {
 	// preserves them verbatim per middleware (no cross-middleware merging)
 	// so that two middlewares emitting the same key never clobber each other.
 	Tags map[string]any `json:"tags,omitempty"`
+	// Fallback is set when this Decision was synthesised locally because
+	// the middleware could not respond (disconnected, timeout, write error,
+	// context cancel). Never sent or received over the wire; kept in-process
+	// so cascades can log *why* the default action was applied.
+	Fallback string `json:"-"`
 }
 
 // Config holds configuration for the middleware WebSocket client.

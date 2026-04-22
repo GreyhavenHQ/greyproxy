@@ -72,13 +72,16 @@ The flag accepts `http://` and `https://` as aliases (automatically converted to
 greyproxy:
   middlewares:
     - url: "ws://localhost:9000/secret-scanner"
-      timeout_ms: 2000              # per-request timeout (default: 2000)
-      on_disconnect: allow          # allow | deny (default: allow)
+      timeout_ms: 2000                   # per-request timeout (default: 2000)
+      on_disconnect: deny                # allow | deny (default: deny)
       auth_header: "X-Secret: mysecret"  # optional, sent as WS header
     - url: "ws://localhost:9001/cost-tracker"
+      on_disconnect: allow               # observational middleware: don't block on failure
 ```
 
 CLI entries come first in the cascade, then YAML entries. `on_disconnect` is per-middleware: a disconnected middleware configured `allow` skips to the next step; one configured `deny` kills the request immediately.
+
+The default is `deny` (secure-by-default). A middleware that is unreachable, times out, or crashes causes the request to be rejected (403) or the response to be blocked (502); the operator has to opt in to pass-through behaviour by setting `on_disconnect: allow` explicitly. This matters for policy middleware (secret scanners, PII redactors, security gates): if the gate isn't running, the request shouldn't leak through silently. Observation-only middleware (audit logs, cost trackers) should set `on_disconnect: allow` explicitly since their absence is not a policy violation.
 
 ## Protocol
 
@@ -248,10 +251,20 @@ If the middleware does not respond within `timeout_ms` (default 2000), greyproxy
 
 | Policy | Request hook | Response hook |
 |---|---|---|
-| `allow` (default) | Request is forwarded unchanged | Response is passed through unchanged |
-| `deny` | Request is denied with 403 | Response is blocked with 502 |
+| `deny` (default) | Request is denied with 403 | Response is blocked with 502 |
+| `allow` | Request is forwarded unchanged | Response is passed through unchanged |
 
-The same policy applies when the WebSocket connection is down during reconnect.
+The same policy applies when the WebSocket connection is down during reconnect, during `timeout_ms`, on write failure, on marshal error, and when the incoming ctx is cancelled. In every case greyproxy logs a `fallback action=<x>` warning naming the reason so operators can distinguish "middleware allowed" from "middleware was down".
+
+### Header denylist on `rewrite`
+
+A middleware's `rewrite` decision may set or replace arbitrary response or request headers, with one exception: greyproxy refuses to apply `rewrite` decisions that attempt to set hop-by-hop headers (`Connection`, `Keep-Alive`, `Proxy-Authorization`, `Transfer-Encoding`, `Upgrade`, `Te`, `Trailer`, `Proxy-Authenticate`) or credential/identity headers (`Authorization`, `Cookie`, `Set-Cookie`, `Host`). Those keys are stripped from the decision and logged; the rest of the rewrite is applied normally.
+
+This is a defence against a compromised or buggy middleware silently escalating authentication (overriding `Authorization`) or rerouting requests (overriding `Host`). If you genuinely need to mutate credentials from a middleware, open an issue describing the use case; this is deliberately not a v1 feature.
+
+### Unknown actions
+
+If a middleware returns an `action` string that greyproxy does not recognise (typo, protocol drift), greyproxy treats it as `allow` for request hooks and `passthrough` for response hooks and logs a warning naming the middleware and the unknown action. Silent fallback to `allow` without a log would let one bad middleware bypass policy undetected; this way the operator sees it in logs.
 
 ## Writing a middleware
 

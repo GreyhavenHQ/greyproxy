@@ -627,10 +627,16 @@ func (h *httpHandler) proxyRoundTrip(ctx context.Context, rw io.ReadWriteCloser,
 	ctx = ictx.ContextWithRecorderObject(ctx, ro)
 	ctx = ictx.ContextWithLogger(ctx, log)
 
-	// Middleware request hook: can deny or rewrite before upstream
+	// Middleware request hook: can deny or rewrite before upstream.
+	// It may also return an updated ctx so the request cascade can thread
+	// state (e.g. captured request body) through to the response cascade.
 	if hook := gostx.GlobalProxyRequestHook; hook != nil {
 		containerName := ro.ClientID
-		if decision := hook(ctx, req, containerName); decision != nil {
+		newCtx, decision := hook(ctx, req, containerName)
+		if newCtx != nil {
+			ctx = newCtx
+		}
+		if decision != nil {
 			if decision.Deny {
 				status := decision.StatusCode
 				if status == 0 {

@@ -32,7 +32,7 @@ func RequestIDFromContext(ctx context.Context) string {
 // it is forwarded upstream. nil = allow unchanged.
 type ProxyRequestDecision struct {
 	Deny       bool
-	StatusCode int         // default 403 when Deny=true
+	StatusCode int // default 403 when Deny=true
 	DenyBody   string
 	NewHeaders http.Header // non-nil: merge into request headers
 	NewBody    []byte      // non-nil: replace request body
@@ -40,11 +40,13 @@ type ProxyRequestDecision struct {
 
 // GlobalProxyRequestHook is called in proxyRoundTrip() before the upstream
 // RoundTrip. containerName is the resolved Docker container or client ID.
+// The hook may return a non-nil ctx to propagate values (e.g. a captured
+// request body) through to the response hook; a nil ctx means "no change".
 var GlobalProxyRequestHook func(
 	ctx context.Context,
 	req *http.Request,
 	containerName string,
-) *ProxyRequestDecision
+) (context.Context, *ProxyRequestDecision)
 
 // ProxyResponseDecision controls what happens to a plain-HTTP response before
 // it is written back to the client. nil = passthrough unchanged.

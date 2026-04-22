@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -12,6 +13,14 @@ import (
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/logger"
 )
 
+// pendingEntry tracks an in-flight Send(): the channel that receives the
+// decision plus whether the message was a response (so drainPending can
+// return the correct default action on disconnect).
+type pendingEntry struct {
+	ch         chan Decision
+	isResponse bool
+}
+
 // Client manages a persistent WebSocket connection to a middleware service.
 type Client struct {
 	url        string
@@ -19,9 +28,15 @@ type Client struct {
 	timeoutMs  int
 	onTimeout  string // "allow"|"deny"
 
+	// writeMu serializes WebSocket writes without blocking state reads.
+	// Gorilla websocket.Conn requires writes to be serialized; keeping
+	// this separate from mu means a slow peer can't stall reads of
+	// pending/hooks/name.
+	writeMu sync.Mutex
+
 	mu      sync.Mutex
 	conn    *websocket.Conn
-	pending map[string]chan Decision
+	pending map[string]pendingEntry
 
 	hooks        []HookSpec
 	maxBodyBytes int64
@@ -35,6 +50,12 @@ type Client struct {
 }
 
 // New creates a new middleware client with the given configuration.
+//
+// If Config.OnDisconnect is empty, the client defaults to "deny": when the
+// middleware is unreachable, requests are rejected (403) and responses are
+// blocked (502) rather than silently flowing through. Operators who run a
+// middleware purely for observation (audit log, cost tracker) should set
+// OnDisconnect: "allow" explicitly — advisory-only policy is an opt-in.
 func New(cfg Config) *Client {
 	timeout := cfg.TimeoutMs
 	if timeout <= 0 {
@@ -42,14 +63,14 @@ func New(cfg Config) *Client {
 	}
 	onTimeout := cfg.OnDisconnect
 	if onTimeout == "" {
-		onTimeout = "allow"
+		onTimeout = "deny"
 	}
 	return &Client{
 		url:        cfg.URL,
 		authHeader: cfg.AuthHeader,
 		timeoutMs:  timeout,
 		onTimeout:  onTimeout,
-		pending:    make(map[string]chan Decision),
+		pending:    make(map[string]pendingEntry),
 		ready:      make(chan struct{}),
 		done:       make(chan struct{}),
 	}
@@ -139,7 +160,7 @@ func (c *Client) connectAndRun() error {
 	conn.SetReadDeadline(time.Time{})
 
 	if resp.Type != "hello" {
-		return err
+		return fmt.Errorf("middleware hello: unexpected type %q (want %q)", resp.Type, "hello")
 	}
 
 	c.mu.Lock()
@@ -156,26 +177,39 @@ func (c *Client) connectAndRun() error {
 
 	logger.Default().Infof("middleware hello: name=%q hooks=%d max_body_bytes=%d", resp.Name, len(resp.Hooks), resp.MaxBodyBytes)
 
-	// Read loop: dispatch incoming decisions to waiting channels
+	// Read loop: dispatch incoming decisions to waiting channels.
+	// A malformed frame is logged and skipped; only transport errors drop
+	// the connection (and trigger reconnect + drainPending).
 	for {
 		if c.ctx.Err() != nil {
 			return c.ctx.Err()
 		}
 
-		var d Decision
-		if err := conn.ReadJSON(&d); err != nil {
+		msgType, data, err := conn.ReadMessage()
+		if err != nil {
 			return err
+		}
+		if msgType != websocket.TextMessage && msgType != websocket.BinaryMessage {
+			continue
+		}
+
+		var d Decision
+		if err := json.Unmarshal(data, &d); err != nil {
+			logger.Default().Warnf("middleware %s: malformed frame, skipping: %v", c.url, err)
+			continue
 		}
 
 		c.mu.Lock()
-		ch, ok := c.pending[d.ID]
+		entry, ok := c.pending[d.ID]
 		if ok {
 			delete(c.pending, d.ID)
 		}
 		c.mu.Unlock()
 
 		if ok {
-			ch <- d
+			entry.ch <- d
+		} else {
+			logger.Default().Warnf("middleware %s: decision for unknown id %q (late response or duplicate)", c.url, d.ID)
 		}
 	}
 }
@@ -207,66 +241,75 @@ func (c *Client) Name() string {
 	return c.name
 }
 
-// Send sends a message to the middleware and waits for the corresponding decision.
-// If the middleware doesn't respond within timeoutMs, returns a default decision
-// based on the onTimeout policy (not an error).
-func (c *Client) Send(ctx context.Context, msg any) (Decision, error) {
-	// Extract ID from the message
-	var id string
+// Send sends a message to the middleware and waits for the corresponding
+// decision. Send never returns an error: when the middleware fails to respond
+// (disconnected, write failure, timeout, context cancel), Send returns a
+// default Decision whose Fallback field names the reason, and callers can
+// log/branch on it.
+//
+// The default action depends on (a) which message type was sent (request vs
+// response) and (b) the onTimeout policy on this client, so a response hook
+// gets "block" (not "deny") when on_disconnect=deny, matching the documented
+// protocol semantics.
+func (c *Client) Send(ctx context.Context, msg any) Decision {
+	// Extract the ID and remember whether this was a response message so
+	// the default action can pick the right verb.
+	var (
+		id         string
+		isResponse bool
+	)
 	switch m := msg.(type) {
 	case RequestMsg:
 		id = m.ID
 	case ResponseMsg:
 		id = m.ID
+		isResponse = true
 	}
 
 	ch := make(chan Decision, 1)
 
 	c.mu.Lock()
 	conn := c.conn
-	c.pending[id] = ch
+	c.pending[id] = pendingEntry{ch: ch, isResponse: isResponse}
 	c.mu.Unlock()
 
-	if conn == nil {
+	cleanup := func() {
 		c.mu.Lock()
 		delete(c.pending, id)
 		c.mu.Unlock()
-		return c.defaultDecision(id), nil
+	}
+
+	if conn == nil {
+		cleanup()
+		return c.fallback(id, isResponse, "disconnected")
 	}
 
 	data, err := json.Marshal(msg)
 	if err != nil {
-		c.mu.Lock()
-		delete(c.pending, id)
-		c.mu.Unlock()
-		return c.defaultDecision(id), nil
+		cleanup()
+		logger.Default().Warnf("middleware %s: marshal failed: %v", c.url, err)
+		return c.fallback(id, isResponse, "marshal_error")
 	}
 
-	c.mu.Lock()
+	c.writeMu.Lock()
 	writeErr := conn.WriteMessage(websocket.TextMessage, data)
-	c.mu.Unlock()
+	c.writeMu.Unlock()
 
 	if writeErr != nil {
-		c.mu.Lock()
-		delete(c.pending, id)
-		c.mu.Unlock()
-		return c.defaultDecision(id), nil
+		cleanup()
+		return c.fallback(id, isResponse, "write_error")
 	}
 
 	timeout := time.Duration(c.timeoutMs) * time.Millisecond
 	select {
 	case d := <-ch:
-		return d, nil
+		return d
 	case <-time.After(timeout):
-		c.mu.Lock()
-		delete(c.pending, id)
-		c.mu.Unlock()
-		return c.defaultDecision(id), nil
+		cleanup()
+		return c.fallback(id, isResponse, "timeout")
 	case <-ctx.Done():
-		c.mu.Lock()
-		delete(c.pending, id)
-		c.mu.Unlock()
-		return c.defaultDecision(id), nil
+		cleanup()
+		return c.fallback(id, isResponse, "context_cancelled")
 	}
 }
 
@@ -283,41 +326,47 @@ func (c *Client) Close() {
 	c.drainPending()
 }
 
+// drainPending releases every in-flight Send() with a "disconnected"
+// fallback when the connection drops. Each pending entry carries its own
+// isResponse flag, so response-hook sends get block/passthrough and
+// request-hook sends get deny/allow, matching whichever onTimeout policy
+// applies.
 func (c *Client) drainPending() {
 	c.mu.Lock()
-	for id, ch := range c.pending {
-		ch <- c.defaultDecisionLocked(id)
+	for id, entry := range c.pending {
+		entry.ch <- c.fallbackLocked(id, entry.isResponse, "disconnected")
 		delete(c.pending, id)
 	}
 	c.mu.Unlock()
 }
 
-func (c *Client) defaultDecision(id string) Decision {
+// fallback builds a default Decision when the middleware can't respond.
+// isResponse selects between request semantics (allow/deny 403) and response
+// semantics (passthrough/block 502). The reason is stored on
+// Decision.Fallback for caller logging; it never travels over the wire.
+func (c *Client) fallback(id string, isResponse bool, reason string) Decision {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.defaultDecisionLocked(id)
+	return c.fallbackLocked(id, isResponse, reason)
 }
 
-func (c *Client) defaultDecisionLocked(id string) Decision {
+func (c *Client) fallbackLocked(id string, isResponse bool, reason string) Decision {
+	d := Decision{Type: "decision", ID: id, Fallback: reason}
 	switch c.onTimeout {
-	case "deny":
-		return Decision{Type: "decision", ID: id, Action: "deny", StatusCode: 403}
-	default: // "allow"
-		return Decision{Type: "decision", ID: id, Action: "allow"}
+	case "allow":
+		if isResponse {
+			d.Action = "passthrough"
+		} else {
+			d.Action = "allow"
+		}
+	default: // "deny" (secure default)
+		if isResponse {
+			d.Action = "block"
+			d.StatusCode = 502
+		} else {
+			d.Action = "deny"
+			d.StatusCode = 403
+		}
 	}
-}
-
-// RequestBodyContextKey is used to pass captured request body through context
-// for the plain HTTP response hook.
-type requestBodyContextKey struct{}
-
-// WithRequestBody stores the request body in the context.
-func WithRequestBody(ctx context.Context, body []byte) context.Context {
-	return context.WithValue(ctx, requestBodyContextKey{}, body)
-}
-
-// RequestBodyFromContext retrieves the request body stored by the request hook.
-func RequestBodyFromContext(ctx context.Context) []byte {
-	body, _ := ctx.Value(requestBodyContextKey{}).([]byte)
-	return body
+	return d
 }

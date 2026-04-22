@@ -5,9 +5,7 @@ import (
 	"compress/flate"
 	"compress/gzip"
 	"context"
-	cryptorand "crypto/rand"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -844,330 +842,105 @@ func (p *program) buildGreyproxyService() error {
 			return body
 		}
 
+		// Build the shared cascade hook list: both plain-HTTP and MITM
+		// request hooks iterate the same reqHooks slice; same for respHooks.
+		cascadeReq := make([]middleware.CascadeHook, 0, len(reqHooks))
+		for _, h := range reqHooks {
+			cascadeReq = append(cascadeReq, middleware.CascadeHook{Client: h.client, URL: h.url, Name: h.name, Filters: h.filters})
+		}
+		cascadeResp := make([]middleware.CascadeHook, 0, len(respHooks))
+		for _, h := range respHooks {
+			cascadeResp = append(cascadeResp, middleware.CascadeHook{Client: h.client, URL: h.url, Name: h.name, Filters: h.filters})
+		}
+
 		// ---- Plain HTTP request cascade ---------------------------------
-		if len(reqHooks) > 0 {
-			hooks := reqHooks
-			gostx.GlobalProxyRequestHook = func(ctx context.Context, req *http.Request, container string) *gostx.ProxyRequestDecision {
-				requestID := gostx.RequestIDFromContext(ctx)
+		if len(cascadeReq) > 0 {
+			gostx.GlobalProxyRequestHook = func(ctx context.Context, req *http.Request, container string) (context.Context, *gostx.ProxyRequestDecision) {
 				body, _ := io.ReadAll(req.Body)
 				req.Body = io.NopCloser(bytes.NewReader(body))
-				isLLM := endpointRegistry.Match(req.URL.Path, req.Method, req.Host) != ""
-				seq := 0
+				// Stash the captured body so the response cascade can
+				// include it in ResponseMsg.RequestBody.
+				ctx = middleware.WithRequestBody(ctx, body)
 
-				for _, h := range hooks {
-					ct := req.Header.Get("Content-Type")
-					if !middleware.MatchesFilter(h.filters, req.Host, req.URL.Path, req.Method, ct, container, false, isLLM) {
-						continue
+				res := runRequestCascade(ctx, cascadeReq, req, container, false, "http-request", &body, endpointRegistry, truncateBody)
+				if res.Denied {
+					return ctx, &gostx.ProxyRequestDecision{
+						Deny:       true,
+						StatusCode: res.DenyStatus,
+						DenyBody:   string(res.DenyBody),
 					}
-					preHeaders := req.Header.Clone()
-					preBody := body
-					msg := middleware.RequestMsg{
-						Type: "http-request", ID: newUUID(),
-						Host: req.Host, Method: req.Method, URI: req.RequestURI,
-						Proto: req.Proto, Headers: preHeaders,
-						Body: truncateBody(body), Container: container, TLS: false,
-					}
-					stepStart := time.Now()
-					d, _ := h.client.Send(ctx, msg)
-					stepMs := time.Since(stepStart).Milliseconds()
-					switch d.Action {
-					case "deny":
-						middleware.StashEvent(requestID, middleware.PendingEvent{
-							Sequence: seq, MiddlewareName: h.name, MiddlewareURL: h.url, Hook: "http-request",
-							Action: "deny", StatusCode: d.StatusCode,
-							Tags: d.Tags, DurationMs: stepMs, CreatedAt: time.Now(),
-						})
-						return &gostx.ProxyRequestDecision{
-							Deny:       true,
-							StatusCode: d.StatusCode,
-							DenyBody:   string(d.Body),
-						}
-					case "rewrite":
-						if d.Body != nil {
-							body = d.Body
-							req.Body = io.NopCloser(bytes.NewReader(body))
-							req.ContentLength = int64(len(body))
-						}
-						for k, v := range d.Headers {
-							req.Header[k] = v
-						}
-						middleware.StashEvent(requestID, middleware.PendingEvent{
-							Sequence: seq, MiddlewareName: h.name, MiddlewareURL: h.url, Hook: "http-request",
-							Action: "rewrite", StatusCode: d.StatusCode,
-							HeadersChanged: middleware.DiffHeaderNames(preHeaders, req.Header),
-							BodyRewritten:  d.Body != nil && !bytes.Equal(d.Body, preBody),
-							Tags:           d.Tags, DurationMs: stepMs, CreatedAt: time.Now(),
-						})
-					default:
-						if len(d.Tags) > 0 {
-							action := "tagged-allow"
-							if d.Action == "passthrough" {
-								action = "tagged-passthrough"
-							}
-							middleware.StashEvent(requestID, middleware.PendingEvent{
-								Sequence: seq, MiddlewareName: h.name, MiddlewareURL: h.url, Hook: "http-request",
-								Action: action, Tags: d.Tags,
-								DurationMs: stepMs, CreatedAt: time.Now(),
-							})
-						}
-					}
-					seq++
 				}
-				return nil
+				return ctx, nil
 			}
 
 			// ---- MITM request cascade -----------------------------------
 			gostx.SetGlobalMitmRequestMiddlewareHook(func(ctx context.Context, req *http.Request, container string) error {
-				requestID := gostx.RequestIDFromContext(ctx)
 				body, _ := io.ReadAll(req.Body)
 				req.Body = io.NopCloser(bytes.NewReader(body))
-				isLLM := endpointRegistry.Match(req.URL.Path, req.Method, req.Host) != ""
-				seq := 0
 
-				for _, h := range hooks {
-					ct := req.Header.Get("Content-Type")
-					if !middleware.MatchesFilter(h.filters, req.Host, req.URL.Path, req.Method, ct, container, true, isLLM) {
-						continue
-					}
-					preHeaders := req.Header.Clone()
-					preBody := body
-					msg := middleware.RequestMsg{
-						Type: "http-request", ID: newUUID(),
-						Host: req.Host, Method: req.Method, URI: req.RequestURI,
-						Proto: req.Proto, Headers: preHeaders,
-						Body: truncateBody(body), Container: container, TLS: true,
-					}
-					stepStart := time.Now()
-					d, _ := h.client.Send(ctx, msg)
-					stepMs := time.Since(stepStart).Milliseconds()
-					switch d.Action {
-					case "deny":
-						middleware.StashEvent(requestID, middleware.PendingEvent{
-							Sequence: seq, MiddlewareName: h.name, MiddlewareURL: h.url, Hook: "mitm-request",
-							Action: "deny", StatusCode: d.StatusCode,
-							Tags: d.Tags, DurationMs: stepMs, CreatedAt: time.Now(),
-						})
-						return gostx.ErrRequestDenied
-					case "rewrite":
-						if d.Body != nil {
-							body = d.Body
-							req.Body = io.NopCloser(bytes.NewReader(body))
-							req.ContentLength = int64(len(body))
-						}
-						for k, v := range d.Headers {
-							req.Header[k] = v
-						}
-						middleware.StashEvent(requestID, middleware.PendingEvent{
-							Sequence: seq, MiddlewareName: h.name, MiddlewareURL: h.url, Hook: "mitm-request",
-							Action: "rewrite", StatusCode: d.StatusCode,
-							HeadersChanged: middleware.DiffHeaderNames(preHeaders, req.Header),
-							BodyRewritten:  d.Body != nil && !bytes.Equal(d.Body, preBody),
-							Tags:           d.Tags, DurationMs: stepMs, CreatedAt: time.Now(),
-						})
-					default:
-						if len(d.Tags) > 0 {
-							action := "tagged-allow"
-							if d.Action == "passthrough" {
-								action = "tagged-passthrough"
-							}
-							middleware.StashEvent(requestID, middleware.PendingEvent{
-								Sequence: seq, MiddlewareName: h.name, MiddlewareURL: h.url, Hook: "mitm-request",
-								Action: action, Tags: d.Tags,
-								DurationMs: stepMs, CreatedAt: time.Now(),
-							})
-						}
-					}
-					seq++
+				res := runRequestCascade(ctx, cascadeReq, req, container, true, "mitm-request", &body, endpointRegistry, truncateBody)
+				if res.Denied {
+					return gostx.ErrRequestDenied
 				}
 				return nil
 			})
 		}
 
 		// ---- Plain HTTP response cascade --------------------------------
-		if len(respHooks) > 0 {
-			hooks := respHooks
+		if len(cascadeResp) > 0 {
 			gostx.GlobalProxyResponseHook = func(ctx context.Context, req *http.Request, resp *http.Response, container string) *gostx.ProxyResponseDecision {
-				requestID := gostx.RequestIDFromContext(ctx)
 				reqBody := middleware.RequestBodyFromContext(ctx)
 				respBody, _ := io.ReadAll(resp.Body)
 				resp.Body = io.NopCloser(bytes.NewReader(respBody))
-				isLLM := endpointRegistry.Match(req.URL.Path, req.Method, req.Host) != ""
 
-				// Working copy: mutations between cascade steps apply here,
-				// then we flush back to resp at the end via the returned decision.
-				workBody := respBody
-				workStatus := resp.StatusCode
-				workHeaders := resp.Header.Clone()
-				rewritten := false
-				seq := 0
+				res := runResponseCascade(ctx, cascadeResp, responseCascadeInput{
+					Host: req.Host, Method: req.Method, URI: req.RequestURI,
+					RequestHeaders: req.Header.Clone(), RequestBody: reqBody,
+					Status: resp.StatusCode, Headers: resp.Header.Clone(), Body: respBody,
+					Container: container, TLS: false, HookLabel: "http-response",
+				}, endpointRegistry, truncateBody)
 
-				for _, h := range hooks {
-					respCT := workHeaders.Get("Content-Type")
-					if !middleware.MatchesFilter(h.filters, req.Host, req.URL.Path, req.Method, respCT, container, false, isLLM) {
-						continue
+				if res.Blocked {
+					return &gostx.ProxyResponseDecision{
+						Block:      true,
+						StatusCode: res.BlockStatus,
+						BlockBody:  string(res.BlockBody),
 					}
-					mwBody := truncateBody(workBody)
-					mwBody, _ = middleware.DecompressBody(mwBody, workHeaders.Get("Content-Encoding"))
-					preHeaders := workHeaders.Clone()
-					preBody := workBody
-					msg := middleware.ResponseMsg{
-						Type: "http-response", ID: newUUID(),
-						Host: req.Host, Method: req.Method, URI: req.RequestURI,
-						StatusCode:      workStatus,
-						RequestHeaders:  req.Header.Clone(),
-						RequestBody:     truncateBody(reqBody),
-						ResponseHeaders: preHeaders,
-						ResponseBody:    mwBody,
-						Container:       container,
-					}
-					stepStart := time.Now()
-					d, _ := h.client.Send(ctx, msg)
-					stepMs := time.Since(stepStart).Milliseconds()
-					switch d.Action {
-					case "block":
-						middleware.StashEvent(requestID, middleware.PendingEvent{
-							Sequence: seq, MiddlewareName: h.name, MiddlewareURL: h.url, Hook: "http-response",
-							Action: "block", StatusCode: d.StatusCode,
-							Tags: d.Tags, DurationMs: stepMs, CreatedAt: time.Now(),
-						})
-						return &gostx.ProxyResponseDecision{
-							Block:      true,
-							StatusCode: d.StatusCode,
-							BlockBody:  string(d.Body),
-						}
-					case "rewrite":
-						rewritten = true
-						if d.StatusCode != 0 {
-							workStatus = d.StatusCode
-						}
-						if d.Body != nil {
-							workBody = d.Body
-						}
-						for k, v := range d.Headers {
-							workHeaders[k] = v
-						}
-						middleware.StashEvent(requestID, middleware.PendingEvent{
-							Sequence: seq, MiddlewareName: h.name, MiddlewareURL: h.url, Hook: "http-response",
-							Action: "rewrite", StatusCode: d.StatusCode,
-							HeadersChanged: middleware.DiffHeaderNames(preHeaders, workHeaders),
-							BodyRewritten:  d.Body != nil && !bytes.Equal(d.Body, preBody),
-							Tags:           d.Tags, DurationMs: stepMs, CreatedAt: time.Now(),
-						})
-					default:
-						if len(d.Tags) > 0 {
-							action := "tagged-allow"
-							if d.Action == "passthrough" {
-								action = "tagged-passthrough"
-							}
-							middleware.StashEvent(requestID, middleware.PendingEvent{
-								Sequence: seq, MiddlewareName: h.name, MiddlewareURL: h.url, Hook: "http-response",
-								Action: action, Tags: d.Tags,
-								DurationMs: stepMs, CreatedAt: time.Now(),
-							})
-						}
-					}
-					seq++
 				}
-
-				if !rewritten {
+				if !res.Rewritten {
 					return nil
 				}
 				return &gostx.ProxyResponseDecision{
-					NewStatusCode: workStatus,
-					NewHeaders:    workHeaders,
-					NewBody:       workBody,
+					NewStatusCode: res.Status,
+					NewHeaders:    res.Headers,
+					NewBody:       res.Body,
 				}
 			}
 
 			// ---- MITM response cascade ----------------------------------
 			gostx.SetGlobalMitmResponseHook(func(ctx context.Context, info gostx.MitmRoundTripInfo) *gostx.MitmResponseDecision {
-				isLLM := endpointRegistry.Match(info.URI, info.Method, info.Host) != ""
+				res := runResponseCascade(ctx, cascadeResp, responseCascadeInput{
+					Host: info.Host, Method: info.Method, URI: info.URI,
+					RequestHeaders: info.RequestHeaders, RequestBody: info.RequestBody,
+					Status: info.StatusCode, Headers: info.ResponseHeaders.Clone(), Body: info.ResponseBody,
+					Container: info.ContainerName, TLS: true, HookLabel: "mitm-response",
+					DurationMs: info.DurationMs, RequestID: info.RequestID,
+				}, endpointRegistry, truncateBody)
 
-				// Working copy. info is passed by value, so we can't mutate
-				// "the live response" — we accumulate changes and return them.
-				workBody := info.ResponseBody
-				workStatus := info.StatusCode
-				workHeaders := info.ResponseHeaders.Clone()
-				rewritten := false
-				seq := 0
-
-				for _, h := range hooks {
-					respCT := workHeaders.Get("Content-Type")
-					if !middleware.MatchesFilter(h.filters, info.Host, info.URI, info.Method, respCT, info.ContainerName, true, isLLM) {
-						continue
+				if res.Blocked {
+					return &gostx.MitmResponseDecision{
+						Block:      true,
+						StatusCode: res.BlockStatus,
+						BlockBody:  string(res.BlockBody),
 					}
-					mwBody := truncateBody(workBody)
-					mwBody, _ = middleware.DecompressBody(mwBody, workHeaders.Get("Content-Encoding"))
-					preHeaders := workHeaders.Clone()
-					preBody := workBody
-					msg := middleware.ResponseMsg{
-						Type: "http-response", ID: newUUID(),
-						Host: info.Host, Method: info.Method, URI: info.URI,
-						StatusCode:      workStatus,
-						RequestHeaders:  info.RequestHeaders,
-						RequestBody:     truncateBody(info.RequestBody),
-						ResponseHeaders: preHeaders,
-						ResponseBody:    mwBody,
-						Container:       info.ContainerName,
-						DurationMs:      info.DurationMs,
-					}
-					stepStart := time.Now()
-					d, _ := h.client.Send(ctx, msg)
-					stepMs := time.Since(stepStart).Milliseconds()
-					switch d.Action {
-					case "block":
-						middleware.StashEvent(info.RequestID, middleware.PendingEvent{
-							Sequence: seq, MiddlewareName: h.name, MiddlewareURL: h.url, Hook: "mitm-response",
-							Action: "block", StatusCode: d.StatusCode,
-							Tags: d.Tags, DurationMs: stepMs, CreatedAt: time.Now(),
-						})
-						return &gostx.MitmResponseDecision{
-							Block:      true,
-							StatusCode: d.StatusCode,
-							BlockBody:  string(d.Body),
-						}
-					case "rewrite":
-						rewritten = true
-						if d.StatusCode != 0 {
-							workStatus = d.StatusCode
-						}
-						if d.Body != nil {
-							workBody = d.Body
-						}
-						for k, v := range d.Headers {
-							workHeaders[k] = v
-						}
-						middleware.StashEvent(info.RequestID, middleware.PendingEvent{
-							Sequence: seq, MiddlewareName: h.name, MiddlewareURL: h.url, Hook: "mitm-response",
-							Action: "rewrite", StatusCode: d.StatusCode,
-							HeadersChanged: middleware.DiffHeaderNames(preHeaders, workHeaders),
-							BodyRewritten:  d.Body != nil && !bytes.Equal(d.Body, preBody),
-							Tags:           d.Tags, DurationMs: stepMs, CreatedAt: time.Now(),
-						})
-					default:
-						// allow / passthrough: only stash if tags were emitted.
-						if len(d.Tags) > 0 {
-							action := "tagged-allow"
-							if d.Action == "passthrough" {
-								action = "tagged-passthrough"
-							}
-							middleware.StashEvent(info.RequestID, middleware.PendingEvent{
-								Sequence: seq, MiddlewareName: h.name, MiddlewareURL: h.url, Hook: "mitm-response",
-								Action: action, Tags: d.Tags,
-								DurationMs: stepMs, CreatedAt: time.Now(),
-							})
-						}
-					}
-					seq++
 				}
-
-				if !rewritten {
+				if !res.Rewritten {
 					return nil
 				}
 				return &gostx.MitmResponseDecision{
-					NewStatusCode: workStatus,
-					NewHeaders:    workHeaders,
-					NewBody:       workBody,
+					NewStatusCode: res.Status,
+					NewHeaders:    res.Headers,
+					NewBody:       res.Body,
 				}
 			})
 		}
@@ -1393,20 +1166,22 @@ func applyDockerEnvOverrides(cfg *greyproxy.Config) {
 
 // buildMiddlewareConfigs merges CLI flags and YAML config into the ordered
 // list of middleware clients to instantiate. CLI entries come first, then
-// YAML entries. Defaults: timeout_ms=2000, on_disconnect=allow.
+// YAML entries. Defaults: timeout_ms=2000, on_disconnect=deny (secure).
+// Operators running advisory-only middleware (audit, cost tracker) should
+// set on_disconnect: allow explicitly in YAML.
 func buildMiddlewareConfigs(cliURLs []string, yamlEntries []greyproxy.MiddlewareConfig) []middleware.Config {
 	out := make([]middleware.Config, 0, len(cliURLs)+len(yamlEntries))
 	for _, u := range cliURLs {
 		if u == "" {
 			continue
 		}
-		out = append(out, middleware.Config{URL: u, TimeoutMs: 2000, OnDisconnect: "allow"})
+		out = append(out, middleware.Config{URL: u, TimeoutMs: 2000})
 	}
 	for _, y := range yamlEntries {
 		if y.URL == "" {
 			continue
 		}
-		cfg := middleware.Config{URL: y.URL, TimeoutMs: 2000, OnDisconnect: "allow"}
+		cfg := middleware.Config{URL: y.URL, TimeoutMs: 2000}
 		if y.TimeoutMs > 0 {
 			cfg.TimeoutMs = y.TimeoutMs
 		}
@@ -1419,11 +1194,241 @@ func buildMiddlewareConfigs(cliURLs []string, yamlEntries []greyproxy.Middleware
 	return out
 }
 
-func newUUID() string {
-	var buf [16]byte
-	_, _ = cryptorand.Read(buf[:])
-	buf[6] = (buf[6] & 0x0f) | 0x40 // version 4
-	buf[8] = (buf[8] & 0x3f) | 0x80 // variant 2
-	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
-		buf[0:4], buf[4:6], buf[6:8], buf[8:10], buf[10:16])
+// requestCascadeResult is the neutral outcome of runRequestCascade; the
+// plain-HTTP and MITM entry points translate it into their respective
+// transport-specific decision types.
+type requestCascadeResult struct {
+	Denied     bool
+	DenyStatus int
+	DenyBody   []byte
+}
+
+// responseCascadeInput bundles the per-request state both response cascades
+// need, so runResponseCascade can be transport-agnostic.
+type responseCascadeInput struct {
+	Host, Method, URI string
+	RequestHeaders    http.Header
+	RequestBody       []byte
+	Status            int
+	Headers           http.Header // working copy the cascade mutates
+	Body              []byte      // working copy
+	Container         string
+	TLS               bool
+	HookLabel         string // "http-response" | "mitm-response"
+	DurationMs        int64
+	RequestID         string // only set on MITM path; plain HTTP reads ctx
+}
+
+type responseCascadeResult struct {
+	Blocked     bool
+	BlockStatus int
+	BlockBody   []byte
+	Rewritten   bool
+	Status      int
+	Headers     http.Header
+	Body        []byte
+}
+
+// runRequestCascade walks the request hooks in order. It mutates req's
+// headers/body in place on rewrite (honouring the rewrite-header denylist),
+// short-circuits on the first deny, and stashes an Activity event for every
+// decision with side effects (deny/rewrite or tagged allow/passthrough).
+//
+// bodyPtr is *[]byte so a rewrite step can update the caller's view of the
+// body without the caller having to re-read req.Body.
+func runRequestCascade(
+	ctx context.Context,
+	hooks []middleware.CascadeHook,
+	req *http.Request,
+	container string,
+	tls bool,
+	hookLabel string,
+	bodyPtr *[]byte,
+	registry *greyproxy.EndpointRegistry,
+	truncate func([]byte) []byte,
+) requestCascadeResult {
+	requestID := gostx.RequestIDFromContext(ctx)
+	isLLM := registry.Match(req.URL.Path, req.Method, req.Host) != ""
+	seq := 0
+	log := logger.Default()
+
+	for _, h := range hooks {
+		ct := req.Header.Get("Content-Type")
+		if !middleware.MatchesFilter(h.Filters, req.Host, req.URL.Path, req.Method, ct, container, tls, isLLM) {
+			continue
+		}
+		preHeaders := req.Header.Clone()
+		preBody := *bodyPtr
+		msg := middleware.RequestMsg{
+			Type: "http-request", ID: middleware.NewID(),
+			Host: req.Host, Method: req.Method, URI: req.RequestURI,
+			Proto: req.Proto, Headers: preHeaders,
+			Body: truncate(*bodyPtr), Container: container, TLS: tls,
+		}
+		stepStart := time.Now()
+		d := h.Client.Send(ctx, msg)
+		stepMs := time.Since(stepStart).Milliseconds()
+
+		if d.Fallback != "" {
+			log.Warnf("middleware %s (%s): %s fallback action=%q", h.URL, hookLabel, d.Fallback, d.Action)
+		}
+		if !middleware.IsKnownAction(d.Action) {
+			log.Warnf("middleware %s (%s): unknown action %q, treating as allow", h.URL, hookLabel, d.Action)
+		}
+
+		switch d.Action {
+		case "deny":
+			middleware.StashEvent(requestID, middleware.PendingEvent{
+				Sequence: seq, MiddlewareName: h.Name, MiddlewareURL: h.URL, Hook: hookLabel,
+				Action: "deny", StatusCode: d.StatusCode,
+				Tags: d.Tags, DurationMs: stepMs, CreatedAt: time.Now(),
+			})
+			return requestCascadeResult{Denied: true, DenyStatus: d.StatusCode, DenyBody: d.Body}
+		case "rewrite":
+			if d.Body != nil {
+				*bodyPtr = d.Body
+				req.Body = io.NopCloser(bytes.NewReader(d.Body))
+				req.ContentLength = int64(len(d.Body))
+			}
+			_, rejected := middleware.MergeRewriteHeaders(req.Header, d.Headers)
+			if len(rejected) > 0 {
+				log.Warnf("middleware %s (%s): rejected header rewrite for %v (hop-by-hop or auth)", h.URL, hookLabel, rejected)
+			}
+			middleware.StashEvent(requestID, middleware.PendingEvent{
+				Sequence: seq, MiddlewareName: h.Name, MiddlewareURL: h.URL, Hook: hookLabel,
+				Action: "rewrite", StatusCode: d.StatusCode,
+				HeadersChanged: middleware.DiffHeaderNames(preHeaders, req.Header),
+				BodyRewritten:  middleware.BodyChanged(preBody, d.Body),
+				Tags:           d.Tags, DurationMs: stepMs, CreatedAt: time.Now(),
+			})
+		default:
+			// allow / passthrough / unknown: only stash if tags were emitted.
+			if len(d.Tags) > 0 {
+				action := "tagged-allow"
+				if d.Action == "passthrough" {
+					action = "tagged-passthrough"
+				}
+				middleware.StashEvent(requestID, middleware.PendingEvent{
+					Sequence: seq, MiddlewareName: h.Name, MiddlewareURL: h.URL, Hook: hookLabel,
+					Action: action, Tags: d.Tags,
+					DurationMs: stepMs, CreatedAt: time.Now(),
+				})
+			}
+		}
+		seq++
+	}
+	return requestCascadeResult{}
+}
+
+// runResponseCascade walks response hooks in order. It mutates the working
+// copies on in.Headers/in.Body on rewrite, short-circuits on block, and
+// returns the accumulated state. Decompression for the middleware's view of
+// the body happens per step (middleware may rewrite and leave an older
+// Content-Encoding in place; decompress guards against the next step trying
+// to gunzip plaintext).
+func runResponseCascade(
+	ctx context.Context,
+	hooks []middleware.CascadeHook,
+	in responseCascadeInput,
+	registry *greyproxy.EndpointRegistry,
+	truncate func([]byte) []byte,
+) responseCascadeResult {
+	requestID := in.RequestID
+	if requestID == "" {
+		requestID = gostx.RequestIDFromContext(ctx)
+	}
+	isLLM := registry.Match(in.URI, in.Method, in.Host) != ""
+	seq := 0
+	log := logger.Default()
+
+	workBody := in.Body
+	workStatus := in.Status
+	workHeaders := in.Headers
+	rewritten := false
+
+	for _, h := range hooks {
+		respCT := workHeaders.Get("Content-Type")
+		if !middleware.MatchesFilter(h.Filters, in.Host, in.URI, in.Method, respCT, in.Container, in.TLS, isLLM) {
+			continue
+		}
+		mwBody := truncate(workBody)
+		mwBody, _ = middleware.DecompressBody(mwBody, workHeaders.Get("Content-Encoding"))
+		preHeaders := workHeaders.Clone()
+		preBody := workBody
+		msg := middleware.ResponseMsg{
+			Type: "http-response", ID: middleware.NewID(),
+			Host: in.Host, Method: in.Method, URI: in.URI,
+			StatusCode:      workStatus,
+			RequestHeaders:  in.RequestHeaders,
+			RequestBody:     truncate(in.RequestBody),
+			ResponseHeaders: preHeaders,
+			ResponseBody:    mwBody,
+			Container:       in.Container,
+			DurationMs:      in.DurationMs,
+		}
+		stepStart := time.Now()
+		d := h.Client.Send(ctx, msg)
+		stepMs := time.Since(stepStart).Milliseconds()
+
+		if d.Fallback != "" {
+			log.Warnf("middleware %s (%s): %s fallback action=%q", h.URL, in.HookLabel, d.Fallback, d.Action)
+		}
+		if !middleware.IsKnownAction(d.Action) {
+			log.Warnf("middleware %s (%s): unknown action %q, treating as passthrough", h.URL, in.HookLabel, d.Action)
+		}
+
+		switch d.Action {
+		case "block":
+			middleware.StashEvent(requestID, middleware.PendingEvent{
+				Sequence: seq, MiddlewareName: h.Name, MiddlewareURL: h.URL, Hook: in.HookLabel,
+				Action: "block", StatusCode: d.StatusCode,
+				Tags: d.Tags, DurationMs: stepMs, CreatedAt: time.Now(),
+			})
+			return responseCascadeResult{Blocked: true, BlockStatus: d.StatusCode, BlockBody: d.Body}
+		case "rewrite":
+			rewritten = true
+			if d.StatusCode != 0 {
+				workStatus = d.StatusCode
+			}
+			if d.Body != nil {
+				workBody = d.Body
+				// If the middleware supplied a fresh body, the old
+				// Content-Encoding almost certainly no longer matches.
+				// Strip it so downstream (and the next cascade step)
+				// don't try to decompress plaintext.
+				workHeaders.Del("Content-Encoding")
+			}
+			_, rejected := middleware.MergeRewriteHeaders(workHeaders, d.Headers)
+			if len(rejected) > 0 {
+				log.Warnf("middleware %s (%s): rejected header rewrite for %v (hop-by-hop or auth)", h.URL, in.HookLabel, rejected)
+			}
+			middleware.StashEvent(requestID, middleware.PendingEvent{
+				Sequence: seq, MiddlewareName: h.Name, MiddlewareURL: h.URL, Hook: in.HookLabel,
+				Action: "rewrite", StatusCode: d.StatusCode,
+				HeadersChanged: middleware.DiffHeaderNames(preHeaders, workHeaders),
+				BodyRewritten:  middleware.BodyChanged(preBody, d.Body),
+				Tags:           d.Tags, DurationMs: stepMs, CreatedAt: time.Now(),
+			})
+		default:
+			if len(d.Tags) > 0 {
+				action := "tagged-allow"
+				if d.Action == "passthrough" {
+					action = "tagged-passthrough"
+				}
+				middleware.StashEvent(requestID, middleware.PendingEvent{
+					Sequence: seq, MiddlewareName: h.Name, MiddlewareURL: h.URL, Hook: in.HookLabel,
+					Action: action, Tags: d.Tags,
+					DurationMs: stepMs, CreatedAt: time.Now(),
+				})
+			}
+		}
+		seq++
+	}
+
+	return responseCascadeResult{
+		Rewritten: rewritten,
+		Status:    workStatus,
+		Headers:   workHeaders,
+		Body:      workBody,
+	}
 }
