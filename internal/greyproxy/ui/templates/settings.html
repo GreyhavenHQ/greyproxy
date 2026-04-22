@@ -483,6 +483,9 @@
             var statusPill = mw.connected
                 ? '<span class="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-300"><span class="h-1.5 w-1.5 rounded-full bg-green-500"></span>connected</span>'
                 : '<span class="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-300"><span class="h-1.5 w-1.5 rounded-full bg-red-500"></span>disconnected</span>';
+            var kindPill = mw.kind === 'stdio'
+                ? '<span class="inline-block text-xs px-2 py-0.5 rounded-full bg-purple-100 dark:bg-purple-900/30 text-purple-800 dark:text-purple-300 font-medium">stdio</span>'
+                : '<span class="inline-block text-xs px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300 font-medium">ws</span>';
             var title = mw.name ? escapeHtml(mw.name) : '<span class="text-muted-foreground italic">unnamed</span>';
             var hooks = (mw.hooks || []).map(function(h) {
                 return '<span class="inline-block text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-mono">' + escapeHtml(h) + '</span>';
@@ -497,7 +500,10 @@
             return '' +
                 '<div class="border border-border rounded-lg p-4 mb-3 last:mb-0">' +
                     '<div class="flex items-center justify-between gap-3 mb-2">' +
-                        '<div class="font-medium">' + title + '</div>' +
+                        '<div class="flex items-center gap-2 min-w-0 flex-1">' +
+                            '<span class="font-medium truncate">' + title + '</span>' +
+                            kindPill +
+                        '</div>' +
                         statusPill +
                     '</div>' +
                     '<div class="text-xs text-muted-foreground font-mono break-all mb-3">' + escapeHtml(mw.url) + '</div>' +
