@@ -48,6 +48,7 @@ PORT = 9000
 
 HELLO_RESPONSE = {
     "type": "hello",
+    "name": "pii-redactor",
     "hooks": [
         {
             "type": "http-request",

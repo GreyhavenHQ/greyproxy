@@ -53,6 +53,7 @@ stats = {"requests": 0, "responses": 0}
 
 HELLO_RESPONSE = {
     "type": "hello",
+    "name": "audit-log",
     "hooks": [
         {"type": "http-request"},
         {"type": "http-response"},

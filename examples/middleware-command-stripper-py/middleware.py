@@ -41,6 +41,7 @@ PORT = 9000
 
 HELLO_RESPONSE = {
     "type": "hello",
+    "name": "command-stripper",
     "hooks": [
         # Filter on LLM completion endpoints by path rather than domain,
         # so this works with any provider (including self-hosted models).
