@@ -27,10 +27,24 @@ Remove secrets from the request body before retrying.
 
 ## Run
 
-```bash
-uv run middleware.py
-```
+### Stdio (preferred)
+
+Greyproxy spawns the scanner as a child process:
 
 ```bash
+greyproxy serve --middleware-cmd 'uv run examples/middleware-secret-scanner-py/middleware.py'
+```
+
+No port, no separate terminal, no "is my middleware still running?" question — the scanner's lifecycle belongs to greyproxy.
+
+### WebSocket
+
+For a shared scanner service used by multiple greyproxy instances, run as a WS server:
+
+```bash
+uv run examples/middleware-secret-scanner-py/middleware.py
+# then
 greyproxy serve --middleware ws://localhost:9000/middleware
 ```
+
+Same handler code, different transport — the helper in `examples/_lib/greyproxy_middleware.py` picks based on how we were launched.

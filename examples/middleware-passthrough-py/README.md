@@ -1,6 +1,6 @@
 # Passthrough Middleware
 
-A minimal skeleton that logs every request and response, then allows everything through unchanged. Use this as a starting point for your own middleware.
+A minimal skeleton that logs every request and response, then allows everything through unchanged. Reference implementation for the transport-agnostic pattern: the same `handle_request` / `handle_response` code runs under either stdio or WebSocket, picked at launch time.
 
 > **Not for production use.** This example has no error handling, authentication, TLS, or other safeguards.
 
@@ -12,15 +12,29 @@ A minimal skeleton that logs every request and response, then allows everything 
 
 ## Run
 
+### Stdio (recommended for local policy gates)
+
+Greyproxy spawns the middleware and owns its lifecycle. No port, no separate terminal:
+
 ```bash
-uv run middleware.py
+greyproxy serve --middleware-cmd 'uv run examples/middleware-passthrough-py/middleware.py'
 ```
 
-Then in another terminal:
+### WebSocket (for shared or remote middlewares)
+
+Start the middleware in one terminal:
+
+```bash
+uv run examples/middleware-passthrough-py/middleware.py
+```
+
+Point greyproxy at it in another:
 
 ```bash
 greyproxy serve --middleware ws://localhost:9000/middleware
 ```
+
+The middleware code is identical between modes. The helper in `examples/_lib/greyproxy_middleware.py` picks transport based on the `GREYPROXY_TRANSPORT` env var that greyproxy sets when it spawns a child.
 
 ## Use as a template
 
@@ -28,7 +42,7 @@ greyproxy serve --middleware ws://localhost:9000/middleware
 cp -r examples/middleware-passthrough-py my-middleware
 cd my-middleware
 # edit handle_request() and handle_response() in middleware.py
-uv run middleware.py
+greyproxy serve --middleware-cmd "uv run $(pwd)/middleware.py"
 ```
 
-Helper functions (`allow`, `deny`, `rewrite_request`, `passthrough`, `block`, `rewrite_response`) are included so you only need to write the decision logic.
+Helper functions (`allow`, `deny`, `rewrite_request`, `passthrough`, `block`, `rewrite_response`, `decode_body`) are importable from the shared helper so you only write decision logic.
