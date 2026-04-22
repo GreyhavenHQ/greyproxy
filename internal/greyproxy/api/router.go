@@ -34,6 +34,12 @@ type Shared struct {
 	DataHome        string
 	ReloadCertFn    func() error
 	CertMtimeFn     func() time.Time
+	// MiddlewareStatusesFn returns a live snapshot of the connected
+	// middleware clients for the /api/middlewares endpoint. It's a func
+	// (set by cmd/greyproxy after the clients are created) rather than a
+	// concrete list so the api package doesn't import the middleware
+	// package, which would produce an import cycle.
+	MiddlewareStatusesFn func() []greyproxy.MiddlewareStatus
 }
 
 // NewRouter creates the Gin router with all routes.
@@ -132,6 +138,9 @@ func NewRouter(s *Shared, pathPrefix string) (*gin.Engine, *gin.RouterGroup) {
 		api.GET("/credentials", CredentialsListHandler(s))
 		api.POST("/credentials", CredentialsCreateHandler(s))
 		api.DELETE("/credentials/:id", CredentialsDeleteHandler(s))
+
+		// Middleware status (read-only, introspection)
+		api.GET("/middlewares", MiddlewaresListHandler(s))
 	}
 
 	// WebSocket

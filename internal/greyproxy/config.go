@@ -31,6 +31,22 @@ type MiddlewareConfig struct {
 	AuthHeader   string `yaml:"auth_header" json:"auth_header"`
 }
 
+// MiddlewareStatus is a read-only snapshot of one middleware client's state,
+// shaped for the UI and API (which live outside the middleware package).
+// cmd/greyproxy builds these from the live clients on each request to the
+// /api/middlewares endpoint, so the list is always fresh — no event bus,
+// no cache invalidation.
+type MiddlewareStatus struct {
+	URL             string   `json:"url"`
+	Name            string   `json:"name,omitempty"`
+	Connected       bool     `json:"connected"`
+	ProtocolVersion int      `json:"protocol_version,omitempty"`
+	Hooks           []string `json:"hooks,omitempty"` // "http-request" / "http-response"
+	MaxBodyBytes    int64    `json:"max_body_bytes,omitempty"`
+	TimeoutMs       int      `json:"timeout_ms"`
+	OnDisconnect    string   `json:"on_disconnect"`
+}
+
 // DockerConfig enables optional Docker socket integration for resolving container
 // IP addresses to container names. When enabled, the bypass plugin uses the Docker
 // API to map source IPs to the actual container name, producing more meaningful

@@ -826,6 +826,30 @@ func (p *program) buildGreyproxyService() error {
 			}
 		}
 
+		// Expose the live middleware list to /api/middlewares. The closure
+		// reads each client on every call so Connected / ProtocolVersion
+		// stay fresh as reconnects happen.
+		shared.MiddlewareStatusesFn = func() []greyproxy.MiddlewareStatus {
+			out := make([]greyproxy.MiddlewareStatus, 0, len(clients))
+			for _, c := range clients {
+				hookNames := make([]string, 0, 2)
+				for _, s := range c.HookSpecs() {
+					hookNames = append(hookNames, s.Type)
+				}
+				out = append(out, greyproxy.MiddlewareStatus{
+					URL:             c.URL(),
+					Name:            c.Name(),
+					Connected:       c.IsConnected(),
+					ProtocolVersion: c.ProtocolVersion(),
+					Hooks:           hookNames,
+					MaxBodyBytes:    c.MaxBodyBytes(),
+					TimeoutMs:       c.TimeoutMs(),
+					OnDisconnect:    c.OnDisconnect(),
+				})
+			}
+			return out
+		}
+
 		// truncateBody uses the smallest max_body_bytes across all clients
 		// that declared a limit. 0 = no limit.
 		truncateBody := func(body []byte) []byte {

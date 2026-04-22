@@ -22,6 +22,10 @@
             class="settings-tab flex-1 px-4 py-2 text-sm font-medium transition-colors border-l border-border text-muted-foreground hover:bg-muted">
             Conversations
         </button>
+        <button type="button" onclick="switchTab('middlewares')" data-tab="middlewares"
+            class="settings-tab flex-1 px-4 py-2 text-sm font-medium transition-colors border-l border-border text-muted-foreground hover:bg-muted">
+            Middlewares
+        </button>
     </div>
 
     <!-- ==================== General Tab ==================== -->
@@ -398,6 +402,34 @@
 
     </div><!-- end tab-conversations -->
 
+    <!-- ==================== Middlewares Tab ==================== -->
+    <div id="tab-middlewares" class="hidden">
+
+    <!-- Info block -->
+    <div class="flex gap-3 p-4 mb-6 rounded-lg border border-blue-200 dark:border-blue-800/50 bg-blue-50/50 dark:bg-blue-950/20">
+        <svg class="h-5 w-5 text-blue-500 dark:text-blue-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" />
+        </svg>
+        <p class="text-sm text-blue-900 dark:text-blue-200">
+            External middleware services inspect, block, or rewrite requests and responses over a persistent WebSocket. They are configured via the <code class="font-mono bg-blue-100 dark:bg-blue-900/30 px-1 rounded">--middleware</code> CLI flag or the <code class="font-mono bg-blue-100 dark:bg-blue-900/30 px-1 rounded">middlewares:</code> block in <code class="font-mono bg-blue-100 dark:bg-blue-900/30 px-1 rounded">greyproxy.yml</code>. This page is read-only; restart greyproxy to change the list.
+        </p>
+    </div>
+
+    <!-- Middleware list -->
+    <div class="bg-card border border-border rounded-lg p-6">
+        <div class="flex items-center justify-between mb-4">
+            <h2 class="text-lg font-semibold">Connected Middlewares</h2>
+            <button type="button" id="mw-refresh-btn" class="text-xs px-3 py-1 rounded border border-border bg-muted hover:bg-accent text-muted-foreground">
+                Refresh
+            </button>
+        </div>
+        <div id="middlewares-list">
+            <p class="text-sm text-muted-foreground">Loading...</p>
+        </div>
+    </div>
+
+    </div><!-- end tab-middlewares -->
+
 </div>
 {{end}}
 
@@ -420,7 +452,7 @@
                 btn.classList.add('text-muted-foreground', 'hover:bg-muted');
             }
         });
-        ['general', 'mitm', 'credentials', 'conversations'].forEach(function(t) {
+        ['general', 'mitm', 'credentials', 'conversations', 'middlewares'].forEach(function(t) {
             var panel = document.getElementById('tab-' + t);
             if (t === tab) {
                 panel.classList.remove('hidden');
@@ -429,11 +461,81 @@
             }
         });
         history.replaceState(null, '', '#' + tab);
+        if (tab === 'middlewares') {
+            loadMiddlewares();
+        }
     };
+
+    // --- Middlewares tab ---
+    function escapeHtml(s) {
+        return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) {
+            return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+        });
+    }
+
+    function renderMiddlewares(list) {
+        var container = document.getElementById('middlewares-list');
+        if (!list || list.length === 0) {
+            container.innerHTML = '<p class="text-sm text-muted-foreground">No middlewares configured. Add one with <code class="font-mono bg-muted px-1 rounded">--middleware ws://host:port/path</code> or in <code class="font-mono bg-muted px-1 rounded">greyproxy.yml</code>.</p>';
+            return;
+        }
+        var rows = list.map(function(mw) {
+            var statusPill = mw.connected
+                ? '<span class="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-300"><span class="h-1.5 w-1.5 rounded-full bg-green-500"></span>connected</span>'
+                : '<span class="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-300"><span class="h-1.5 w-1.5 rounded-full bg-red-500"></span>disconnected</span>';
+            var title = mw.name ? escapeHtml(mw.name) : '<span class="text-muted-foreground italic">unnamed</span>';
+            var hooks = (mw.hooks || []).map(function(h) {
+                return '<span class="inline-block text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-mono">' + escapeHtml(h) + '</span>';
+            }).join(' ');
+            if (!hooks) hooks = '<span class="text-xs text-muted-foreground italic">no hooks declared</span>';
+            var bodyLimit = mw.max_body_bytes && mw.max_body_bytes > 0
+                ? formatBytes(mw.max_body_bytes)
+                : 'unlimited';
+            var policyClass = mw.on_disconnect === 'deny'
+                ? 'text-red-700 dark:text-red-300'
+                : 'text-yellow-700 dark:text-yellow-300';
+            return '' +
+                '<div class="border border-border rounded-lg p-4 mb-3 last:mb-0">' +
+                    '<div class="flex items-center justify-between gap-3 mb-2">' +
+                        '<div class="font-medium">' + title + '</div>' +
+                        statusPill +
+                    '</div>' +
+                    '<div class="text-xs text-muted-foreground font-mono break-all mb-3">' + escapeHtml(mw.url) + '</div>' +
+                    '<div class="flex flex-wrap gap-x-6 gap-y-2 text-xs">' +
+                        '<div><span class="text-muted-foreground">Protocol:</span> v' + (mw.protocol_version || 0) + '</div>' +
+                        '<div><span class="text-muted-foreground">Timeout:</span> ' + (mw.timeout_ms || 0) + ' ms</div>' +
+                        '<div><span class="text-muted-foreground">On disconnect:</span> <span class="' + policyClass + ' font-medium">' + escapeHtml(mw.on_disconnect || '') + '</span></div>' +
+                        '<div><span class="text-muted-foreground">Max body:</span> ' + bodyLimit + '</div>' +
+                    '</div>' +
+                    '<div class="flex flex-wrap gap-1 mt-2">' + hooks + '</div>' +
+                '</div>';
+        }).join('');
+        container.innerHTML = rows;
+    }
+
+    function formatBytes(n) {
+        if (n < 1024) return n + ' B';
+        if (n < 1024*1024) return (n/1024).toFixed(1) + ' KiB';
+        return (n/(1024*1024)).toFixed(1) + ' MiB';
+    }
+
+    function loadMiddlewares() {
+        var container = document.getElementById('middlewares-list');
+        container.innerHTML = '<p class="text-sm text-muted-foreground">Loading...</p>';
+        fetch(prefix + '/api/middlewares', {credentials: 'same-origin'})
+            .then(function(r) { return r.ok ? r.json() : Promise.reject(r.status); })
+            .then(function(data) { renderMiddlewares(data.middlewares || []); })
+            .catch(function(err) {
+                container.innerHTML = '<p class="text-sm text-red-600 dark:text-red-400">Failed to load: ' + escapeHtml(String(err)) + '</p>';
+            });
+    }
+
+    var mwRefreshBtn = document.getElementById('mw-refresh-btn');
+    if (mwRefreshBtn) mwRefreshBtn.addEventListener('click', loadMiddlewares);
 
     // Restore tab from URL hash
     var hash = window.location.hash.replace('#', '');
-    if (['general', 'mitm', 'credentials', 'conversations'].indexOf(hash) !== -1) {
+    if (['general', 'mitm', 'credentials', 'conversations', 'middlewares'].indexOf(hash) !== -1) {
         switchTab(hash);
     }
 

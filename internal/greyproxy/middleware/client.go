@@ -304,6 +304,25 @@ func (c *Client) ProtocolVersion() int {
 	return c.protocolVersion
 }
 
+// IsConnected reports whether the WebSocket connection is currently live.
+// It flips to false as soon as the read loop exits (transport error, peer
+// close, or context cancel) and flips back to true only after the next
+// successful hello exchange.
+func (c *Client) IsConnected() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.conn != nil
+}
+
+// URL returns the configured WebSocket URL for this client.
+func (c *Client) URL() string { return c.url }
+
+// TimeoutMs returns the configured per-message timeout in milliseconds.
+func (c *Client) TimeoutMs() int { return c.timeoutMs }
+
+// OnDisconnect returns the configured policy (currently "allow" or "deny").
+func (c *Client) OnDisconnect() string { return c.onTimeout }
+
 // Send sends a message to the middleware and waits for the corresponding
 // decision. Send never returns an error: when the middleware fails to respond
 // (disconnected, write failure, timeout, context cancel), Send returns a
