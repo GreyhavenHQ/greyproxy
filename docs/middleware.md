@@ -1,41 +1,57 @@
 # Middleware
 
-Greyproxy supports an external middleware service that can inspect, block, or rewrite HTTP requests and responses in real time. The middleware connects over a persistent WebSocket and receives JSON messages for each intercepted request/response.
+Greyproxy supports external middleware services that can inspect, block, or rewrite HTTP requests and responses in real time. A middleware is a small program that receives structured JSON descriptions of requests and responses and replies with a decision: allow, deny, rewrite, passthrough, block. Greyproxy handles all the networking, TLS termination, and MITM certificate generation.
+
+Two transports are supported, and you pick one per middleware:
+
+- **Stdio** — greyproxy spawns your middleware as a child process and talks to it over stdin/stdout. No port, no separate terminal, greyproxy owns the lifecycle. **Recommended for local deployments.**
+- **WebSocket** — greyproxy dials your middleware over a persistent WebSocket. Use this when the middleware runs as a shared service, on a different host, or in a language where stdio framing is awkward.
+
+The wire protocol (hello exchange, message shapes, decision actions) is identical across both. The only difference is how messages are framed: WS frames for the network transport, newline-delimited JSON for stdio.
 
 ## Overview
 
 ```
  Client              Greyproxy                  Middleware           Upstream
 +------+            +---------+                +----------+         +--------+
-| App  | -- req --> | Proxy   | -- JSON/WS --> | Your     |         | API    |
+| App  | -- req --> | Proxy   | --- JSON ----> | Your     |         | API    |
 |      |            |         | <-- decision - | Service  |         |        |
-|      |            |         | -------------- req -----> |         |        |
-|      | <-- resp - |         | <-- JSON/WS -- |          | <-resp- |        |
+|      |            |         | ------------------ req -------->    |        |
+|      | <-- resp - |         | <-- JSON ----- |          | <-resp- |        |
 +------+            +---------+                +----------+         +--------+
+                                   ^
+                                   stdio (NDJSON) or WebSocket frames
 ```
 
-The middleware never handles raw TCP or TLS. It receives structured JSON descriptions of requests/responses and returns decisions. Greyproxy handles all networking, TLS termination, and MITM cert generation.
+The middleware never handles raw TCP or TLS. It gets ready-to-consume JSON and returns decisions.
 
 ## Quick start
 
-1. Pick an example and start it (no install needed, uv handles dependencies):
+### Stdio (simplest)
+
+One command. Greyproxy spawns the middleware; no port to manage.
 
 ```bash
-cd examples/middleware-passthrough-py
-uv run middleware.py
+greyproxy serve --middleware-cmd 'uv run examples/middleware-passthrough-py/middleware.py'
 ```
 
-2. Start greyproxy with the `--middleware` flag:
+### WebSocket
+
+Start the middleware in one terminal, point greyproxy at it in another.
 
 ```bash
+# Terminal 1
+uv run examples/middleware-passthrough-py/middleware.py
+
+# Terminal 2
 greyproxy serve --middleware ws://localhost:9000/middleware
 ```
 
-That is all that is needed. Greyproxy connects to the middleware on startup, performs a capability handshake, and starts routing matching traffic through it.
+Either way: on startup greyproxy performs a capability handshake with the middleware and starts routing matching traffic through it.
 
 ## Examples
 
-Six example middleware are included under `examples/`. Each is a self-contained single file that runs with `uv run middleware.py`.
+Seven example middlewares ship under `examples/`. Each is a single file and runs with `uv run middleware.py`. All of them use a small shared helper (`examples/_lib/greyproxy_middleware.py`) that auto-detects the transport, so the same middleware code runs under either stdio or WebSocket.
 
 | Example | What it does | Hooks |
 |---|---|---|
@@ -45,79 +61,76 @@ Six example middleware are included under `examples/`. Each is a self-contained 
 | `middleware-secret-scanner-py` | Blocks outbound requests that contain leaked secrets (AWS keys, API tokens, private keys, passwords). | request only |
 | `middleware-cost-tracker-py` | Parses OpenAI/Anthropic response bodies for token usage, estimates cost, and logs cumulative spend per container to a JSONL file. Read-only, never blocks. | response only |
 | `middleware-audit-log-py` | Writes every request/response to a structured JSONL audit trail with timestamps, containers, durations, and body sizes. Read-only, never blocks. | request + response |
+| `middleware-rtk-compress-py` | Rewrites LLM request bodies to compress noisy `tool_result` output (diffs, JSON, logs) through [rtk](https://github.com/rtk-ai/rtk), saving context-window tokens. | request only |
 
-All examples are intentionally simplified for illustration and are **not meant for production use**. See each file's docstring for specific limitations.
-
-## Transports
-
-Greyproxy speaks the same wire protocol over two transports. Which one you pick is a deployment question, not a protocol question — the same middleware code works under either.
-
-| Transport | Launch | Best for |
-|---|---|---|
-| **stdio** | `greyproxy serve --middleware-cmd 'uv run mw.py'` | Local middleware, single-host setups. Greyproxy spawns the child, owns its lifecycle, respawns on crash. No port, no separate terminal. |
-| **ws** | `greyproxy serve --middleware ws://host:port/path` | Shared services across multiple greyproxy instances, remote middleware, middleware written in a language where stdio framing is awkward. |
-
-The helper library at `examples/_lib/greyproxy_middleware.py` hides the transport difference from middleware authors: call `run(handle_request=..., handle_response=...)` and the library picks transport based on how the process was launched (env var `GREYPROXY_TRANSPORT=stdio` set by greyproxy when it spawns a child, otherwise bind a WS server).
+All examples are intentionally simplified and are **not meant for production use**. See each file's docstring for specific limitations.
 
 ## Configuration
 
 ### CLI flags
 
+Both flags are repeatable; the two can be mixed freely:
+
 ```bash
-# stdio
+# One stdio child
 greyproxy serve --middleware-cmd 'uv run examples/middleware-secret-scanner-py/middleware.py'
 
-# ws
-greyproxy serve --middleware ws://localhost:9000/middleware
-```
+# One remote WebSocket middleware
+greyproxy serve --middleware ws://remote-scanner.internal:9000/middleware
 
-Both flags are repeatable and can be mixed. Middlewares cascade in declaration order: each sees the previous one's (possibly rewritten) output as its input; `deny`/`block` short-circuits the chain. CLI `--middleware` entries come first in the cascade, then CLI `--middleware-cmd` entries, then YAML entries.
-
-```bash
+# Multiple middlewares cascade; declaration order wins
 greyproxy serve \
-  --middleware ws://localhost:9000/secret-scanner \
-  --middleware-cmd 'uv run ./cost-tracker/middleware.py'
+  --middleware ws://internal-security.corp:9000/secret-scanner \
+  --middleware-cmd 'uv run ./cost-tracker/middleware.py' \
+  --middleware-cmd 'uv run ./audit-log/middleware.py'
 ```
 
-The `--middleware` flag accepts `http://` and `https://` as aliases (converted to `ws://` and `wss://`). The `--middleware-cmd` flag accepts a command line that's split using shell-like rules (quotes + backslash escapes) but NOT invoked through a shell — so there's no variable expansion or piping. Use `--middleware-cmd 'sh -c "..."'` if you need those.
+Cascade order: CLI `--middleware` entries first, then CLI `--middleware-cmd` entries, then YAML entries. Each middleware sees the previous one's (possibly rewritten) output as its input; a `deny` or `block` decision short-circuits the chain.
+
+- `--middleware ws://…` accepts `http://` and `https://` as aliases (converted to `ws://` and `wss://`).
+- `--middleware-cmd '…'` takes a command string parsed with shell-like rules (quotes, backslash escapes) but **not** invoked through a shell. There's no variable expansion, no piping, no redirection. If you need those, spell them out: `--middleware-cmd 'sh -c "FOO=bar exec ./mw"'`.
 
 ### Config file (greyproxy.yml)
 
-Each entry must specify either `url:` (ws transport) or `command:` (stdio transport), never both.
+Each YAML entry specifies either `url:` (WebSocket) or `command:` (stdio), never both:
 
 ```yaml
 greyproxy:
   middlewares:
-    # stdio: greyproxy spawns this and owns its lifecycle
+    # Stdio: greyproxy spawns this process and owns its lifecycle.
     - command: ["uv", "run", "./middleware-secret-scanner-py/middleware.py"]
       name: "secret-scanner"
       timeout_ms: 10000
-      on_disconnect: deny
+      on_disconnect: deny                # secure default, spelled out for clarity
 
-    # ws: middleware runs independently, greyproxy dials it
-    - url: "ws://localhost:9001/cost-tracker"
+    # WebSocket: middleware runs independently, greyproxy dials it.
+    - url: "ws://cost-tracker.internal:9001/middleware"
       on_disconnect: allow               # observational middleware: don't block on failure
       timeout_ms: 500                    # local, fast: surface hangs quickly
-      auth_header: "X-Secret: mysecret"
+      auth_header: "X-Secret: mysecret"  # sent on the WS upgrade request
 ```
 
-`command` is always a list of argv elements — no shell. If you need shell features, start the list with `["sh", "-c", "..."]`. `name` on a stdio entry is used as a log prefix on the child's stderr output until the middleware declares its own name in the hello exchange.
+`command:` is always a list of argv elements; no shell is invoked. If you need shell features, the first elements of the list should be `["sh", "-c", "..."]`.
+
+`name:` on a stdio entry is a short identifier that shows up as the log prefix on the child's stderr output *before* the middleware has a chance to declare its own name in the hello exchange. Omit it and greyproxy uses the basename of the command (so `mw[uv]` etc).
 
 `on_disconnect` is per-middleware: a disconnected middleware configured `allow` skips to the next step; one configured `deny` kills the request immediately.
 
-The default is `deny` (secure-by-default). A middleware that is unreachable, times out, or crashes causes the request to be rejected (403) or the response to be blocked (502); the operator has to opt in to pass-through behaviour by setting `on_disconnect: allow` explicitly. This matters for policy middleware (secret scanners, PII redactors, security gates): if the gate isn't running, the request shouldn't leak through silently. Observation-only middleware (audit logs, cost trackers) should set `on_disconnect: allow` explicitly since their absence is not a policy violation.
+The default is `deny` (secure-by-default). A middleware that is unreachable, times out, or crashes causes the request to be rejected (403) or the response to be blocked (502). The operator has to opt in to pass-through behaviour by setting `on_disconnect: allow` explicitly. This matters for policy middleware (secret scanners, PII redactors, security gates): if the gate isn't running, the request shouldn't leak through silently. Observation-only middleware (audit logs, cost trackers) should set `on_disconnect: allow` explicitly since their absence is not a policy violation.
 
 ## Protocol
 
 ### Connection lifecycle
 
-Greyproxy initiates a WebSocket connection to the configured URL. On connect:
+On startup, greyproxy either dials the WebSocket URL (`ws` transport) or spawns the child process (`stdio` transport). Then:
 
 1. Greyproxy sends a `hello` message with its protocol version.
-2. The middleware responds with a `hello` declaring which hooks it wants and optional filters.
+2. The middleware responds with a `hello` declaring its supported version range, optional name, and the hooks it wants with filters.
 3. The connection stays open. Greyproxy sends request/response messages; the middleware replies with decisions.
 
-If the connection drops, greyproxy reconnects with exponential backoff (100ms doubling up to a 2s cap) plus ±20% jitter. A connection that stayed up for at least 5 seconds before dropping is treated as "healthy", so the next disconnect restarts backoff at 100ms rather than inheriting the tail of the previous attempt. In practice, a middleware restart recovers within a few hundred milliseconds. During reconnect the `on_disconnect` policy applies.
+If the connection drops (the WS peer closes, or the stdio child exits), greyproxy reconnects with exponential backoff (100ms doubling up to a 2s cap) plus ±20% jitter. A connection that stayed up for at least 5 seconds before dropping is treated as "healthy", so the next disconnect restarts backoff at 100ms rather than inheriting the tail of the previous attempt. For stdio middlewares this means `greyproxy → uv → python3` is respawned as a fresh child; for WS middlewares it means a new dial. During the reconnect window the `on_disconnect` policy applies.
+
+Stdio-specific: greyproxy puts the child in its own process group, so when greyproxy exits or needs to respawn the middleware, the whole subtree is killed (including grandchildren spawned by wrapper scripts like `uv run`). Ports and files the middleware had open are released immediately.
 
 ### Hello exchange
 
@@ -126,7 +139,7 @@ If the connection drops, greyproxy reconnects with exponential backoff (100ms do
 {"type": "hello", "version": 1}
 ```
 
-The `version` field is the protocol version the proxy currently speaks. Middlewares should use it to tell apart proxy generations if they ever need to branch their behaviour; in most cases they can ignore it and just declare their own supported range.
+The `version` field is the protocol version the proxy currently speaks. Middlewares can ignore it and just declare their own supported range in the response.
 
 **Middleware responds (within 5 seconds):**
 ```json
@@ -156,15 +169,15 @@ The `version` field is the protocol version the proxy currently speaks. Middlewa
 }
 ```
 
-`name` is optional but recommended. When the middleware takes a mutating action or emits tags, the Activity view shows the event badge labeled with this name (falling back to the middleware URL when `name` is absent). Keep it short — it's rendered inline in the activity rows.
+`name` is optional but recommended. When the middleware takes a mutating action or emits tags, the Activity view shows the event badge labeled with this name (falling back to the middleware endpoint when `name` is absent). Keep it short — it's rendered inline in the activity rows.
 
 #### Version negotiation
 
 `min_version` and `max_version` declare the inclusive range of protocol versions the middleware supports. After the proxy receives the hello response it picks the highest integer in the overlap of `[min_version, max_version]` and `[1, ProxyMaxVersion]`. On success, the agreed version is logged and the connection proceeds. On no overlap, the connection is refused with an error naming both ranges so the operator can see exactly which side is lagging.
 
-Omitting both fields (the common case today) is equivalent to declaring `min_version: 1, max_version: 1` — existing v1 middlewares keep working without changes as the proxy protocol evolves. New middlewares should set the range explicitly so that a future proxy bump can pick a higher version when both sides are ready.
+Omitting both fields is equivalent to declaring `min_version: 1, max_version: 1` — existing v1 middlewares keep working without changes as the proxy protocol evolves. New middlewares should set the range explicitly so that a future proxy bump can pick a higher version when both sides are ready.
 
-The current proxy protocol version is **1**. A middleware that wants to be forward-compatible with future proxies should widen its `max_version` once the new version ships *and* its own code handles the new fields.
+The current proxy protocol version is **1**.
 
 ### Hook types
 
@@ -175,7 +188,7 @@ The current proxy protocol version is **1**. A middleware that wants to be forwa
 
 ### Filters
 
-Filters are evaluated inside greyproxy before anything is sent over WebSocket. Non-matching traffic has zero overhead (no JSON encoding, no WS write).
+Filters are evaluated inside greyproxy before anything is sent over the transport. Non-matching traffic has zero overhead (no JSON encoding, no message write).
 
 | Filter | Matching | Example |
 |---|---|---|
@@ -302,7 +315,7 @@ If the middleware does not respond within `timeout_ms`, greyproxy applies the `o
 | `deny` (default) | Request is denied with 403 | Response is blocked with 502 |
 | `allow` | Request is forwarded unchanged | Response is passed through unchanged |
 
-The same policy applies when the WebSocket connection is down during reconnect, during `timeout_ms`, on write failure, on marshal error, and when the incoming ctx is cancelled. In every case greyproxy logs a `fallback action=<x>` warning naming the reason so operators can distinguish "middleware allowed" from "middleware was down".
+The same policy applies when the transport is down during reconnect, during `timeout_ms`, on write failure, on marshal error, and when the incoming ctx is cancelled. In every case greyproxy logs a `fallback action=<x>` warning naming the reason so operators can distinguish "middleware allowed" from "middleware was down".
 
 ### Header denylist on `rewrite`
 
@@ -316,22 +329,56 @@ If a middleware returns an `action` string that greyproxy does not recognise (ty
 
 ## Writing a middleware
 
-A middleware is any WebSocket server that speaks the protocol above. The passthrough example is the best starting point:
+The supplied Python helper (`examples/_lib/greyproxy_middleware.py`) hides the transport choice from the author. Write two functions and a `run()` call:
+
+```python
+from greyproxy_middleware import run, allow, passthrough, decode_body
+
+def handle_request(msg):
+    body = decode_body(msg.get("body"))
+    # ... inspect / decide ...
+    return allow(msg["id"])
+
+def handle_response(msg):
+    return passthrough(msg["id"])
+
+run(name="my-mw",
+    handle_request=handle_request,
+    handle_response=handle_response,
+    max_body_bytes=1_048_576)
+```
+
+Launch it either way you like:
+
+```bash
+# Stdio: greyproxy owns the lifecycle
+greyproxy serve --middleware-cmd 'uv run my-middleware/middleware.py'
+
+# WebSocket: same code, standalone server
+uv run my-middleware/middleware.py
+greyproxy serve --middleware ws://localhost:9000/middleware
+```
+
+`run()` picks the transport based on the `GREYPROXY_TRANSPORT` env var that greyproxy sets when it spawns a child. If the var is absent, it starts a WebSocket server on `$GREYPROXY_WS_PORT` (default 9000).
+
+The passthrough example is the best starting point — copy it as a template:
 
 ```bash
 cp -r examples/middleware-passthrough-py my-middleware
-cd my-middleware
-# edit middleware.py -- change handle_request() and handle_response()
-uv run middleware.py
+# edit handle_request() / handle_response()
+greyproxy serve --middleware-cmd "uv run $(pwd)/my-middleware/middleware.py"
 ```
 
-The key requirements:
+### Other languages
 
-1. Listen for WebSocket connections (any path)
-2. Read the proxy's `hello` message, respond with your own `hello` declaring hooks and filters
-3. For each incoming `http-request` or `http-response` message, return a `decision` with the same `id`
-4. Respond quickly; the proxy waits synchronously (the `timeout_ms` clock is ticking)
+Any language can implement either transport; the wire protocol is plain JSON:
 
-Each example provides helper functions (`allow`, `deny`, `rewrite_request`, `passthrough`, `block`, `rewrite_response`) so you only need to write the decision logic. The WebSocket boilerplate at the bottom of the file handles the protocol for you.
+- **Stdio:** read newline-delimited JSON from stdin, write newline-delimited JSON to stdout, route everything you want to log to stderr. Greyproxy sets `GREYPROXY_TRANSPORT=stdio` in the env so a multi-mode library can detect stdio framing.
+- **WebSocket:** run any WS server, read JSON frames, write JSON frames. Any path is fine.
 
-Any language with a WebSocket library works. The protocol is plain JSON over a persistent connection.
+The key requirements either way:
+
+1. Read the proxy's `hello` message, respond with your own `hello` declaring supported version range, hooks, and filters.
+2. For each incoming `http-request` or `http-response` message, return a `decision` with the same `id`.
+3. Respond within `timeout_ms` (default 10 s); the proxy waits synchronously.
+4. In stdio mode: **never write to stdout except for protocol frames**. Logs must go to stderr.
