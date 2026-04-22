@@ -28,88 +28,50 @@ Scope:
 - Handles Anthropic /v1/messages and OpenAI /v1/chat/completions shapes.
 - Only routes to rtk when we are confident the mode makes sense:
   diff/json by content, log by command family. Unknown shapes pass
-  through untouched. `rtk log` is NOT a universal fallback -- it
-  summarises by severity level and destroys content (e.g. `ls -la`)
-  that has no log markers.
+  through untouched.
 
-WARNING: This is an example only and is NOT meant for production use.
-The command-shape heuristics are intentionally naive and will miss many
-cases. Measure token savings on your workload before relying on this.
+WARNING: Example only, not production-ready. Measure token savings on
+your workload before relying on this.
 
-Usage:
-    # 1. install rtk: cargo install --git https://github.com/rtk-ai/rtk
-    # 2. run this middleware
+Usage (preferred: greyproxy owns the lifecycle):
+    cargo install --git https://github.com/rtk-ai/rtk   # once
+    greyproxy serve --middleware-cmd 'uv run examples/middleware-rtk-compress-py/middleware.py'
+
+Or as a standalone WS server:
     uv run middleware.py
-    # 3. wire greyproxy to it
     greyproxy serve --middleware ws://localhost:9000/middleware
 """
-
-import asyncio
-import base64
 import json
 import logging
 import re
 import shutil
 import subprocess
+import sys
+from pathlib import Path
 
-import websockets
+# Shared helper picks transport (stdio / ws) at launch time.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "_lib"))
+from greyproxy_middleware import allow, decode_body, rewrite_request, run  # noqa: E402
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-log = logging.getLogger("middleware")
+log = logging.getLogger(__name__)
 
-HOST = "0.0.0.0"
-PORT = 9000
-
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
-
-# Only look at LLM traffic (as determined by greyproxy's endpoint registry)
-# and only at outgoing requests. Tool results flow agent -> model inside
-# request bodies, not responses, so http-request is the right hook.
-HELLO_RESPONSE = {
-    "type": "hello",
-    "name": "rtk-compress",
-    "min_version": 1,
-    "max_version": 1,
-    "hooks": [
-        {
-            "type": "http-request",
-            "filters": {
-                "llm": True,
-                "content_type": ["application/json"],
-            },
-        },
-    ],
-    "max_body_bytes": 4_194_304,  # 4 MB
-}
-
-# rtk subprocess timeout (seconds). Keep short so a hung rtk can't stall a
+# rtk subprocess timeout. Short enough that a hung rtk doesn't stall a
 # live LLM request; on timeout we fall through to the original text.
 RTK_TIMEOUT_S = 5
 
 RTK_BIN = shutil.which("rtk")
-if not RTK_BIN:
-    log.warning("rtk binary not found on PATH -- middleware will act as a passthrough")
 
 
 # ---------------------------------------------------------------------------
 # Mode selection
 # ---------------------------------------------------------------------------
 
-# Each tuple is (command-or-output predicate, rtk stdin mode).
-# Evaluated in order -- first match wins. Predicates receive both the command
-# string (may be empty) and the first ~256 chars of the output.
-
 DIFF_SNIFF = re.compile(r"^(diff --git|---\s|\+\+\+\s|@@\s)", re.MULTILINE)
 JSON_SNIFF = re.compile(r"^\s*[\[{]")
-# Commands whose stdout is structured as severity-tagged log lines
-# (Apr 15 ... [error] ...). `rtk log` expects this shape and produces a
-# useful summary; applied to non-log text it destroys content by
-# summarising to "0 errors 0 warnings".
-LOG_CMD = re.compile(
-    r"\b(tail|journalctl|dmesg|less|more)\b|/var/log/|\.log(\s|$)"
-)
+# Commands whose stdout is structured as severity-tagged log lines.
+# `rtk log` expects this shape and produces a useful summary; applied
+# to non-log text it destroys content.
+LOG_CMD = re.compile(r"\b(tail|journalctl|dmesg|less|more)\b|/var/log/|\.log(\s|$)")
 DIFF_CMD = re.compile(r"\bgit\s+(diff|show|log\s+-p)\b|\bdiff\s+-[a-zA-Z]*u")
 JSON_CMD = re.compile(r"\bjq\b|\.json(\s|$)|curl[^|]*\|\s*jq")
 
@@ -117,11 +79,10 @@ JSON_CMD = re.compile(r"\bjq\b|\.json(\s|$)|curl[^|]*\|\s*jq")
 def pick_mode(command: str, output_head: str) -> str | None:
     """Return the rtk subcommand to run, or None to skip compression.
 
-    Heuristics are content-first, command-second: if the output *looks*
-    like a diff or JSON, trust that regardless of what produced it.
-    Unknown shapes return None so the tool_result passes through
-    untouched -- rtk has no generic text compressor and mode-mismatched
-    invocations (e.g. rtk log on ls output) silently destroy content.
+    Content-first: if the output *looks* like a diff or JSON, trust that
+    regardless of what produced it. Unknown shapes return None so the
+    tool_result passes through untouched -- rtk has no generic text
+    compressor and mode-mismatched invocations silently destroy content.
     """
     if DIFF_SNIFF.search(output_head):
         return "diff"
@@ -138,27 +99,14 @@ def pick_mode(command: str, output_head: str) -> str | None:
 
 def rtk_compress(text: str, mode: str) -> str | None:
     """Pipe text through rtk's stdin-accepting subcommand for `mode`.
-    Returns compressed text, or None on any failure (empty output,
-    timeout, non-zero exit). Caller falls through to the original text
-    on None.
-
-    rtk's stdin conventions differ by subcommand:
-      log  -- bare `rtk log`; a `-` arg is treated as a literal filename
-      json -- `rtk json -`; the `-` is accepted as stdin
-      diff -- `rtk diff -`; `-` is documented as stdin for unified diff
+    Returns compressed text, or None on any failure.
     """
     if not RTK_BIN:
         return None
-    if mode == "log":
-        args = [RTK_BIN, "log"]
-    else:
-        args = [RTK_BIN, mode, "-"]
+    args = [RTK_BIN, "log"] if mode == "log" else [RTK_BIN, mode, "-"]
     try:
         result = subprocess.run(
-            args,
-            input=text,
-            capture_output=True,
-            text=True,
+            args, input=text, capture_output=True, text=True,
             timeout=RTK_TIMEOUT_S,
         )
     except subprocess.TimeoutExpired:
@@ -170,10 +118,7 @@ def rtk_compress(text: str, mode: str) -> str | None:
     if result.returncode != 0:
         log.warning("rtk %s exit=%d stderr=%s", mode, result.returncode, result.stderr[:200])
         return None
-    compressed = result.stdout
-    if not compressed:
-        return None
-    return compressed
+    return result.stdout or None
 
 
 # ---------------------------------------------------------------------------
@@ -182,19 +127,15 @@ def rtk_compress(text: str, mode: str) -> str | None:
 
 
 def _coerce_tool_result_text(content) -> tuple[str, str]:
-    """Anthropic allows tool_result.content to be either a string or a list
-    of content blocks. Returns (text, shape) where shape is 'str' or 'list'
-    so we can write back in the same shape.
+    """Anthropic allows tool_result.content to be a string or a list of
+    content blocks. Returns (text, shape) so the rewrite can preserve
+    the original shape.
     """
     if isinstance(content, str):
         return content, "str"
     if isinstance(content, list):
-        # Concatenate the text blocks. Non-text blocks (images etc.) are
-        # left alone and won't be rewritten.
-        parts = []
-        for block in content:
-            if isinstance(block, dict) and block.get("type") == "text":
-                parts.append(block.get("text", ""))
+        parts = [b.get("text", "") for b in content
+                 if isinstance(b, dict) and b.get("type") == "text"]
         return "\n".join(parts), "list"
     return "", "other"
 
@@ -203,7 +144,6 @@ def _set_tool_result_text(content, new_text: str, shape: str):
     if shape == "str":
         return new_text
     if shape == "list":
-        # Replace the first text block, drop the rest of the text blocks.
         out = []
         text_written = False
         for block in content:
@@ -211,7 +151,6 @@ def _set_tool_result_text(content, new_text: str, shape: str):
                 if not text_written:
                     out.append({"type": "text", "text": new_text})
                     text_written = True
-                # drop duplicate text blocks
             else:
                 out.append(block)
         if not text_written:
@@ -226,7 +165,6 @@ def rewrite_anthropic(body: dict) -> int:
     if not isinstance(messages, list):
         return 0
 
-    # Index tool_use blocks by id so tool_result blocks can find their command.
     tool_use_commands: dict[str, str] = {}
     for msg in messages:
         content = msg.get("content")
@@ -237,9 +175,6 @@ def rewrite_anthropic(body: dict) -> int:
                 tid = block.get("id") or ""
                 name = block.get("name") or ""
                 inp = block.get("input") or {}
-                # Bash tool: input.command is the actual shell. Other tools:
-                # fall back to the tool name, which lets LOG_CMD etc. still
-                # pick something up if the name is descriptive.
                 cmd = inp.get("command") if isinstance(inp, dict) else None
                 tool_use_commands[tid] = cmd or name
 
@@ -280,14 +215,12 @@ def rewrite_openai(body: dict) -> int:
     if not isinstance(messages, list):
         return 0
 
-    # Index tool_calls by id so role=tool messages can find their command.
     tool_call_commands: dict[str, str] = {}
     for msg in messages:
         for tc in msg.get("tool_calls") or []:
             tid = tc.get("id") or ""
             fn = tc.get("function") or {}
             name = fn.get("name") or ""
-            # arguments is a JSON string, not a dict
             args_raw = fn.get("arguments") or ""
             cmd = name
             try:
@@ -326,28 +259,7 @@ def rewrite_openai(body: dict) -> int:
 # ---------------------------------------------------------------------------
 
 
-def decode_body(b64: str | None) -> bytes:
-    return base64.b64decode(b64) if b64 else b""
-
-
-def allow(rid: str) -> dict:
-    return {"type": "decision", "id": rid, "action": "allow"}
-
-
-def rewrite_request(rid: str, body: bytes, tags: dict | None = None) -> dict:
-    d: dict = {
-        "type": "decision",
-        "id": rid,
-        "action": "rewrite",
-        "body": base64.b64encode(body).decode(),
-    }
-    if tags:
-        d["tags"] = tags
-    return d
-
-
 def handle_request(msg: dict) -> dict:
-    print("type=%s method=%s uri=%s" % (msg["type"], msg["method"], msg["uri"]))
     rid = msg["id"]
     raw = decode_body(msg.get("body"))
     if not raw:
@@ -355,17 +267,14 @@ def handle_request(msg: dict) -> dict:
 
     try:
         body = json.loads(raw)
-    except json.JSONDecodeError as e:
-        print("ERROR:JSONDECODEERROR")
+    except json.JSONDecodeError:
         return allow(rid)
     if not isinstance(body, dict):
-        print("ERROR:NOTADICT")
         return allow(rid)
 
     before = len(raw)
     rewritten = rewrite_anthropic(body) + rewrite_openai(body)
     if rewritten == 0:
-        print("ERROR:NOREWRITE")
         return allow(rid)
 
     new_raw = json.dumps(body).encode("utf-8")
@@ -373,45 +282,27 @@ def handle_request(msg: dict) -> dict:
     log.info("request %s %s%s: %d tool_result rewrites, %d -> %d bytes (-%.0f%%)",
              msg["method"], msg["host"], msg["uri"], rewritten, before, len(new_raw),
              100 * saved / before if before else 0)
-    return rewrite_request(rid, new_raw, tags={
-        "rtk.rewrites": rewritten,
-        "rtk.bytes_before": before,
-        "rtk.bytes_after": len(new_raw),
-    })
-
-
-# ---------------------------------------------------------------------------
-# WebSocket server
-# ---------------------------------------------------------------------------
-
-HANDLERS = {"http-request": handle_request}
-
-
-async def serve(websocket):
-    log.info("proxy connected from %s", websocket.remote_address)
-    raw = await asyncio.wait_for(websocket.recv(), timeout=5)
-    hello = json.loads(raw)
-    if hello.get("type") != "hello":
-        log.error("expected hello, got: %s", hello.get("type"))
-        return
-    log.info("proxy hello: version=%s", hello.get("version"))
-    await websocket.send(json.dumps(HELLO_RESPONSE))
-    log.info("sent hello: %d hooks, rtk=%s", len(HELLO_RESPONSE["hooks"]), RTK_BIN or "MISSING")
-
-    async for raw in websocket:
-        msg = json.loads(raw)
-        handler = HANDLERS.get(msg.get("type", ""))
-        if handler is None:
-            log.warning("unknown message type: %s", msg.get("type"))
-            continue
-        await websocket.send(json.dumps(handler(msg)))
-
-
-async def _main():
-    async with websockets.serve(serve, HOST, PORT):
-        log.info("listening on ws://%s:%d/middleware", HOST, PORT)
-        await asyncio.Future()
+    return rewrite_request(
+        rid,
+        body=new_raw,
+        tags={
+            "rtk.rewrites": rewritten,
+            "rtk.bytes_before": before,
+            "rtk.bytes_after": len(new_raw),
+        },
+    )
 
 
 if __name__ == "__main__":
-    asyncio.run(_main())
+    if not RTK_BIN:
+        log.warning("rtk binary not found on PATH -- middleware will act as a passthrough")
+    else:
+        log.info("rtk binary: %s", RTK_BIN)
+
+    # Only outgoing requests on LLM endpoints, JSON content type.
+    run(
+        name="rtk-compress",
+        handle_request=handle_request,
+        filters_request={"llm": True, "content_type": ["application/json"]},
+        max_body_bytes=4_194_304,
+    )

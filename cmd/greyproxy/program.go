@@ -815,7 +815,8 @@ func (p *program) buildGreyproxyService() error {
 		for i, c := range clients {
 			specs := c.HookSpecs() // blocks briefly for hello exchange
 			name := c.Name()
-			log.Infof("middleware connected: name=%q url=%s hooks=%d max_body_bytes=%d", name, clientURLs[i], len(specs), c.MaxBodyBytes())
+			log.Infof("middleware connected: name=%q endpoint=%s transport=%s hooks=%d max_body_bytes=%d",
+				name, c.URL(), c.Kind(), len(specs), c.MaxBodyBytes())
 			for j := range specs {
 				ch := clientHook{client: c, url: clientURLs[i], name: name, filters: specs[j].Filters}
 				switch specs[j].Type {

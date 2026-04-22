@@ -9,9 +9,9 @@ import (
 	"io"
 	"net/http"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -146,12 +146,24 @@ const (
 // the middleware's declared name if known at dial time, or the command
 // basename as a fallback.
 func NewStdioDialer(command, env []string, mwName string) Dialer {
+	// Fall back to the command's basename when the caller didn't supply
+	// a name. Better than "?" in stderr logs until the middleware sends
+	// its hello.
+	if mwName == "" && len(command) > 0 {
+		mwName = filepath.Base(command[0])
+	}
 	return func(ctx context.Context) (Transport, error) {
 		if len(command) == 0 {
 			return nil, errors.New("stdio middleware: empty command")
 		}
 		cmd := exec.CommandContext(ctx, command[0], command[1:]...)
 		cmd.Env = append(cmd.Environ(), env...)
+		// Critical: put the child in its own process group so Close()
+		// can reap the whole tree, not just the immediate child. See
+		// transport_unix.go for the rationale — without this, a wrapper
+		// like `uv run ...` leaves the real worker orphaned and holding
+		// ports / fds open.
+		configureProcessGroup(cmd)
 
 		stdin, err := cmd.StdinPipe()
 		if err != nil {
@@ -232,17 +244,17 @@ func (t *stdioTransport) Close() error {
 	// Phase 1: close stdin so a well-behaved middleware exits on EOF.
 	_ = t.stdin.Close()
 
-	// Phase 2: wait briefly for clean exit, then SIGKILL.
+	// Phase 2: wait briefly for clean exit, then SIGKILL the whole
+	// process group. Killing just t.cmd.Process is insufficient when
+	// the command is a wrapper (e.g. `uv run mw.py`): the wrapper dies,
+	// the grandchild is re-parented to init, and whatever ports it
+	// bound stay held until it notices or is killed by hand.
 	exited := make(chan error, 1)
 	go func() { exited <- t.cmd.Wait() }()
 	select {
 	case <-exited:
 	case <-time.After(stdioCloseGrace):
-		// Kill the whole process group if we can, so a middleware
-		// that forked children doesn't leave orphans.
-		if t.cmd.Process != nil {
-			_ = t.cmd.Process.Signal(syscall.SIGKILL)
-		}
+		killProcessGroup(t.cmd.Process)
 		<-exited
 	}
 	return nil
