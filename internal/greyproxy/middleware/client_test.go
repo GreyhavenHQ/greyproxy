@@ -208,6 +208,17 @@ func TestClient_SkipsMalformedFrame(t *testing.T) {
 	}
 }
 
+// TestClient_DefaultTimeoutGenerous pins the default timeout to a value
+// that accommodates middlewares which offload their decision to another
+// LLM or slow scanner. If this regresses to something like 2s, policy
+// middlewares that do a real-model round-trip will start failing.
+func TestClient_DefaultTimeoutGenerous(t *testing.T) {
+	c := New(Config{URL: "ws://127.0.0.1:0"})
+	if c.timeoutMs < 10000 {
+		t.Fatalf("default timeoutMs = %d, want >= 10000 (LLM-offload budget)", c.timeoutMs)
+	}
+}
+
 // TestBackoffWithJitter_BoundsAndShape asserts the backoff jitter stays
 // inside ±20% of the base so the reconnect cap never regresses into a
 // multi-second tail after a transient outage.

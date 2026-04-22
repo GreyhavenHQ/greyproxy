@@ -1166,22 +1166,22 @@ func applyDockerEnvOverrides(cfg *greyproxy.Config) {
 
 // buildMiddlewareConfigs merges CLI flags and YAML config into the ordered
 // list of middleware clients to instantiate. CLI entries come first, then
-// YAML entries. Defaults: timeout_ms=2000, on_disconnect=deny (secure).
-// Operators running advisory-only middleware (audit, cost tracker) should
-// set on_disconnect: allow explicitly in YAML.
+// YAML entries. Defaults are resolved inside middleware.New (currently:
+// timeout_ms=10000, on_disconnect=deny) — we leave TimeoutMs zero here so
+// a single place owns the default, and YAML can override per-middleware.
 func buildMiddlewareConfigs(cliURLs []string, yamlEntries []greyproxy.MiddlewareConfig) []middleware.Config {
 	out := make([]middleware.Config, 0, len(cliURLs)+len(yamlEntries))
 	for _, u := range cliURLs {
 		if u == "" {
 			continue
 		}
-		out = append(out, middleware.Config{URL: u, TimeoutMs: 2000})
+		out = append(out, middleware.Config{URL: u})
 	}
 	for _, y := range yamlEntries {
 		if y.URL == "" {
 			continue
 		}
-		cfg := middleware.Config{URL: y.URL, TimeoutMs: 2000}
+		cfg := middleware.Config{URL: y.URL}
 		if y.TimeoutMs > 0 {
 			cfg.TimeoutMs = y.TimeoutMs
 		}

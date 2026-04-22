@@ -72,11 +72,12 @@ The flag accepts `http://` and `https://` as aliases (automatically converted to
 greyproxy:
   middlewares:
     - url: "ws://localhost:9000/secret-scanner"
-      timeout_ms: 2000                   # per-request timeout (default: 2000)
+      timeout_ms: 10000                  # per-request timeout (default: 10000)
       on_disconnect: deny                # allow | deny (default: deny)
       auth_header: "X-Secret: mysecret"  # optional, sent as WS header
     - url: "ws://localhost:9001/cost-tracker"
       on_disconnect: allow               # observational middleware: don't block on failure
+      timeout_ms: 500                    # local, fast: surface hangs quickly
 ```
 
 CLI entries come first in the cascade, then YAML entries. `on_disconnect` is per-middleware: a disconnected middleware configured `allow` skips to the next step; one configured `deny` kills the request immediately.
@@ -252,10 +253,10 @@ There are three distinct timeouts in the protocol:
 | Timeout | What it covers | Default | Configurable |
 |---|---|---|---|
 | Hello response | Middleware must emit its hello (hooks + filters) within this window after greyproxy sends the proxy hello | 5 s | No (fixed) |
-| Per-message | Middleware must reply to a `http-request` or `http-response` with a `decision` within this window | 2 s | `timeout_ms` per middleware |
+| Per-message | Middleware must reply to a `http-request` or `http-response` with a `decision` within this window | 10 s | `timeout_ms` per middleware |
 | Reconnect backoff | Delay before retrying after a dropped connection | 100 ms → 2 s with ±20% jitter | No (fixed) |
 
-A middleware that needs external calls to compute its decision (e.g. a remote LLM) should either stay under `timeout_ms` or configure `timeout_ms` explicitly. Going over causes the `on_disconnect` policy to fire as if the middleware had disconnected.
+The 10 s default is deliberately generous: real middlewares often call out to an LLM or a slow scanner to compute their decision. Operators whose middleware is purely local (regex scan, static allowlist) should lower `timeout_ms` in config to surface hangs faster. A middleware that blows the deadline is treated exactly like a disconnect and the `on_disconnect` policy fires.
 
 ### Disconnect handling
 

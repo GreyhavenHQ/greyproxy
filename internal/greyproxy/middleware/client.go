@@ -76,7 +76,11 @@ type Client struct {
 func New(cfg Config) *Client {
 	timeout := cfg.TimeoutMs
 	if timeout <= 0 {
-		timeout = 2000
+		// 10s accommodates middlewares that call out to an LLM or a
+		// slow scanner to compute their decision. Operators whose
+		// middleware is purely local can shorten this in config to
+		// surface hangs faster.
+		timeout = 10000
 	}
 	onTimeout := cfg.OnDisconnect
 	if onTimeout == "" {
