@@ -3,89 +3,55 @@
 # dependencies = ["websockets>=12.0"]
 # ///
 """
-PII redactor -- replaces personally identifiable information in requests with
-anonymous placeholders, then restores the original values in responses.
+PII redactor -- replaces personally identifiable information in requests
+with placeholders, then restores the original values in responses.
 
-The replacement is bidirectional and per-connection:
+Bidirectional:
   Request:  "Please summarize John Doe's file"
          -> "Please summarize PERSON_A's file"
   Response: "PERSON_A's file contains 3 items"
          -> "John Doe's file contains 3 items"
 
-This means the upstream LLM never sees real PII, but the end user gets back
-a response with the original names and emails in place.
+The upstream LLM never sees real PII, but the end user gets back a
+response with the original names and emails in place.
 
-WARNING: This is an example only and is NOT meant for production use.
-The regex patterns here are simplistic and will miss many PII forms (non-Western
-names, phone numbers in various formats, addresses, national IDs, etc.).
-A production PII redactor should use a dedicated NER model (spaCy, Presidio,
-or a cloud DLP API). This example also stores the mapping in memory, so it is
-lost on restart and does not handle concurrent sessions with colliding placeholders.
+WARNING: Example only. The regex patterns miss many PII forms (non-
+Western names, international phone numbers, addresses, national IDs).
+A production redactor should use a dedicated NER model (spaCy,
+Presidio) or a cloud DLP API. Mapping is in-memory and won't survive
+a restart; concurrent sessions share the placeholder namespace.
 
-Usage:
+Usage (preferred):
+    greyproxy serve --middleware-cmd 'uv run examples/middleware-pii-redactor-py/middleware.py'
+
+Or as a WS server:
     uv run middleware.py
     greyproxy serve --middleware ws://localhost:9000/middleware
 """
-
-import asyncio
-import base64
-import json
 import logging
 import re
+import sys
 from collections import defaultdict
+from pathlib import Path
 
-import websockets
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "_lib"))
+from greyproxy_middleware import (  # noqa: E402
+    allow,
+    decode_body,
+    passthrough,
+    rewrite_request,
+    rewrite_response,
+    run,
+)
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-log = logging.getLogger("middleware")
+log = logging.getLogger(__name__)
 
-HOST = "0.0.0.0"
-PORT = 9000
-
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
-
-HELLO_RESPONSE = {
-    "type": "hello",
-    "name": "pii-redactor",
-    "min_version": 1,
-    "max_version": 1,
-    "hooks": [
-        {
-            "type": "http-request",
-            "filters": {
-                "host": ["*.openai.com", "*.anthropic.com", "*.googleapis.com"],
-                "method": ["POST"],
-                "content_type": ["application/json"],
-            },
-        },
-        {
-            "type": "http-response",
-            "filters": {
-                "host": ["*.openai.com", "*.anthropic.com", "*.googleapis.com"],
-                "content_type": ["application/json"],
-            },
-        },
-    ],
-    "max_body_bytes": 2_097_152,
-}
-
-# ---------------------------------------------------------------------------
-# PII detection patterns (intentionally simple)
-# ---------------------------------------------------------------------------
-
-# Email addresses
+# Intentionally simple patterns. Production code needs a real NER model.
 EMAIL_RE = re.compile(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+")
-
-# Names that look like "Firstname Lastname" (capitalized words, 2-3 parts).
-# This is very rough and will match many non-name phrases.
+# Looks like "Firstname Lastname" (capitalized words, 2-3 parts).
+# Will match many non-name phrases — that's the cost of regex-based NER.
 NAME_RE = re.compile(r"\b([A-Z][a-z]{1,15})\s+([A-Z][a-z]{1,15})(?:\s+([A-Z][a-z]{1,15}))?\b")
-
-# US Social Security Numbers (XXX-XX-XXXX)
 SSN_RE = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
-
-# US phone numbers (various formats)
 PHONE_RE = re.compile(r"\b(?:\+1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}\b")
 
 PII_PATTERNS: list[tuple[re.Pattern, str]] = [
@@ -95,25 +61,20 @@ PII_PATTERNS: list[tuple[re.Pattern, str]] = [
     (NAME_RE, "PERSON"),
 ]
 
-# ---------------------------------------------------------------------------
-# Bidirectional mapping
-# ---------------------------------------------------------------------------
-
-# real_value -> placeholder
-forward_map: dict[str, str] = {}
-# placeholder -> real_value
-reverse_map: dict[str, str] = {}
-# counters per category for generating unique placeholders
+# Bidirectional maps. In-memory only; lost on restart.
+forward_map: dict[str, str] = {}  # real_value -> placeholder
+reverse_map: dict[str, str] = {}  # placeholder -> real_value
 counters: dict[str, int] = defaultdict(int)
 
 
 def get_placeholder(real_value: str, category: str) -> str:
-    """Return or create a placeholder for a real PII value."""
     if real_value in forward_map:
         return forward_map[real_value]
     counters[category] += 1
-    placeholder = f"{category}_{chr(64 + counters[category])}"  # PERSON_A, EMAIL_B, ...
-    if counters[category] > 26:
+    # PERSON_A, PERSON_B, ..., then PERSON_27, PERSON_28, ... after 26.
+    if counters[category] <= 26:
+        placeholder = f"{category}_{chr(64 + counters[category])}"
+    else:
         placeholder = f"{category}_{counters[category]}"
     forward_map[real_value] = placeholder
     reverse_map[placeholder] = real_value
@@ -122,59 +83,23 @@ def get_placeholder(real_value: str, category: str) -> str:
 
 
 def redact(text: str) -> tuple[str, int]:
-    """Replace PII in text with placeholders. Returns (redacted_text, count)."""
     count = 0
     for pattern, category in PII_PATTERNS:
-        for match in pattern.finditer(text):
-            real_value = match.group(0)
-            placeholder = get_placeholder(real_value, category)
-            count += 1
-        # Do the replacement after collecting all matches to avoid offset issues
-        text = pattern.sub(lambda m: get_placeholder(m.group(0), category), text)
+        # Count matches first so we can report, then replace in one shot.
+        count += sum(1 for _ in pattern.finditer(text))
+        text = pattern.sub(lambda m, c=category: get_placeholder(m.group(0), c), text)
     return text, count
 
 
 def restore(text: str) -> tuple[str, int]:
-    """Replace placeholders in text with original PII values. Returns (restored_text, count)."""
     count = 0
-    # Sort by longest placeholder first to avoid partial replacements
+    # Longest placeholder first to avoid partial replacements (PERSON_A2
+    # must not be replaced by the PERSON_A rule).
     for placeholder, real_value in sorted(reverse_map.items(), key=lambda kv: -len(kv[0])):
         if placeholder in text:
             text = text.replace(placeholder, real_value)
             count += 1
     return text, count
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def decode_body(b64: str | None) -> bytes:
-    return base64.b64decode(b64) if b64 else b""
-
-
-def allow(rid: str) -> dict:
-    return {"type": "decision", "id": rid, "action": "allow"}
-
-
-def rewrite_request(rid: str, *, body: bytes) -> dict:
-    return {"type": "decision", "id": rid, "action": "rewrite",
-            "body": base64.b64encode(body).decode()}
-
-
-def passthrough(rid: str) -> dict:
-    return {"type": "decision", "id": rid, "action": "passthrough"}
-
-
-def rewrite_response(rid: str, *, body: bytes) -> dict:
-    return {"type": "decision", "id": rid, "action": "rewrite",
-            "body": base64.b64encode(body).decode()}
-
-
-# ---------------------------------------------------------------------------
-# Handlers
-# ---------------------------------------------------------------------------
 
 
 def handle_request(msg: dict) -> dict:
@@ -192,7 +117,11 @@ def handle_request(msg: dict) -> dict:
 
     log.warning("request  %s %s%s REDACTED %d PII value(s)",
                 msg["method"], msg["host"], msg["uri"], count)
-    return rewrite_request(rid, body=redacted.encode("utf-8"))
+    return rewrite_request(
+        rid,
+        body=redacted.encode("utf-8"),
+        tags={"pii.redacted": count},
+    )
 
 
 def handle_response(msg: dict) -> dict:
@@ -211,41 +140,26 @@ def handle_response(msg: dict) -> dict:
 
     log.info("response %s %s%s -> %d RESTORED %d PII value(s)",
              msg["method"], msg["host"], msg["uri"], msg["status_code"], count)
-    return rewrite_response(rid, body=restored.encode("utf-8"))
-
-
-# ---------------------------------------------------------------------------
-# WebSocket server
-# ---------------------------------------------------------------------------
-
-HANDLERS = {"http-request": handle_request, "http-response": handle_response}
-
-
-async def serve(websocket):
-    log.info("proxy connected from %s", websocket.remote_address)
-    raw = await asyncio.wait_for(websocket.recv(), timeout=5)
-    hello = json.loads(raw)
-    if hello.get("type") != "hello":
-        log.error("expected hello, got: %s", hello.get("type"))
-        return
-    log.info("proxy hello: version=%s", hello.get("version"))
-    await websocket.send(json.dumps(HELLO_RESPONSE))
-    log.info("sent hello: %d hooks", len(HELLO_RESPONSE["hooks"]))
-
-    async for raw in websocket:
-        msg = json.loads(raw)
-        handler = HANDLERS.get(msg.get("type", ""))
-        if handler is None:
-            log.warning("unknown message type: %s", msg.get("type"))
-            continue
-        await websocket.send(json.dumps(handler(msg)))
-
-
-async def _main():
-    async with websockets.serve(serve, HOST, PORT):
-        log.info("listening on ws://%s:%d/middleware", HOST, PORT)
-        await asyncio.Future()
+    return rewrite_response(
+        rid,
+        body=restored.encode("utf-8"),
+        tags={"pii.restored": count},
+    )
 
 
 if __name__ == "__main__":
-    asyncio.run(_main())
+    run(
+        name="pii-redactor",
+        handle_request=handle_request,
+        handle_response=handle_response,
+        filters_request={
+            "host": ["*.openai.com", "*.anthropic.com", "*.googleapis.com"],
+            "method": ["POST"],
+            "content_type": ["application/json"],
+        },
+        filters_response={
+            "host": ["*.openai.com", "*.anthropic.com", "*.googleapis.com"],
+            "content_type": ["application/json"],
+        },
+        max_body_bytes=2_097_152,
+    )
