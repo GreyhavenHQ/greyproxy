@@ -93,7 +93,7 @@ Greyproxy initiates a WebSocket connection to the configured URL. On connect:
 2. The middleware responds with a `hello` declaring which hooks it wants and optional filters.
 3. The connection stays open. Greyproxy sends request/response messages; the middleware replies with decisions.
 
-If the connection drops, greyproxy reconnects with exponential backoff (100ms to 10s cap). During reconnect, the `on_disconnect` policy applies.
+If the connection drops, greyproxy reconnects with exponential backoff (100ms doubling up to a 2s cap) plus ±20% jitter. A connection that stayed up for at least 5 seconds before dropping is treated as "healthy", so the next disconnect restarts backoff at 100ms rather than inheriting the tail of the previous attempt. In practice, a middleware restart recovers within a few hundred milliseconds. During reconnect the `on_disconnect` policy applies.
 
 ### Hello exchange
 
@@ -245,9 +245,21 @@ The response message includes the full original request so the middleware has co
 
 Bodies are base64-encoded in JSON. The `max_body_bytes` field in the hello response tells greyproxy the maximum body size the middleware wants to receive. Bodies larger than the limit are sent as `null`. Set to `0` or omit to receive everything.
 
-### Timeout and disconnect
+### Timeouts
 
-If the middleware does not respond within `timeout_ms` (default 2000), greyproxy applies the `on_disconnect` policy:
+There are three distinct timeouts in the protocol:
+
+| Timeout | What it covers | Default | Configurable |
+|---|---|---|---|
+| Hello response | Middleware must emit its hello (hooks + filters) within this window after greyproxy sends the proxy hello | 5 s | No (fixed) |
+| Per-message | Middleware must reply to a `http-request` or `http-response` with a `decision` within this window | 2 s | `timeout_ms` per middleware |
+| Reconnect backoff | Delay before retrying after a dropped connection | 100 ms → 2 s with ±20% jitter | No (fixed) |
+
+A middleware that needs external calls to compute its decision (e.g. a remote LLM) should either stay under `timeout_ms` or configure `timeout_ms` explicitly. Going over causes the `on_disconnect` policy to fire as if the middleware had disconnected.
+
+### Disconnect handling
+
+If the middleware does not respond within `timeout_ms`, greyproxy applies the `on_disconnect` policy:
 
 | Policy | Request hook | Response hook |
 |---|---|---|

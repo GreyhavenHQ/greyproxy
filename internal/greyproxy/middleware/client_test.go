@@ -208,6 +208,25 @@ func TestClient_SkipsMalformedFrame(t *testing.T) {
 	}
 }
 
+// TestBackoffWithJitter_BoundsAndShape asserts the backoff jitter stays
+// inside ±20% of the base so the reconnect cap never regresses into a
+// multi-second tail after a transient outage.
+func TestBackoffWithJitter_BoundsAndShape(t *testing.T) {
+	base := 100 * time.Millisecond
+	minAllowed := time.Duration(float64(base) * 0.8)
+	maxAllowed := time.Duration(float64(base) * 1.2)
+	for i := 0; i < 200; i++ {
+		got := backoffWithJitter(base)
+		if got < minAllowed || got > maxAllowed {
+			t.Fatalf("iter %d: backoffWithJitter(%v) = %v, out of [%v,%v]",
+				i, base, got, minAllowed, maxAllowed)
+		}
+	}
+	if backoffWithJitter(0) != 0 {
+		t.Fatal("backoffWithJitter(0) should return 0")
+	}
+}
+
 // TestClient_DrainOnDisconnectRespectsMessageKind asserts that when the
 // connection drops, an in-flight response Send gets a response-shaped
 // default (block/passthrough), not a request-shaped one (deny/allow).

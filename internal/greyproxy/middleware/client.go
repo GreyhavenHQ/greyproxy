@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"net/http"
 	"strings"
 	"sync"
@@ -11,6 +12,22 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/logger"
+)
+
+// Reconnect tuning. The max is deliberately short: middleware crashes
+// during a live LLM request flow are common (py reload, container restart)
+// and a 10s tail means an entire conversation can pile up in the "fail
+// closed" fallback. 2s keeps the wait under one typical user-visible
+// latency budget while still giving the middleware room to come back up.
+const (
+	reconnectInitial = 100 * time.Millisecond
+	reconnectMax     = 2 * time.Second
+	// A connection that was up for at least this long is considered
+	// "healthy enough": the next disconnect resets backoff to initial.
+	// Without this, a restart→reconnect→restart cycle stays stuck at
+	// the max backoff forever because the variable lives across the
+	// outer for loop.
+	reconnectHealthyAfter = 5 * time.Second
 )
 
 // pendingEntry tracks an in-flight Send(): the channel that receives the
@@ -83,37 +100,63 @@ func (c *Client) Start(ctx context.Context) error {
 	c.ctx, c.cancel = context.WithCancel(ctx)
 	defer close(c.done)
 
-	backoff := 100 * time.Millisecond
-	maxBackoff := 10 * time.Second
+	backoff := reconnectInitial
 
 	for {
 		if err := c.ctx.Err(); err != nil {
 			return err
 		}
 
+		connectStart := time.Now()
 		err := c.connectAndRun()
+		connectedFor := time.Since(connectStart)
+
 		if c.ctx.Err() != nil {
 			return c.ctx.Err()
 		}
 
-		if err != nil {
-			logger.Default().Warnf("middleware connection lost: %v, reconnecting in %v", err, backoff)
+		// Drain all pending requests on disconnect so in-flight Sends
+		// wake with a fallback decision immediately.
+		c.drainPending()
+
+		// If the previous connection was up long enough to be healthy,
+		// reset the backoff so a middleware restart cycle doesn't stay
+		// stuck at the max wait.
+		if connectedFor >= reconnectHealthyAfter {
+			backoff = reconnectInitial
 		}
 
-		// Drain all pending requests on disconnect
-		c.drainPending()
+		wait := backoffWithJitter(backoff)
+		if err != nil {
+			logger.Default().Warnf("middleware %s disconnected (up %s): %v — reconnecting in %s",
+				c.url, connectedFor.Round(time.Millisecond), err, wait.Round(time.Millisecond))
+		}
 
 		select {
 		case <-c.ctx.Done():
 			return c.ctx.Err()
-		case <-time.After(backoff):
+		case <-time.After(wait):
 		}
 
-		backoff = backoff * 2
-		if backoff > maxBackoff {
-			backoff = maxBackoff
+		backoff *= 2
+		if backoff > reconnectMax {
+			backoff = reconnectMax
 		}
 	}
+}
+
+// backoffWithJitter adds ±20% jitter to d. Jitter prevents every middleware
+// (and every greyproxy instance, when several talk to the same service)
+// from reconnecting in lockstep after a shared outage.
+func backoffWithJitter(d time.Duration) time.Duration {
+	if d <= 0 {
+		return 0
+	}
+	jitter := time.Duration(rand.Int63n(int64(d) / 5)) //nolint:gosec // not security-sensitive
+	if rand.Intn(2) == 0 {
+		return d - jitter
+	}
+	return d + jitter
 }
 
 // connectAndRun establishes the WebSocket, does the hello exchange, then reads
