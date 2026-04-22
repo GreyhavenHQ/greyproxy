@@ -28,13 +28,13 @@ func (l *stringList) Set(value string) error {
 }
 
 var (
-	cfgFile           string
-	outputFormat      string
-	services          stringList
-	nodes             stringList
-	debug             bool
-	trace             bool
-	metricsAddr       string
+	cfgFile            string
+	outputFormat       string
+	services           stringList
+	nodes              stringList
+	debug              bool
+	trace              bool
+	metricsAddr        string
 	silentAllow        bool
 	middlewareURLFlags stringList
 )
