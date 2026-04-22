@@ -5,12 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
-	"net/http"
-	"strings"
 	"sync"
 	"time"
 
-	"github.com/gorilla/websocket"
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/logger"
 )
 
@@ -38,22 +35,21 @@ type pendingEntry struct {
 	isResponse bool
 }
 
-// Client manages a persistent WebSocket connection to a middleware service.
+// Client manages a persistent connection to a middleware service over
+// whatever Transport was supplied at construction time (WebSocket or
+// stdio-spawned child process). The client is transport-agnostic below
+// the Dialer; reconnect, hello exchange, pending-map dispatching, and
+// fallback decisions are all framing-independent.
 type Client struct {
-	url        string
-	authHeader string
-	timeoutMs  int
-	onTimeout  string // "allow"|"deny"
+	dial      Dialer
+	endpoint  string // "ws://..." or "stdio:<cmd>", for logs + UI
+	kind      string // "ws" | "stdio"
+	timeoutMs int
+	onTimeout string // "allow"|"deny"
 
-	// writeMu serializes WebSocket writes without blocking state reads.
-	// Gorilla websocket.Conn requires writes to be serialized; keeping
-	// this separate from mu means a slow peer can't stall reads of
-	// pending/hooks/name.
-	writeMu sync.Mutex
-
-	mu      sync.Mutex
-	conn    *websocket.Conn
-	pending map[string]pendingEntry
+	mu        sync.Mutex
+	transport Transport
+	pending   map[string]pendingEntry
 
 	hooks           []HookSpec
 	maxBodyBytes    int64
@@ -67,7 +63,9 @@ type Client struct {
 	done   chan struct{} // closed when background goroutines exit
 }
 
-// New creates a new middleware client with the given configuration.
+// New creates a middleware client. Exactly one of Config.URL or
+// Config.Command must be set; the caller is expected to validate that
+// upstream. Defaults applied here: TimeoutMs=10s, OnDisconnect=deny.
 //
 // If Config.OnDisconnect is empty, the client defaults to "deny": when the
 // middleware is unreachable, requests are rejected (403) and responses are
@@ -87,15 +85,30 @@ func New(cfg Config) *Client {
 	if onTimeout == "" {
 		onTimeout = "deny"
 	}
-	return &Client{
-		url:        cfg.URL,
-		authHeader: cfg.AuthHeader,
-		timeoutMs:  timeout,
-		onTimeout:  onTimeout,
-		pending:    make(map[string]pendingEntry),
-		ready:      make(chan struct{}),
-		done:       make(chan struct{}),
+
+	c := &Client{
+		timeoutMs: timeout,
+		onTimeout: onTimeout,
+		pending:   make(map[string]pendingEntry),
+		ready:     make(chan struct{}),
+		done:      make(chan struct{}),
 	}
+
+	switch {
+	case len(cfg.Command) > 0:
+		c.kind = "stdio"
+		c.endpoint = "stdio:" + cfg.Command[0]
+		// The process environment passed to the child tells it how
+		// it was launched; a shared helper library picks transport
+		// based on this.
+		env := []string{"GREYPROXY_TRANSPORT=stdio"}
+		c.dial = NewStdioDialer(cfg.Command, env, cfg.Name)
+	default:
+		c.kind = "ws"
+		c.endpoint = cfg.URL
+		c.dial = NewWSDialer(cfg.URL, cfg.AuthHeader)
+	}
+	return c
 }
 
 // Start connects to the middleware, performs the hello exchange, and starts
@@ -134,7 +147,7 @@ func (c *Client) Start(ctx context.Context) error {
 		wait := backoffWithJitter(backoff)
 		if err != nil {
 			logger.Default().Warnf("middleware %s disconnected (up %s): %v — reconnecting in %s",
-				c.url, connectedFor.Round(time.Millisecond), err, wait.Round(time.Millisecond))
+				c.endpoint, connectedFor.Round(time.Millisecond), err, wait.Round(time.Millisecond))
 		}
 
 		select {
@@ -164,56 +177,29 @@ func backoffWithJitter(d time.Duration) time.Duration {
 	return d + jitter
 }
 
-// connectAndRun establishes the WebSocket, does the hello exchange, then reads
-// until the connection drops or context is cancelled.
+// connectAndRun dials the transport, runs the hello exchange, then pumps
+// incoming decisions to waiting Sends until the transport dies or ctx is
+// cancelled.
 func (c *Client) connectAndRun() error {
-	dialer := websocket.DefaultDialer
-
-	header := http.Header{}
-	if c.authHeader != "" {
-		parts := strings.SplitN(c.authHeader, ":", 2)
-		if len(parts) == 2 {
-			header.Set(strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]))
-		}
-	}
-
-	conn, _, err := dialer.DialContext(c.ctx, c.url, header)
+	transport, err := c.dial(c.ctx)
 	if err != nil {
 		return err
 	}
 
 	c.mu.Lock()
-	c.conn = conn
+	c.transport = transport
 	c.mu.Unlock()
 
 	defer func() {
-		conn.Close()
+		_ = transport.Close()
 		c.mu.Lock()
-		c.conn = nil
+		c.transport = nil
 		c.mu.Unlock()
 	}()
 
-	// Send hello (proxy declares its current protocol version).
-	hello := HelloMsg{Type: "hello", Version: ProtocolVersion}
-	if err := conn.WriteJSON(hello); err != nil {
-		return err
-	}
-
-	// Read hello response (5s deadline)
-	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	var resp HelloMsg
-	if err := conn.ReadJSON(&resp); err != nil {
-		return err
-	}
-	conn.SetReadDeadline(time.Time{})
-
-	if resp.Type != "hello" {
-		return fmt.Errorf("middleware hello: unexpected type %q (want %q)", resp.Type, "hello")
-	}
-
-	agreed, err := negotiateVersion(ProtocolVersion, resp.MinVersion, resp.MaxVersion)
+	resp, agreed, err := helloExchange(c.ctx, transport)
 	if err != nil {
-		return fmt.Errorf("middleware %s: %w", c.url, err)
+		return fmt.Errorf("middleware %s: %w", c.endpoint, err)
 	}
 
 	c.mu.Lock()
@@ -229,8 +215,8 @@ func (c *Client) connectAndRun() error {
 	// Signal that hooks are available
 	c.readyOnce.Do(func() { close(c.ready) })
 
-	logger.Default().Infof("middleware hello: name=%q url=%s protocol=v%d hooks=%d max_body_bytes=%d",
-		resp.Name, c.url, agreed, len(resp.Hooks), resp.MaxBodyBytes)
+	logger.Default().Infof("middleware hello: name=%q endpoint=%s transport=%s protocol=v%d hooks=%d max_body_bytes=%d",
+		resp.Name, c.endpoint, c.kind, agreed, len(resp.Hooks), resp.MaxBodyBytes)
 
 	// Read loop: dispatch incoming decisions to waiting channels.
 	// A malformed frame is logged and skipped; only transport errors drop
@@ -240,17 +226,14 @@ func (c *Client) connectAndRun() error {
 			return c.ctx.Err()
 		}
 
-		msgType, data, err := conn.ReadMessage()
+		data, err := transport.ReadMessage()
 		if err != nil {
 			return err
-		}
-		if msgType != websocket.TextMessage && msgType != websocket.BinaryMessage {
-			continue
 		}
 
 		var d Decision
 		if err := json.Unmarshal(data, &d); err != nil {
-			logger.Default().Warnf("middleware %s: malformed frame, skipping: %v", c.url, err)
+			logger.Default().Warnf("middleware %s: malformed frame, skipping: %v", c.endpoint, err)
 			continue
 		}
 
@@ -264,7 +247,7 @@ func (c *Client) connectAndRun() error {
 		if ok {
 			entry.ch <- d
 		} else {
-			logger.Default().Warnf("middleware %s: decision for unknown id %q (late response or duplicate)", c.url, d.ID)
+			logger.Default().Warnf("middleware %s: decision for unknown id %q (late response or duplicate)", c.endpoint, d.ID)
 		}
 	}
 }
@@ -304,18 +287,23 @@ func (c *Client) ProtocolVersion() int {
 	return c.protocolVersion
 }
 
-// IsConnected reports whether the WebSocket connection is currently live.
-// It flips to false as soon as the read loop exits (transport error, peer
+// IsConnected reports whether the underlying transport is currently live.
+// Flips to false as soon as the read loop exits (transport error, peer
 // close, or context cancel) and flips back to true only after the next
 // successful hello exchange.
 func (c *Client) IsConnected() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.conn != nil
+	return c.transport != nil
 }
 
-// URL returns the configured WebSocket URL for this client.
-func (c *Client) URL() string { return c.url }
+// URL returns the endpoint for this client — a ws:// URL or a synthetic
+// "stdio:<command>" string, depending on transport. Kept named URL() for
+// continuity with the JSON field that /api/middlewares surfaces.
+func (c *Client) URL() string { return c.endpoint }
+
+// Kind returns the transport kind: "ws" or "stdio".
+func (c *Client) Kind() string { return c.kind }
 
 // TimeoutMs returns the configured per-message timeout in milliseconds.
 func (c *Client) TimeoutMs() int { return c.timeoutMs }
@@ -351,7 +339,7 @@ func (c *Client) Send(ctx context.Context, msg any) Decision {
 	ch := make(chan Decision, 1)
 
 	c.mu.Lock()
-	conn := c.conn
+	transport := c.transport
 	c.pending[id] = pendingEntry{ch: ch, isResponse: isResponse}
 	c.mu.Unlock()
 
@@ -361,7 +349,7 @@ func (c *Client) Send(ctx context.Context, msg any) Decision {
 		c.mu.Unlock()
 	}
 
-	if conn == nil {
+	if transport == nil {
 		cleanup()
 		return c.fallback(id, isResponse, "disconnected")
 	}
@@ -369,15 +357,11 @@ func (c *Client) Send(ctx context.Context, msg any) Decision {
 	data, err := json.Marshal(msg)
 	if err != nil {
 		cleanup()
-		logger.Default().Warnf("middleware %s: marshal failed: %v", c.url, err)
+		logger.Default().Warnf("middleware %s: marshal failed: %v", c.endpoint, err)
 		return c.fallback(id, isResponse, "marshal_error")
 	}
 
-	c.writeMu.Lock()
-	writeErr := conn.WriteMessage(websocket.TextMessage, data)
-	c.writeMu.Unlock()
-
-	if writeErr != nil {
+	if err := transport.WriteMessage(data); err != nil {
 		cleanup()
 		return c.fallback(id, isResponse, "write_error")
 	}
@@ -395,7 +379,9 @@ func (c *Client) Send(ctx context.Context, msg any) Decision {
 	}
 }
 
-// Close shuts down the client, drains pending requests, and closes the WebSocket.
+// Close shuts down the client, drains pending requests, and closes the
+// transport. For a stdio transport, Close also waits for the child to
+// exit (SIGKILL after the grace period).
 func (c *Client) Close() {
 	if c.cancel != nil {
 		c.cancel()
@@ -403,7 +389,7 @@ func (c *Client) Close() {
 	// Wait for background goroutines to exit (with timeout)
 	select {
 	case <-c.done:
-	case <-time.After(2 * time.Second):
+	case <-time.After(stdioCloseGrace + time.Second):
 	}
 	c.drainPending()
 }

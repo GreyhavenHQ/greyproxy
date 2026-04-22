@@ -21,14 +21,22 @@ type NotificationsConfig struct {
 	Enabled bool `yaml:"enabled" json:"enabled"`
 }
 
-// MiddlewareConfig holds configuration for one external middleware WebSocket
-// service. Multiple entries cascade in declaration order: each middleware sees
-// the previous one's output as its input; deny/block short-circuits the chain.
+// MiddlewareConfig holds configuration for one external middleware.
+// Multiple entries cascade in declaration order: each middleware sees the
+// previous one's output as its input; deny/block short-circuits the chain.
+//
+// Exactly one of URL or Command must be set:
+//
+//   - URL opens a WebSocket to an already-running middleware.
+//   - Command launches a child process whose stdin/stdout speak NDJSON.
+//     Preferred for local middlewares — greyproxy owns the lifecycle.
 type MiddlewareConfig struct {
-	URL          string `yaml:"url" json:"url"`
-	TimeoutMs    int    `yaml:"timeout_ms" json:"timeout_ms"`
-	OnDisconnect string `yaml:"on_disconnect" json:"on_disconnect"` // "allow"|"deny"
-	AuthHeader   string `yaml:"auth_header" json:"auth_header"`
+	URL          string   `yaml:"url,omitempty" json:"url,omitempty"`
+	Command      []string `yaml:"command,omitempty" json:"command,omitempty"`
+	Name         string   `yaml:"name,omitempty" json:"name,omitempty"`
+	TimeoutMs    int      `yaml:"timeout_ms,omitempty" json:"timeout_ms,omitempty"`
+	OnDisconnect string   `yaml:"on_disconnect,omitempty" json:"on_disconnect,omitempty"` // "allow"|"deny"
+	AuthHeader   string   `yaml:"auth_header,omitempty" json:"auth_header,omitempty"`
 }
 
 // MiddlewareStatus is a read-only snapshot of one middleware client's state,
@@ -37,7 +45,8 @@ type MiddlewareConfig struct {
 // /api/middlewares endpoint, so the list is always fresh — no event bus,
 // no cache invalidation.
 type MiddlewareStatus struct {
-	URL             string   `json:"url"`
+	URL             string   `json:"url"`  // ws://... or "stdio:<cmd>"
+	Kind            string   `json:"kind"` // "ws" | "stdio"
 	Name            string   `json:"name,omitempty"`
 	Connected       bool     `json:"connected"`
 	ProtocolVersion int      `json:"protocol_version,omitempty"`

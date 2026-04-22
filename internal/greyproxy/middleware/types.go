@@ -119,10 +119,24 @@ type Decision struct {
 	Fallback string `json:"-"`
 }
 
-// Config holds configuration for the middleware WebSocket client.
+// Config holds configuration for one middleware client. Exactly one of
+// URL or Command must be non-empty:
+//
+//   - URL connects over WebSocket to an already-running middleware, good
+//     for shared services and remote deployments.
+//   - Command launches a child process owned by greyproxy and talks to
+//     it over stdin/stdout NDJSON. Preferred for local, single-host
+//     middlewares because the operator doesn't have to manage ports,
+//     PIDs, or a separate start command.
+//
+// Name is optional but recommended; it's used in log prefixes for a
+// stdio middleware's stderr forwarding, before the middleware has a
+// chance to declare its own name in the hello exchange.
 type Config struct {
-	URL          string `yaml:"url" json:"url"`
-	TimeoutMs    int    `yaml:"timeout_ms" json:"timeout_ms"`
-	OnDisconnect string `yaml:"on_disconnect" json:"on_disconnect"` // "allow"|"deny"
-	AuthHeader   string `yaml:"auth_header" json:"auth_header"`
+	URL          string   `yaml:"url,omitempty" json:"url,omitempty"`
+	Command      []string `yaml:"command,omitempty" json:"command,omitempty"`
+	Name         string   `yaml:"name,omitempty" json:"name,omitempty"`
+	TimeoutMs    int      `yaml:"timeout_ms,omitempty" json:"timeout_ms,omitempty"`
+	OnDisconnect string   `yaml:"on_disconnect,omitempty" json:"on_disconnect,omitempty"` // "allow"|"deny"
+	AuthHeader   string   `yaml:"auth_header,omitempty" json:"auth_header,omitempty"`
 }

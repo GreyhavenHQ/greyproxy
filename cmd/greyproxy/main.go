@@ -37,6 +37,7 @@ var (
 	metricsAddr        string
 	silentAllow        bool
 	middlewareURLFlags stringList
+	middlewareCmdFlags stringList
 )
 
 func init() {
@@ -96,6 +97,7 @@ func parseFlags() {
 	flag.StringVar(&metricsAddr, "metrics", "", "metrics service address")
 	flag.BoolVar(&silentAllow, "silent-allow", false, "activate silent allow-all mode until restart")
 	flag.Var(&middlewareURLFlags, "middleware", "middleware service URL (ws:// or http://); repeatable, cascades in declaration order")
+	flag.Var(&middlewareCmdFlags, "middleware-cmd", "command to spawn as a stdio middleware (e.g. 'uv run mw.py'); repeatable, cascades after --middleware entries")
 	flag.Parse()
 
 	// Normalize http(s):// to ws(s):// for each middleware URL

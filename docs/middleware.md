@@ -48,39 +48,62 @@ Six example middleware are included under `examples/`. Each is a self-contained 
 
 All examples are intentionally simplified for illustration and are **not meant for production use**. See each file's docstring for specific limitations.
 
+## Transports
+
+Greyproxy speaks the same wire protocol over two transports. Which one you pick is a deployment question, not a protocol question — the same middleware code works under either.
+
+| Transport | Launch | Best for |
+|---|---|---|
+| **stdio** | `greyproxy serve --middleware-cmd 'uv run mw.py'` | Local middleware, single-host setups. Greyproxy spawns the child, owns its lifecycle, respawns on crash. No port, no separate terminal. |
+| **ws** | `greyproxy serve --middleware ws://host:port/path` | Shared services across multiple greyproxy instances, remote middleware, middleware written in a language where stdio framing is awkward. |
+
+The helper library at `examples/_lib/greyproxy_middleware.py` hides the transport difference from middleware authors: call `run(handle_request=..., handle_response=...)` and the library picks transport based on how the process was launched (env var `GREYPROXY_TRANSPORT=stdio` set by greyproxy when it spawns a child, otherwise bind a WS server).
+
 ## Configuration
 
-### CLI flag
+### CLI flags
 
 ```bash
+# stdio
+greyproxy serve --middleware-cmd 'uv run examples/middleware-secret-scanner-py/middleware.py'
+
+# ws
 greyproxy serve --middleware ws://localhost:9000/middleware
 ```
 
-The flag is repeatable and middlewares cascade in declaration order. Each middleware sees the previous one's (possibly rewritten) output as its input; `deny`/`block` short-circuits the chain.
+Both flags are repeatable and can be mixed. Middlewares cascade in declaration order: each sees the previous one's (possibly rewritten) output as its input; `deny`/`block` short-circuits the chain. CLI `--middleware` entries come first in the cascade, then CLI `--middleware-cmd` entries, then YAML entries.
 
 ```bash
 greyproxy serve \
   --middleware ws://localhost:9000/secret-scanner \
-  --middleware ws://localhost:9001/cost-tracker
+  --middleware-cmd 'uv run ./cost-tracker/middleware.py'
 ```
 
-The flag accepts `http://` and `https://` as aliases (automatically converted to `ws://` and `wss://`).
+The `--middleware` flag accepts `http://` and `https://` as aliases (converted to `ws://` and `wss://`). The `--middleware-cmd` flag accepts a command line that's split using shell-like rules (quotes + backslash escapes) but NOT invoked through a shell — so there's no variable expansion or piping. Use `--middleware-cmd 'sh -c "..."'` if you need those.
 
 ### Config file (greyproxy.yml)
+
+Each entry must specify either `url:` (ws transport) or `command:` (stdio transport), never both.
 
 ```yaml
 greyproxy:
   middlewares:
-    - url: "ws://localhost:9000/secret-scanner"
-      timeout_ms: 10000                  # per-request timeout (default: 10000)
-      on_disconnect: deny                # allow | deny (default: deny)
-      auth_header: "X-Secret: mysecret"  # optional, sent as WS header
+    # stdio: greyproxy spawns this and owns its lifecycle
+    - command: ["uv", "run", "./middleware-secret-scanner-py/middleware.py"]
+      name: "secret-scanner"
+      timeout_ms: 10000
+      on_disconnect: deny
+
+    # ws: middleware runs independently, greyproxy dials it
     - url: "ws://localhost:9001/cost-tracker"
       on_disconnect: allow               # observational middleware: don't block on failure
       timeout_ms: 500                    # local, fast: surface hangs quickly
+      auth_header: "X-Secret: mysecret"
 ```
 
-CLI entries come first in the cascade, then YAML entries. `on_disconnect` is per-middleware: a disconnected middleware configured `allow` skips to the next step; one configured `deny` kills the request immediately.
+`command` is always a list of argv elements — no shell. If you need shell features, start the list with `["sh", "-c", "..."]`. `name` on a stdio entry is used as a log prefix on the child's stderr output until the middleware declares its own name in the hello exchange.
+
+`on_disconnect` is per-middleware: a disconnected middleware configured `allow` skips to the next step; one configured `deny` kills the request immediately.
 
 The default is `deny` (secure-by-default). A middleware that is unreachable, times out, or crashes causes the request to be rejected (403) or the response to be blocked (502); the operator has to opt in to pass-through behaviour by setting `on_disconnect: allow` explicitly. This matters for policy middleware (secret scanners, PII redactors, security gates): if the gate isn't running, the request shouldn't leak through silently. Observation-only middleware (audit logs, cost trackers) should set `on_disconnect: allow` explicitly since their absence is not a policy violation.
 

@@ -3,10 +3,53 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/greyhavenhq/greyproxy/internal/gostx/config"
 )
+
+// =============================================================================
+// splitCommand
+// =============================================================================
+
+func TestSplitCommand(t *testing.T) {
+	cases := []struct {
+		in      string
+		want    []string
+		wantErr bool
+	}{
+		{"uv run mw.py", []string{"uv", "run", "mw.py"}, false},
+		{`"uv" "run" "mw.py"`, []string{"uv", "run", "mw.py"}, false},
+		{`uv run "path with spaces/mw.py"`, []string{"uv", "run", "path with spaces/mw.py"}, false},
+		{`python -c 'print("hi")'`, []string{"python", "-c", `print("hi")`}, false},
+		{`echo hello\ world`, []string{"echo", "hello world"}, false},
+		{`  leading   and   trailing  `, []string{"leading", "and", "trailing"}, false},
+
+		// Errors: shell escape / empty input
+		{`"unterminated`, nil, true},
+		{`trailing\`, nil, true},
+		{``, nil, true},
+		{`   `, nil, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.in, func(t *testing.T) {
+			got, err := splitCommand(tc.in)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("want error, got %v", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("got %#v, want %#v", got, tc.want)
+			}
+		})
+	}
+}
 
 // writePEM writes a minimal placeholder file (not a real cert, just for Stat checks).
 func writePlaceholder(t *testing.T, path string) {

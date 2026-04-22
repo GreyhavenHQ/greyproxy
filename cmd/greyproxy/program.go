@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -787,7 +788,7 @@ func (p *program) buildGreyproxyService() error {
 	// Wire middleware WebSocket clients if configured. Multiple middlewares
 	// cascade in declaration order: each sees the previous one's output as
 	// its input; deny/block short-circuits the chain.
-	mwConfigs := buildMiddlewareConfigs(middlewareURLFlags, gaCfg.Middlewares)
+	mwConfigs := buildMiddlewareConfigs(middlewareURLFlags, middlewareCmdFlags, gaCfg.Middlewares)
 	if len(mwConfigs) > 0 {
 		mwCtx, mwCancel := context.WithCancel(context.Background())
 		p.mwCancel = mwCancel
@@ -838,6 +839,7 @@ func (p *program) buildGreyproxyService() error {
 				}
 				out = append(out, greyproxy.MiddlewareStatus{
 					URL:             c.URL(),
+					Kind:            c.Kind(),
 					Name:            c.Name(),
 					Connected:       c.IsConnected(),
 					ProtocolVersion: c.ProtocolVersion(),
@@ -1190,22 +1192,49 @@ func applyDockerEnvOverrides(cfg *greyproxy.Config) {
 
 // buildMiddlewareConfigs merges CLI flags and YAML config into the ordered
 // list of middleware clients to instantiate. CLI entries come first, then
-// YAML entries. Defaults are resolved inside middleware.New (currently:
-// timeout_ms=10000, on_disconnect=deny) — we leave TimeoutMs zero here so
-// a single place owns the default, and YAML can override per-middleware.
-func buildMiddlewareConfigs(cliURLs []string, yamlEntries []greyproxy.MiddlewareConfig) []middleware.Config {
-	out := make([]middleware.Config, 0, len(cliURLs)+len(yamlEntries))
+// YAML entries. CLI URL entries come before CLI command entries when
+// operators mix the two flags; within each kind the declaration order on
+// the command line is preserved. Defaults are resolved inside middleware.New
+// (currently: timeout_ms=10000, on_disconnect=deny) — we leave TimeoutMs
+// zero here so a single place owns the default, and YAML can override
+// per-middleware.
+//
+// YAML entries with both url and command set are skipped with a warning:
+// the two are mutually exclusive per the schema.
+func buildMiddlewareConfigs(cliURLs, cliCmds []string, yamlEntries []greyproxy.MiddlewareConfig) []middleware.Config {
+	out := make([]middleware.Config, 0, len(cliURLs)+len(cliCmds)+len(yamlEntries))
 	for _, u := range cliURLs {
 		if u == "" {
 			continue
 		}
 		out = append(out, middleware.Config{URL: u})
 	}
-	for _, y := range yamlEntries {
-		if y.URL == "" {
+	for _, cmd := range cliCmds {
+		if cmd == "" {
 			continue
 		}
-		cfg := middleware.Config{URL: y.URL}
+		parts, err := splitCommand(cmd)
+		if err != nil {
+			logger.Default().Warnf("middleware --middleware-cmd %q: %v (skipping)", cmd, err)
+			continue
+		}
+		out = append(out, middleware.Config{Command: parts})
+	}
+	for _, y := range yamlEntries {
+		hasURL := y.URL != ""
+		hasCmd := len(y.Command) > 0
+		if hasURL && hasCmd {
+			logger.Default().Warnf("middleware YAML entry has both url and command — skipping (%q / %v)", y.URL, y.Command)
+			continue
+		}
+		if !hasURL && !hasCmd {
+			continue
+		}
+		cfg := middleware.Config{
+			URL:     y.URL,
+			Command: y.Command,
+			Name:    y.Name,
+		}
 		if y.TimeoutMs > 0 {
 			cfg.TimeoutMs = y.TimeoutMs
 		}
@@ -1216,6 +1245,57 @@ func buildMiddlewareConfigs(cliURLs []string, yamlEntries []greyproxy.Middleware
 		out = append(out, cfg)
 	}
 	return out
+}
+
+// splitCommand parses a command string into argv using shell-like rules
+// (quoted segments preserved, backslash escapes respected) but without
+// invoking a shell. This avoids the classic "spaces in paths need sh -c"
+// trap while keeping the CLI ergonomic for simple cases.
+//
+// For anything complex (pipelines, redirects, env var expansion) the
+// operator should invoke sh themselves: --middleware-cmd 'sh -c "FOO=bar ./mw"'.
+func splitCommand(s string) ([]string, error) {
+	var (
+		out     []string
+		cur     strings.Builder
+		inQuote byte // 0, '\'', or '"'
+		escaped bool
+	)
+	flush := func() {
+		if cur.Len() > 0 {
+			out = append(out, cur.String())
+			cur.Reset()
+		}
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case escaped:
+			cur.WriteByte(c)
+			escaped = false
+		case c == '\\' && inQuote != '\'':
+			escaped = true
+		case inQuote != 0 && c == inQuote:
+			inQuote = 0
+		case inQuote == 0 && (c == '\'' || c == '"'):
+			inQuote = c
+		case inQuote == 0 && (c == ' ' || c == '\t'):
+			flush()
+		default:
+			cur.WriteByte(c)
+		}
+	}
+	if inQuote != 0 {
+		return nil, fmt.Errorf("unterminated quote %c", inQuote)
+	}
+	if escaped {
+		return nil, fmt.Errorf("trailing backslash")
+	}
+	flush()
+	if len(out) == 0 {
+		return nil, fmt.Errorf("empty command")
+	}
+	return out, nil
 }
 
 // requestCascadeResult is the neutral outcome of runRequestCascade; the
