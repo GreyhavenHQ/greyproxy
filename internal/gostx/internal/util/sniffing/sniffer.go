@@ -757,7 +757,11 @@ func (h *Sniffer) httpRoundTrip(ctx context.Context, rw, cc io.ReadWriteCloser, 
 		}
 	}
 
-	err = resp.Write(rw)
+	bw := bufio.NewWriterSize(rw, 8192)
+	err = resp.Write(bw)
+	if fErr := bw.Flush(); err == nil {
+		err = fErr
+	}
 
 	if respBody != nil {
 		ro.HTTP.Response.Body = respBody.Content()
