@@ -26,7 +26,7 @@ func startMockServer(t *testing.T, handler func(*testing.T, *websocket.Conn)) (u
 			t.Errorf("upgrade: %v", err)
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		handler(t, conn)
 	}))
 	return "ws" + strings.TrimPrefix(srv.URL, "http"), srv.Close
@@ -94,7 +94,7 @@ func TestClient_HelloExchange(t *testing.T) {
 	c := New(Config{URL: url, TimeoutMs: 500})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go c.Start(ctx)
+	go func() { _ = c.Start(ctx) }()
 
 	select {
 	case <-c.ready:
@@ -144,7 +144,7 @@ func TestClient_FallbackOnTimeout(t *testing.T) {
 			c := New(Config{URL: url, TimeoutMs: 100, OnDisconnect: tc.onTimeout})
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			go c.Start(ctx)
+			go func() { _ = c.Start(ctx) }()
 			<-c.ready
 
 			var msg any
@@ -196,7 +196,7 @@ func TestClient_SkipsMalformedFrame(t *testing.T) {
 	c := New(Config{URL: url, TimeoutMs: 2000})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go c.Start(ctx)
+	go func() { _ = c.Start(ctx) }()
 	<-c.ready
 
 	d := c.Send(context.Background(), RequestMsg{Type: "http-request", ID: NewID()})
@@ -229,7 +229,7 @@ func TestClient_RejectsIncompatibleVersion(t *testing.T) {
 	c := New(Config{URL: url, TimeoutMs: 500})
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	go c.Start(ctx)
+	go func() { _ = c.Start(ctx) }()
 
 	select {
 	case <-c.ready:
@@ -259,7 +259,7 @@ func TestClient_OmittedVersionsAssumeV1(t *testing.T) {
 	c := New(Config{URL: url, TimeoutMs: 500})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go c.Start(ctx)
+	go func() { _ = c.Start(ctx) }()
 
 	select {
 	case <-c.ready:
@@ -325,7 +325,7 @@ func TestClient_DrainOnDisconnectRespectsMessageKind(t *testing.T) {
 	c := New(Config{URL: url, TimeoutMs: 5000}) // default deny
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go c.Start(ctx)
+	go func() { _ = c.Start(ctx) }()
 	<-c.ready
 
 	done := make(chan Decision, 1)

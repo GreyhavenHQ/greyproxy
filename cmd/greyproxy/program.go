@@ -805,7 +805,7 @@ func (p *program) buildGreyproxyService() error {
 		clientURLs := make([]string, 0, len(mwConfigs))
 		for _, cfg := range mwConfigs {
 			c := middleware.New(cfg)
-			go c.Start(mwCtx)
+			go func() { _ = c.Start(mwCtx) }()
 			clients = append(clients, c)
 			clientURLs = append(clientURLs, cfg.URL)
 		}

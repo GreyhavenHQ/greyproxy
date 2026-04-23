@@ -31,7 +31,7 @@ func TestStdioTransport_HelloAndDecision(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
-	defer transport.Close()
+	defer func() { _ = transport.Close() }()
 
 	resp, agreed, err := helloExchange(context.Background(), transport)
 	if err != nil {
@@ -72,7 +72,7 @@ func TestStdioTransport_ChildExit_TriggersReadError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
-	defer transport.Close()
+	defer func() { _ = transport.Close() }()
 
 	if _, _, err := helloExchange(context.Background(), transport); err != nil {
 		t.Fatalf("hello: %v", err)
@@ -126,7 +126,7 @@ func fakeMwCmd(t *testing.T, mode string) []string {
 	// []string we pass as ["KEY=VALUE"]; the helper already merges.
 	// Hacky fix: a tiny shell wrapper would work, but let's just set
 	// the env in the test's own process and let it leak to the child.
-	os.Setenv("GREYPROXY_FAKE_MW", mode)
+	t.Setenv("GREYPROXY_FAKE_MW", mode)
 	return []string{exe}
 }
 

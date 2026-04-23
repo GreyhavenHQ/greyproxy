@@ -50,7 +50,7 @@ func DecompressBody(body []byte, contentEncoding string) ([]byte, bool) {
 	if err != nil {
 		return body, false
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	decoded, err := io.ReadAll(reader)
 	if err != nil {

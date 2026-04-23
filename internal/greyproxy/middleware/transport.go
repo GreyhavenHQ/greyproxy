@@ -265,7 +265,7 @@ func (t *stdioTransport) Close() error {
 // OOM greyproxy because bufio.Scanner has a bounded buffer; lines over
 // 64 KiB are truncated.
 func forwardStderr(r io.ReadCloser, mwName string) {
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 	if mwName == "" {
 		mwName = "?"
 	}
