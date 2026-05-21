@@ -239,6 +239,47 @@ var migrations = []string{
 	// returned by the middleware in its hello response. NULL for middlewares
 	// that did not declare a name; the UI falls back to middleware_url.
 	`ALTER TABLE middleware_events ADD COLUMN middleware_name TEXT;`,
+
+	// Migration 15: LLM proxy — providers and aliases (Phase 1).
+	//
+	// llm_providers holds the upstream credentials and base URLs. api_key_enc
+	// is AES-256-GCM encrypted with the dataDir/session.key master key (see
+	// credential_crypto.go); null when the provider has no auth (e.g. local
+	// Ollama). metadata_json carries per-provider tweaks (extra headers, beta
+	// flags, model-prefix overrides).
+	//
+	// llm_aliases is the public-name -> provider/model map. fallbacks_json is
+	// an ordered list of "provider_name/model_id" strings tried on upstream
+	// failure. is_auto + auto_json are reserved for Phase 5 auto routing.
+	`CREATE TABLE IF NOT EXISTS llm_providers (
+		id            INTEGER PRIMARY KEY AUTOINCREMENT,
+		name          TEXT NOT NULL UNIQUE,
+		type          TEXT NOT NULL,
+		base_url      TEXT NOT NULL,
+		api_key_enc   BLOB,
+		key_preview   TEXT,
+		enabled       INTEGER NOT NULL DEFAULT 1,
+		metadata_json TEXT,
+		user_defined  INTEGER NOT NULL DEFAULT 1,
+		created_at    DATETIME NOT NULL DEFAULT (datetime('now')),
+		updated_at    DATETIME NOT NULL DEFAULT (datetime('now'))
+	);
+	CREATE INDEX IF NOT EXISTS idx_llm_providers_enabled ON llm_providers(enabled);
+
+	CREATE TABLE IF NOT EXISTS llm_aliases (
+		id             INTEGER PRIMARY KEY AUTOINCREMENT,
+		name           TEXT NOT NULL UNIQUE,
+		provider_id    INTEGER REFERENCES llm_providers(id) ON DELETE RESTRICT,
+		model_id       TEXT NOT NULL DEFAULT '',
+		fallbacks_json TEXT,
+		enabled        INTEGER NOT NULL DEFAULT 1,
+		is_auto        INTEGER NOT NULL DEFAULT 0,
+		auto_json      TEXT,
+		created_at     DATETIME NOT NULL DEFAULT (datetime('now')),
+		updated_at     DATETIME NOT NULL DEFAULT (datetime('now'))
+	);
+	CREATE INDEX IF NOT EXISTS idx_llm_aliases_provider ON llm_aliases(provider_id);
+	CREATE INDEX IF NOT EXISTS idx_llm_aliases_enabled ON llm_aliases(enabled);`,
 }
 
 func runMigrations(db *sql.DB) error {
