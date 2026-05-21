@@ -16,6 +16,11 @@ The config format is inherited from [GOST v3](https://gost.run/en/); greyproxy a
 ## Example Configuration
 
 ```yaml
+# Default bind interface for any listener written as a bare port (":43080").
+# Loopback by default so the proxy and dashboard aren't reachable from other
+# machines. See "Bind Interface" below for details.
+host: 127.0.0.1
+
 log:
   level: info
   format: json
@@ -83,6 +88,27 @@ services:
       type: tcp
     resolver: resolver-0
 ```
+
+## Bind Interface
+
+By default greyproxy binds **only to the loopback interface** (`127.0.0.1`).
+Any listener whose address is a bare port (`":43080"`, `"43080"`) is rewritten
+to `127.0.0.1:<port>` at startup. Addresses that already carry an explicit
+host (`"0.0.0.0:43080"`, `"192.168.1.10:43080"`, `"[::1]:43080"`) are left
+alone.
+
+Override the default at the top of the config file:
+
+```yaml
+host: 0.0.0.0   # bind to every interface
+```
+
+Or pass `--host <ip>` to `greyproxy serve` (IP literal only; hostnames are
+rejected). The CLI flag wins over the YAML field, which wins over the
+built-in `127.0.0.1` default.
+
+When the resolved host is unspecified (`0.0.0.0` or `::`), greyproxy logs a
+warning at startup so the operator can confirm the choice was deliberate.
 
 ## The `greyproxy` Block
 
