@@ -34,6 +34,7 @@ greyproxy serve -C greyproxy.yml
 | `-O <format>` | Dump the resolved config and exit. One of `yaml` or `json`. |
 | `-metrics <addr>` | Expose Prometheus-style metrics on the given address. |
 | `-silent-allow` | Enter silent allow-all mode at startup. Requests pass through without prompting until the process restarts. |
+| `--host <ip>` | Default bind interface for listeners written as a bare port (e.g. `:43080`). IP literal only (hostnames are rejected). Defaults to `127.0.0.1`. Pass `--host 0.0.0.0` to bind every interface — the choice is logged with a warning at startup. |
 | `-V` | Print version information and exit. |
 
 ### `greyproxy cert`
@@ -71,7 +72,7 @@ greyproxy install -f        # skip confirmation prompts
 |------|-------------|
 | `-f`, `--force` | Skip interactive confirmation prompts. |
 
-The dashboard is available at [http://localhost:43080](http://localhost:43080) once the service is running.
+The dashboard is available at [http://localhost:43080](http://localhost:43080) once the service is running. The installed service binds to loopback only; to expose it on a network interface, edit the systemd unit (Linux) or launchd plist (macOS) to add `--host <ip>` to the `serve` command line.
 
 ### `greyproxy uninstall`
 

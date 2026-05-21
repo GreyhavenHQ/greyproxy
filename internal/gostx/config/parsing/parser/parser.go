@@ -36,6 +36,12 @@ type Args struct {
 	Debug         bool
 	Trace         bool
 	MetricsAddr   string
+	// Host overrides the bind interface for every listener that was
+	// specified as a bare port (":43080" / "43080"). When empty, the
+	// top-level `host:` field from the config is used; if that's empty
+	// too, DefaultHost (127.0.0.1) wins. Explicit hosts in YAML or in
+	// -L addresses are left alone.
+	Host string
 }
 
 type parser struct {
@@ -141,7 +147,21 @@ func (p *parser) Parse() (*config.Config, error) {
 		}
 	}
 
+	walkAddresses(cfg, ResolveHost(p.args.Host, cfg.Host))
+
 	return cfg, nil
+}
+
+// ResolveHost returns the host that should be applied to bare listener
+// addresses. Precedence: CLI flag > YAML top-level `host:` > DefaultHost.
+func ResolveHost(flagHost, yamlHost string) string {
+	if flagHost != "" {
+		return flagHost
+	}
+	if yamlHost != "" {
+		return yamlHost
+	}
+	return DefaultHost
 }
 
 func mergeConfig(cfg1, cfg2 *config.Config) *config.Config {
@@ -153,6 +173,7 @@ func mergeConfig(cfg1, cfg2 *config.Config) *config.Config {
 	}
 
 	cfg := &config.Config{
+		Host:       cfg1.Host,
 		Services:   append(cfg1.Services, cfg2.Services...),
 		Authers:    append(cfg1.Authers, cfg2.Authers...),
 		Admissions: append(cfg1.Admissions, cfg2.Admissions...),
@@ -167,6 +188,9 @@ func mergeConfig(cfg1, cfg2 *config.Config) *config.Config {
 		Log:        cfg1.Log,
 		Metrics:    cfg1.Metrics,
 		Profiling:  cfg1.Profiling,
+	}
+	if cfg2.Host != "" {
+		cfg.Host = cfg2.Host
 	}
 	if cfg2.TLS != nil {
 		cfg.TLS = cfg2.TLS

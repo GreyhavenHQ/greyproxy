@@ -6,6 +6,12 @@
 # NOTE: This is a template file. The actual gost.yaml is generated
 # by entrypoint-gost.sh which adds custom hosts from PROXY_CUSTOM_HOSTS.
 
+# Default bind interface for any listener written as a bare port (":43080").
+# Loopback by default so the proxy and dashboard aren't reachable from other
+# machines. Override with `greyproxy serve --host <ip>` (IP literal only) or
+# by editing this field. See SECURITY.md for the rationale.
+host: 127.0.0.1
+
 log:
   level: info
   format: json

@@ -66,6 +66,7 @@ func (p *program) initParser() {
 		Debug:         debug,
 		Trace:         trace,
 		MetricsAddr:   metricsAddr,
+		Host:          hostFlag,
 	})
 }
 
@@ -81,6 +82,8 @@ func (p *program) Start(s service.Service) error {
 		}
 		os.Exit(0)
 	}
+
+	warnIfUnspecifiedBind(parser.ResolveHost(hostFlag, viper.GetString("host")))
 
 	// Auto-inject MITM cert paths if CA files exist
 	injectCertPaths(cfg, greyproxyDataHome())
@@ -272,6 +275,7 @@ func (p *program) run(cfg *config.Config) error {
 		if addr == "" {
 			addr = ":6060"
 		}
+		addr = parser.ApplyDefaultHost(addr, parser.ResolveHost(hostFlag, viper.GetString("host")))
 		s := &http.Server{
 			Addr: addr,
 		}
@@ -409,6 +413,13 @@ func (p *program) buildGreyproxyService() error {
 	if gaCfg.Resolver == "" {
 		gaCfg.Resolver = "resolver-0"
 	}
+
+	// Normalize the dashboard bind address. The service / metrics / profiling
+	// addrs are normalized inside parser.Parse() via walkAddresses, but the
+	// greyproxy block lives under a viper subtree and is unmarshalled here,
+	// so it needs its own pass against the same resolved host.
+	resolvedHost := parser.ResolveHost(hostFlag, viper.GetString("host"))
+	gaCfg.Addr = parser.ApplyDefaultHost(gaCfg.Addr, resolvedHost)
 
 	applyDockerEnvOverrides(&gaCfg)
 
@@ -1171,6 +1182,20 @@ func decompressWebSocketFrame(payload []byte) ([]byte, error) {
 	r := flate.NewReader(mr)
 	defer func() { _ = r.Close() }()
 	return io.ReadAll(r)
+}
+
+// warnIfUnspecifiedBind logs once at startup when the resolved bind host is an
+// unspecified address (0.0.0.0 or ::). Operators see the warning in logs and
+// can confirm the choice was intentional.
+func warnIfUnspecifiedBind(host string) {
+	ip := net.ParseIP(host)
+	if ip == nil || !ip.IsUnspecified() {
+		return
+	}
+	logger.Default().Warnf(
+		"binding listeners to all interfaces (host=%s); proxy and dashboard will be reachable from any network — see SECURITY.md",
+		host,
+	)
 }
 
 // applyDockerEnvOverrides configures Docker resolution from environment variables.

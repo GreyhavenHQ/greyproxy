@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/logger"
+	"github.com/greyhavenhq/greyproxy/internal/gostx/config/parsing/parser"
 	xlogger "github.com/greyhavenhq/greyproxy/internal/gostx/logger"
 	"github.com/kardianos/service"
 )
@@ -38,6 +39,7 @@ var (
 	silentAllow        bool
 	middlewareURLFlags stringList
 	middlewareCmdFlags stringList
+	hostFlag           string
 )
 
 func init() {
@@ -98,7 +100,13 @@ func parseFlags() {
 	flag.BoolVar(&silentAllow, "silent-allow", false, "activate silent allow-all mode until restart")
 	flag.Var(&middlewareURLFlags, "middleware", "middleware service URL (ws:// or http://); repeatable, cascades in declaration order")
 	flag.Var(&middlewareCmdFlags, "middleware-cmd", "command to spawn as a stdio middleware (e.g. 'uv run mw.py'); repeatable, cascades after --middleware entries")
+	flag.StringVar(&hostFlag, "host", "", "default bind interface for listeners written as a bare port (e.g. \":43080\"); IP literal only, defaults to 127.0.0.1")
 	flag.Parse()
+
+	if _, err := parser.ParseHostFlag(hostFlag); err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "--host: %v\n", err)
+		os.Exit(2)
+	}
 
 	// Normalize http(s):// to ws(s):// for each middleware URL
 	for i, u := range middlewareURLFlags {

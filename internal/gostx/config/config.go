@@ -444,6 +444,11 @@ type NodeConfig struct {
 }
 
 type Config struct {
+	// Host is the default bind interface for any listener whose addr is a
+	// bare port (":43080" / "43080"). Defaults to 127.0.0.1; overridden by
+	// the --host CLI flag. Explicit hosts in service / metrics / profiling
+	// addrs are left alone.
+	Host       string             `yaml:"host,omitempty" json:"host,omitempty"`
 	Services   []*ServiceConfig   `json:"services"`
 	Authers    []*AutherConfig    `yaml:",omitempty" json:"authers,omitempty"`
 	Admissions []*AdmissionConfig `yaml:",omitempty" json:"admissions,omitempty"`
