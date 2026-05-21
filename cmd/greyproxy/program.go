@@ -35,6 +35,7 @@ import (
 	"github.com/greyhavenhq/greyproxy/internal/gostx/registry"
 	greyproxy "github.com/greyhavenhq/greyproxy/internal/greyproxy"
 	greyproxy_api "github.com/greyhavenhq/greyproxy/internal/greyproxy/api"
+	"github.com/greyhavenhq/greyproxy/internal/greyproxy/llmproxy"
 	"github.com/greyhavenhq/greyproxy/internal/greyproxy/middleware"
 	greyproxy_plugins "github.com/greyhavenhq/greyproxy/internal/greyproxy/plugins"
 	greyproxy_ui "github.com/greyhavenhq/greyproxy/internal/greyproxy/ui"
@@ -498,6 +499,31 @@ func (p *program) buildGreyproxyService() error {
 		return p.certMtime
 	}
 	shared.Version = version
+
+	// LLM proxy gateway. Wired after the credential store so encrypted
+	// api_keys share the same session.key as global credentials. The
+	// gostx llmproxy handler started by loader.Load() reads
+	// llmproxy.GlobalHandler() per request; sending nil disables it
+	// (handler returns 503 until SetGlobalHandler is called).
+	if shared.EncryptionKey != nil {
+		llmStore := llmproxy.NewStore(shared.DB, shared.EncryptionKey)
+		var llmSeed llmproxy.SeedConfig
+		if err := viper.UnmarshalKey("llm", &llmSeed); err != nil {
+			log.Warnf("llm: failed to decode seed config: %v", err)
+		} else if provs, aliases, err := llmStore.Seed(llmSeed); err != nil {
+			log.Warnf("llm: seed failed: %v", err)
+		} else if provs > 0 || aliases > 0 {
+			log.Infof("llm: seeded %d providers and %d aliases from YAML", provs, aliases)
+		}
+		llmServer := llmproxy.NewServer(llmStore, llmproxy.NewStoreRouter(llmStore))
+		llmproxy.SetGlobalHandler(llmServer)
+		// Wire the store into the dashboard's Shared DI so /api/llm/*
+		// handlers can read/write the same rows.
+		shared.LLMStore = llmStore
+		log.Info("llm: gateway ready")
+	} else {
+		log.Warn("llm: gateway not started (no encryption key available)")
+	}
 
 	// Collect listening ports for the health endpoint
 	ports := make(map[string]int)

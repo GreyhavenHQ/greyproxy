@@ -57,15 +57,24 @@ func TestHandler_BridgesTCPToHTTP(t *testing.T) {
 	}
 }
 
-func TestHandler_RefusesInitWithoutGateway(t *testing.T) {
+func TestHandler_503WhenGatewayNotRegistered(t *testing.T) {
 	greylp.SetGlobalHandler(nil)
 	h := NewHandler().(*llmproxyHandler)
-	err := h.Init(xmdata.NewMetadata(map[string]any{}))
-	if err == nil {
-		t.Fatal("expected init to fail when no gateway is registered")
+	if err := h.Init(xmdata.NewMetadata(map[string]any{})); err != nil {
+		t.Fatalf("init: %v", err)
 	}
-	if !strings.Contains(err.Error(), "no LLM gateway") {
-		t.Fatalf("error: %v", err)
+	t.Cleanup(func() { _ = h.Close() })
+
+	server, client := net.Pipe()
+	go func() { _ = h.Handle(context.Background(), server) }()
+	_, _ = client.Write([]byte("GET / HTTP/1.1\r\nHost: x\r\n\r\n"))
+	_ = client.SetReadDeadline(time.Now().Add(2 * time.Second))
+	resp, err := http.ReadResponse(bufio.NewReader(client), &http.Request{Method: "GET"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", resp.StatusCode)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	greyproxy "github.com/greyhavenhq/greyproxy/internal/greyproxy"
+	"github.com/greyhavenhq/greyproxy/internal/greyproxy/llmproxy"
 )
 
 // AllowAllController is the subset of AllowAllManager used by the API.
@@ -40,6 +41,11 @@ type Shared struct {
 	// concrete list so the api package doesn't import the middleware
 	// package, which would produce an import cycle.
 	MiddlewareStatusesFn func() []greyproxy.MiddlewareStatus
+
+	// LLMStore backs the /api/llm/* CRUD endpoints. Nil when the LLM
+	// proxy is disabled (e.g. no encryption key available); handlers
+	// return 503 in that case.
+	LLMStore *llmproxy.Store
 }
 
 // NewRouter creates the Gin router with all routes.
@@ -141,6 +147,21 @@ func NewRouter(s *Shared, pathPrefix string) (*gin.Engine, *gin.RouterGroup) {
 
 		// Middleware status (read-only, introspection)
 		api.GET("/middlewares", MiddlewaresListHandler(s))
+
+		// LLM proxy management (Phase 1: providers + aliases + introspection)
+		api.GET("/llm/providers", LLMProvidersListHandler(s))
+		api.POST("/llm/providers", LLMProvidersCreateHandler(s))
+		api.GET("/llm/providers/:id", LLMProvidersGetHandler(s))
+		api.PUT("/llm/providers/:id", LLMProvidersUpdateHandler(s))
+		api.DELETE("/llm/providers/:id", LLMProvidersDeleteHandler(s))
+
+		api.GET("/llm/aliases", LLMAliasesListHandler(s))
+		api.POST("/llm/aliases", LLMAliasesCreateHandler(s))
+		api.GET("/llm/aliases/:id", LLMAliasesGetHandler(s))
+		api.PUT("/llm/aliases/:id", LLMAliasesUpdateHandler(s))
+		api.DELETE("/llm/aliases/:id", LLMAliasesDeleteHandler(s))
+
+		api.GET("/llm/provider-types", LLMProviderTypesHandler())
 	}
 
 	// WebSocket

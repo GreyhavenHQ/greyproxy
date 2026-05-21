@@ -89,6 +89,42 @@ services:
       type: tcp
     resolver: resolver-0
 
+  # LLM proxy on port 43054 (OpenAI-compatible at root; other dialects
+  # under /<provider>/, e.g. /anthropic/v1/messages — see docs).
+  #
+  # Bound to 127.0.0.1 by default because it holds upstream API keys —
+  # change to ":43054" only if you need network-wide access.
+  - name: llm-proxy
+    addr: 127.0.0.1:43054
+    handler:
+      type: llmproxy
+      metadata:
+        # Optional inbound bearer-token auth. Off by default for local dev.
+        auth.require: false
+        auth.keys: []
+    listener:
+      type: tcp
+
+# LLM proxy seed (providers + aliases). Inserted into the database only
+# on first start; after that, edit via the dashboard /api/llm/* endpoints.
+#
+# Uncomment and adjust to seed your environment.
+#
+# llm:
+#   providers:
+#     - name: openai-cloud
+#       type: openai
+#       base_url: https://api.openai.com
+#       api_key: env:OPENAI_API_KEY
+#     - name: ollama
+#       type: openai-compat
+#       base_url: http://localhost:11434/v1
+#   models:
+#     - name: fast
+#       target: openai-cloud/gpt-4o-mini
+#     - name: local
+#       target: ollama/llama3.2
+
 # Static host mappings
 hosts:
   - name: hosts-0

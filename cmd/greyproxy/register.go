@@ -17,6 +17,7 @@ import (
 	// Register handlers
 	_ "github.com/greyhavenhq/greyproxy/internal/gostx/handler/dns"
 	_ "github.com/greyhavenhq/greyproxy/internal/gostx/handler/http"
+	_ "github.com/greyhavenhq/greyproxy/internal/gostx/handler/llmproxy"
 	_ "github.com/greyhavenhq/greyproxy/internal/gostx/handler/socks/v5"
 
 	// Register listeners

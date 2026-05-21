@@ -2,7 +2,6 @@ package llmproxy
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -44,17 +43,13 @@ func NewHandler(opts ...handler.Option) handler.Handler {
 	return &llmproxyHandler{options: options}
 }
 
-// Init parses metadata and starts the embedded http.Server. Returns an
-// error if no LLM gateway is registered (greyproxy.yml has the service
-// entry but `llm:` is missing in the config — easy to overlook).
+// Init parses metadata and starts the embedded http.Server. The gateway
+// is resolved per-request (via greylp.GlobalHandler()) rather than at
+// Init() time, because gostx services start *before*
+// cmd/greyproxy/program.go finishes constructing the gateway. Requests
+// arriving in that window get a clear 503.
 func (h *llmproxyHandler) Init(md mdata.Metadata) error {
 	h.md = parseMetadata(md)
-
-	gateway := greylp.GlobalHandler()
-	if gateway == nil {
-		return errors.New("llmproxy handler: no LLM gateway registered " +
-			"(check that the `llm:` config block is present)")
-	}
 
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -65,11 +60,11 @@ func (h *llmproxyHandler) Init(md mdata.Metadata) error {
 	h.listener = newChanListener(loopbackAddr{})
 
 	mux := http.NewServeMux()
-	// Wrap the gateway with an inbound auth filter if the operator
-	// flipped auth.require=true. The bearer-key check is tiny — keeping
-	// it here rather than in the gateway lets non-auth tests run the
-	// gateway directly without going through the handler.
-	final := withInboundAuth(gateway, h.md)
+	// Wrap a per-request gateway-lookup with the optional bearer-token
+	// gate. Keeping auth here rather than in the gateway lets the
+	// gateway's tests run directly via httptest without going through
+	// the handler.
+	final := withInboundAuth(gatewayHandlerFunc(), h.md)
 	mux.Handle("/", final)
 
 	h.httpSrv = &http.Server{
@@ -83,6 +78,22 @@ func (h *llmproxyHandler) Init(md mdata.Metadata) error {
 	}()
 	h.started = true
 	return nil
+}
+
+// gatewayHandlerFunc resolves the registered gateway on every request.
+// Returns 503 when the gateway isn't wired yet (e.g. the YAML has the
+// llm-proxy service but no `llm:` block to seed it).
+func gatewayHandlerFunc() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gw := greylp.GlobalHandler()
+		if gw == nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"error":{"message":"llm gateway not configured","type":"server_error","code":"gateway_unconfigured"}}`))
+			return
+		}
+		gw.ServeHTTP(w, r)
+	})
 }
 
 // Handle pushes the accepted connection into the chanListener so the
