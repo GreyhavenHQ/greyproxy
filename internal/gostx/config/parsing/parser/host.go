@@ -28,12 +28,12 @@ func ParseHostFlag(s string) (string, error) {
 	return s, nil
 }
 
-// applyDefaultHost prepends host to addr when addr is a bare port form like
+// ApplyDefaultHost prepends host to addr when addr is a bare port form like
 // ":43080" or "43080". Addresses that already carry a host part (explicit
 // 0.0.0.0, 127.0.0.1, a LAN IP, [::]/[::1], etc.) are returned unchanged so
 // operator overrides win. Non-TCP URI forms ("unix://...") and the empty
 // string are also returned unchanged.
-func applyDefaultHost(addr, host string) string {
+func ApplyDefaultHost(addr, host string) string {
 	if addr == "" {
 		return ""
 	}
@@ -53,7 +53,7 @@ func applyDefaultHost(addr, host string) string {
 	return net.JoinHostPort(host, port)
 }
 
-// walkAddresses applies applyDefaultHost to every listener address in cfg:
+// walkAddresses applies ApplyDefaultHost to every listener address in cfg:
 // each service, the metrics endpoint, and the pprof endpoint. The greyproxy
 // dashboard address lives under the `greyproxy:` viper subtree and is
 // normalized separately in cmd/greyproxy/program.go.
@@ -65,13 +65,13 @@ func walkAddresses(cfg *config.Config, host string) {
 		if svc == nil {
 			continue
 		}
-		svc.Addr = applyDefaultHost(svc.Addr, host)
+		svc.Addr = ApplyDefaultHost(svc.Addr, host)
 	}
 	if cfg.Metrics != nil {
-		cfg.Metrics.Addr = applyDefaultHost(cfg.Metrics.Addr, host)
+		cfg.Metrics.Addr = ApplyDefaultHost(cfg.Metrics.Addr, host)
 	}
 	if cfg.Profiling != nil {
-		cfg.Profiling.Addr = applyDefaultHost(cfg.Profiling.Addr, host)
+		cfg.Profiling.Addr = ApplyDefaultHost(cfg.Profiling.Addr, host)
 	}
 }
 
