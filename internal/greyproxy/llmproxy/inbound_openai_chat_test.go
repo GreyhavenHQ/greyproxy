@@ -1,4 +1,4 @@
-package inbound
+package llmproxy
 
 import (
 	"bytes"
@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/greyhavenhq/greyproxy/internal/greyproxy/llmproxy"
 )
 
 func TestOpenAIChat_Decode_StringContent(t *testing.T) {
@@ -31,7 +30,7 @@ func TestOpenAIChat_Decode_StringContent(t *testing.T) {
 	if ir.Model != "fast" {
 		t.Fatalf("model: %q", ir.Model)
 	}
-	if ir.InboundShape != llmproxy.ShapeOpenAIChat {
+	if ir.InboundShape != ShapeOpenAIChat {
 		t.Fatalf("inbound shape: %q", ir.InboundShape)
 	}
 	if len(ir.Messages) != 2 {
@@ -120,18 +119,18 @@ func TestOpenAIChat_Decode_RejectsNonJSON(t *testing.T) {
 
 func TestOpenAIChat_Encode_NonStreaming(t *testing.T) {
 	rec := httptest.NewRecorder()
-	resp := &llmproxy.ChatResponse{
+	resp := &ChatResponse{
 		ID:    "chatcmpl-abc",
 		Model: "gpt-4o-mini",
-		Choices: []llmproxy.Choice{{
+		Choices: []Choice{{
 			Index:        0,
 			FinishReason: "stop",
-			Message: llmproxy.Message{
+			Message: Message{
 				Role:    "assistant",
-				Content: []llmproxy.ContentBlock{{Type: "text", Text: "Hello!"}},
+				Content: []ContentBlock{{Type: "text", Text: "Hello!"}},
 			},
 		}},
-		Usage:    llmproxy.Usage{InputTokens: 5, OutputTokens: 2},
+		Usage:    Usage{InputTokens: 5, OutputTokens: 2},
 		Provider: "openai",
 	}
 	if err := EncodeOpenAIChat(rec, resp); err != nil {

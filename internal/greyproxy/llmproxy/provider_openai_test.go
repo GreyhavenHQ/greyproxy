@@ -1,4 +1,4 @@
-package provider
+package llmproxy
 
 import (
 	"context"
@@ -7,20 +7,19 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/greyhavenhq/greyproxy/internal/greyproxy/llmproxy"
 )
 
 func TestOpenAI_BuildRequest_AddsAuthAndJSONBody(t *testing.T) {
-	p, err := New("openai", "https://api.openai.com", "sk-test", nil)
+	p, err := NewBackend("openai", "https://api.openai.com", "sk-test", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	tmp := 0.7
-	ir := &llmproxy.ChatRequest{
+	ir := &ChatRequest{
 		Model: "fast", // public alias
-		Messages: []llmproxy.Message{
-			{Role: "user", Content: []llmproxy.ContentBlock{{Type: "text", Text: "Hi"}}},
+		Messages: []Message{
+			{Role: "user", Content: []ContentBlock{{Type: "text", Text: "Hi"}}},
 		},
 		Temperature: &tmp,
 		Stream:      false,
@@ -66,8 +65,8 @@ func TestOpenAI_BuildRequest_AddsAuthAndJSONBody(t *testing.T) {
 
 func TestOpenAI_BuildRequest_NoAuthWhenEmptyKey(t *testing.T) {
 	// openai-compat with a local server (Ollama) usually has no auth.
-	p, _ := New("openai-compat", "http://localhost:11434/v1", "", nil)
-	req, err := p.BuildRequest(context.Background(), &llmproxy.ChatRequest{Model: "x"}, "llama3.2")
+	p, _ := NewBackend("openai-compat", "http://localhost:11434/v1", "", nil)
+	req, err := p.BuildRequest(context.Background(), &ChatRequest{Model: "x"}, "llama3.2")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +76,7 @@ func TestOpenAI_BuildRequest_NoAuthWhenEmptyKey(t *testing.T) {
 }
 
 func TestOpenAI_ParseResponse(t *testing.T) {
-	p, _ := New("openai", "https://api.openai.com", "sk-x", nil)
+	p, _ := NewBackend("openai", "https://api.openai.com", "sk-x", nil)
 	body := `{
 		"id": "chatcmpl-123",
 		"model": "gpt-4o-mini",
@@ -115,9 +114,9 @@ func TestOpenAI_ParseResponse(t *testing.T) {
 	}
 }
 
-func TestRegistry_TypesIncludesOpenAIVariants(t *testing.T) {
+func TestRegistry_BackendTypesIncludesOpenAIVariants(t *testing.T) {
 	want := []string{"openai", "openai-compat"}
-	got := Types()
+	got := BackendTypes()
 	for _, w := range want {
 		found := false
 		for _, g := range got {
@@ -127,7 +126,7 @@ func TestRegistry_TypesIncludesOpenAIVariants(t *testing.T) {
 			}
 		}
 		if !found {
-			t.Errorf("Types() missing %q; got %v", w, got)
+			t.Errorf("BackendTypes() missing %q; got %v", w, got)
 		}
 	}
 }

@@ -1,4 +1,4 @@
-package provider
+package llmproxy
 
 import (
 	"bufio"
@@ -10,13 +10,12 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/greyhavenhq/greyproxy/internal/greyproxy/llmproxy"
 )
 
 func init() {
-	Register("openai", newOpenAI)
-	Register("openai-compat", newOpenAI)
-	Register("openrouter", newOpenRouter)
+	RegisterBackend("openai", newOpenAI)
+	RegisterBackend("openai-compat", newOpenAI)
+	RegisterBackend("openrouter", newOpenRouter)
 }
 
 // openaiProvider implements the OpenAI Chat Completions wire format. It
@@ -30,7 +29,7 @@ type openaiProvider struct {
 	headers map[string]string // extra headers merged at request time
 }
 
-func newOpenAI(baseURL, apiKey string, metadata map[string]string) (Provider, error) {
+func newOpenAI(baseURL, apiKey string, metadata map[string]string) (Backend, error) {
 	p := &openaiProvider{
 		name:    "openai",
 		baseURL: strings.TrimRight(baseURL, "/"),
@@ -50,7 +49,7 @@ func newOpenAI(baseURL, apiKey string, metadata map[string]string) (Provider, er
 	return p, nil
 }
 
-func newOpenRouter(baseURL, apiKey string, metadata map[string]string) (Provider, error) {
+func newOpenRouter(baseURL, apiKey string, metadata map[string]string) (Backend, error) {
 	if baseURL == "" {
 		baseURL = "https://openrouter.ai/api/v1"
 	}
@@ -74,7 +73,7 @@ func (p *openaiProvider) Validate() error {
 // messages (text/tool blocks), temperature, max_tokens, stream,
 // response_format, tools, tool_choice. Provider-specific extensions
 // (`reasoning_effort`, `prompt_cache_key`, etc.) land later.
-func (p *openaiProvider) BuildRequest(ctx context.Context, ir *llmproxy.ChatRequest, modelID string) (*http.Request, error) {
+func (p *openaiProvider) BuildRequest(ctx context.Context, ir *ChatRequest, modelID string) (*http.Request, error) {
 	if modelID == "" {
 		return nil, fmt.Errorf("openai: empty model id")
 	}
@@ -131,38 +130,38 @@ func (p *openaiProvider) BuildRequest(ctx context.Context, ir *llmproxy.ChatRequ
 }
 
 // ParseResponse decodes the JSON response into IR.
-func (p *openaiProvider) ParseResponse(body []byte) (*llmproxy.ChatResponse, error) {
+func (p *openaiProvider) ParseResponse(body []byte) (*ChatResponse, error) {
 	var raw openaiChatResponse
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
-	out := &llmproxy.ChatResponse{
+	out := &ChatResponse{
 		ID:       raw.ID,
 		Model:    raw.Model,
 		Provider: p.name,
 	}
 	for _, c := range raw.Choices {
-		msg := llmproxy.Message{Role: c.Message.Role}
+		msg := Message{Role: c.Message.Role}
 		if c.Message.Content != "" {
-			msg.Content = []llmproxy.ContentBlock{{Type: "text", Text: c.Message.Content}}
+			msg.Content = []ContentBlock{{Type: "text", Text: c.Message.Content}}
 		}
 		for _, tc := range c.Message.ToolCalls {
-			msg.Content = append(msg.Content, llmproxy.ContentBlock{
+			msg.Content = append(msg.Content, ContentBlock{
 				Type: "tool_call",
-				ToolCall: &llmproxy.ToolCall{
+				ToolCall: &ToolCall{
 					ID:        tc.ID,
 					Name:      tc.Function.Name,
 					Arguments: tc.Function.Arguments,
 				},
 			})
 		}
-		out.Choices = append(out.Choices, llmproxy.Choice{
+		out.Choices = append(out.Choices, Choice{
 			Index:        c.Index,
 			FinishReason: c.FinishReason,
 			Message:      msg,
 		})
 	}
-	out.Usage = llmproxy.Usage{
+	out.Usage = Usage{
 		InputTokens:  raw.Usage.PromptTokens,
 		OutputTokens: raw.Usage.CompletionTokens,
 	}
@@ -178,7 +177,7 @@ func (p *openaiProvider) ParseResponse(body []byte) (*llmproxy.ChatResponse, err
 // ParseStream walks an OpenAI SSE stream and emits StreamEvents.
 // Phase 2+ will exercise this; included here to satisfy the interface
 // without adding a separate stub.
-func (p *openaiProvider) ParseStream(r io.Reader, out chan<- *llmproxy.StreamEvent) error {
+func (p *openaiProvider) ParseStream(r io.Reader, out chan<- *StreamEvent) error {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for sc.Scan() {
@@ -191,7 +190,7 @@ func (p *openaiProvider) ParseStream(r io.Reader, out chan<- *llmproxy.StreamEve
 			continue
 		}
 		if payload == "[DONE]" {
-			out <- &llmproxy.StreamEvent{Type: "done"}
+			out <- &StreamEvent{Type: "done"}
 			return nil
 		}
 		var chunk openaiStreamChunk
@@ -199,7 +198,7 @@ func (p *openaiProvider) ParseStream(r io.Reader, out chan<- *llmproxy.StreamEve
 			continue
 		}
 		for _, c := range chunk.Choices {
-			ev := &llmproxy.StreamEvent{Type: "delta", Delta: &llmproxy.Delta{
+			ev := &StreamEvent{Type: "delta", Delta: &Delta{
 				Role:         c.Delta.Role,
 				Content:      c.Delta.Content,
 				FinishReason: c.FinishReason,
@@ -212,7 +211,7 @@ func (p *openaiProvider) ParseStream(r io.Reader, out chan<- *llmproxy.StreamEve
 
 // helpers -------------------------------------------------------------------
 
-func encodeMessages(msgs []llmproxy.Message) []map[string]any {
+func encodeMessages(msgs []Message) []map[string]any {
 	out := make([]map[string]any, 0, len(msgs))
 	for _, m := range msgs {
 		// Collapse a single-text-block message back to a string so the
@@ -271,7 +270,7 @@ func encodeMessages(msgs []llmproxy.Message) []map[string]any {
 	return out
 }
 
-func encodeTools(tools []llmproxy.Tool) []map[string]any {
+func encodeTools(tools []Tool) []map[string]any {
 	out := make([]map[string]any, 0, len(tools))
 	for _, t := range tools {
 		fn := map[string]any{
@@ -289,7 +288,7 @@ func encodeTools(tools []llmproxy.Tool) []map[string]any {
 	return out
 }
 
-func encodeToolChoice(tc *llmproxy.ToolChoice) any {
+func encodeToolChoice(tc *ToolChoice) any {
 	switch tc.Type {
 	case "auto", "none", "required":
 		return tc.Type

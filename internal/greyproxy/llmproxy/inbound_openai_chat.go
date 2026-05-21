@@ -1,4 +1,4 @@
-// Package inbound holds the wire-format adapters for each dialect the
+// inbound_*.go hold the wire-format adapters for each dialect. holds the wire-format adapters for each dialect the
 // gateway accepts. Each file pairs a Decode (wire -> IR) and Encode
 // (IR -> wire) function. Decoders normalise to the canonical IR; encoders
 // emit the exact shape the inbound client expects so the proxy is
@@ -6,7 +6,7 @@
 //
 // openai_chat.go covers POST /v1/chat/completions plus the matching
 // Phase 1 helpers /v1/models and error envelopes.
-package inbound
+package llmproxy
 
 import (
 	"encoding/json"
@@ -15,14 +15,13 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/greyhavenhq/greyproxy/internal/greyproxy/llmproxy"
 )
 
 // DecodeOpenAIChat reads the request body as OpenAI Chat Completions
 // JSON and returns the canonical IR. RawHeaders, InboundShape and
 // InboundRawPath are populated so downstream guardrails and the audit
 // log see the original context.
-func DecodeOpenAIChat(req *http.Request) (*llmproxy.ChatRequest, error) {
+func DecodeOpenAIChat(req *http.Request) (*ChatRequest, error) {
 	buf, err := io.ReadAll(req.Body)
 	if err != nil {
 		return nil, fmt.Errorf("read body: %w", err)
@@ -33,10 +32,10 @@ func DecodeOpenAIChat(req *http.Request) (*llmproxy.ChatRequest, error) {
 	if err := json.Unmarshal(buf, &w); err != nil {
 		return nil, fmt.Errorf("decode chat completions body: %w", err)
 	}
-	ir := &llmproxy.ChatRequest{
+	ir := &ChatRequest{
 		Model:          w.Model,
 		Stream:         w.Stream,
-		InboundShape:   llmproxy.ShapeOpenAIChat,
+		InboundShape:   ShapeOpenAIChat,
 		InboundRawPath: req.URL.Path,
 		RawHeaders:     req.Header.Clone(),
 	}
@@ -52,7 +51,7 @@ func DecodeOpenAIChat(req *http.Request) (*llmproxy.ChatRequest, error) {
 		ir.MaxTokens = &v
 	}
 	if w.ResponseFormat != nil {
-		ir.ResponseFormat = &llmproxy.ResponseFormat{
+		ir.ResponseFormat = &ResponseFormat{
 			Type:       w.ResponseFormat.Type,
 			JSONSchema: w.ResponseFormat.JSONSchema,
 		}
@@ -61,7 +60,7 @@ func DecodeOpenAIChat(req *http.Request) (*llmproxy.ChatRequest, error) {
 		ir.Messages = append(ir.Messages, decodeOpenAIMessage(m))
 	}
 	for _, t := range w.Tools {
-		ir.Tools = append(ir.Tools, llmproxy.Tool{
+		ir.Tools = append(ir.Tools, Tool{
 			Name:        t.Function.Name,
 			Description: t.Function.Description,
 			Parameters:  t.Function.Parameters,
@@ -73,8 +72,8 @@ func DecodeOpenAIChat(req *http.Request) (*llmproxy.ChatRequest, error) {
 	return ir, nil
 }
 
-func decodeOpenAIMessage(m openaiWireMessage) llmproxy.Message {
-	out := llmproxy.Message{Role: m.Role, Name: m.Name}
+func decodeOpenAIMessage(m openaiWireMessage) Message {
+	out := Message{Role: m.Role, Name: m.Name}
 
 	// Content is either a string or an array of parts. We accept both.
 	if m.Content == nil {
@@ -83,7 +82,7 @@ func decodeOpenAIMessage(m openaiWireMessage) llmproxy.Message {
 	switch c := m.Content.(type) {
 	case string:
 		if c != "" {
-			out.Content = append(out.Content, llmproxy.ContentBlock{Type: "text", Text: c})
+			out.Content = append(out.Content, ContentBlock{Type: "text", Text: c})
 		}
 	case []any:
 		for _, raw := range c {
@@ -95,14 +94,14 @@ func decodeOpenAIMessage(m openaiWireMessage) llmproxy.Message {
 			switch typ {
 			case "text":
 				if s, ok := block["text"].(string); ok {
-					out.Content = append(out.Content, llmproxy.ContentBlock{Type: "text", Text: s})
+					out.Content = append(out.Content, ContentBlock{Type: "text", Text: s})
 				}
 			case "image_url":
 				if iu, ok := block["image_url"].(map[string]any); ok {
 					url, _ := iu["url"].(string)
-					out.Content = append(out.Content, llmproxy.ContentBlock{
+					out.Content = append(out.Content, ContentBlock{
 						Type:  "image",
-						Image: &llmproxy.ImageRef{URL: url},
+						Image: &ImageRef{URL: url},
 					})
 				}
 			}
@@ -111,9 +110,9 @@ func decodeOpenAIMessage(m openaiWireMessage) llmproxy.Message {
 
 	// Assistant-side tool_calls come as a sibling field, not inside content.
 	for _, tc := range m.ToolCalls {
-		out.Content = append(out.Content, llmproxy.ContentBlock{
+		out.Content = append(out.Content, ContentBlock{
 			Type: "tool_call",
-			ToolCall: &llmproxy.ToolCall{
+			ToolCall: &ToolCall{
 				ID:        tc.ID,
 				Name:      tc.Function.Name,
 				Arguments: tc.Function.Arguments,
@@ -127,9 +126,9 @@ func decodeOpenAIMessage(m openaiWireMessage) llmproxy.Message {
 		if s, ok := m.Content.(string); ok {
 			text = s
 		}
-		out.Content = []llmproxy.ContentBlock{{
+		out.Content = []ContentBlock{{
 			Type: "tool_result",
-			ToolResult: &llmproxy.ToolResult{
+			ToolResult: &ToolResult{
 				ToolUseID: m.ToolCallID,
 				Content:   text,
 			},
@@ -138,13 +137,13 @@ func decodeOpenAIMessage(m openaiWireMessage) llmproxy.Message {
 	return out
 }
 
-func decodeOpenAIToolChoice(raw any) *llmproxy.ToolChoice {
+func decodeOpenAIToolChoice(raw any) *ToolChoice {
 	switch v := raw.(type) {
 	case string:
-		return &llmproxy.ToolChoice{Type: v}
+		return &ToolChoice{Type: v}
 	case map[string]any:
 		typ, _ := v["type"].(string)
-		tc := &llmproxy.ToolChoice{Type: typ}
+		tc := &ToolChoice{Type: typ}
 		if fn, ok := v["function"].(map[string]any); ok {
 			tc.Name, _ = fn["name"].(string)
 		}
@@ -156,7 +155,7 @@ func decodeOpenAIToolChoice(raw any) *llmproxy.ToolChoice {
 // EncodeOpenAIChat writes a ChatResponse to the http.ResponseWriter as
 // the OpenAI Chat Completions JSON shape. Caller is responsible for
 // writing the HTTP status; this only sets Content-Type and body.
-func EncodeOpenAIChat(w http.ResponseWriter, resp *llmproxy.ChatResponse) error {
+func EncodeOpenAIChat(w http.ResponseWriter, resp *ChatResponse) error {
 	w.Header().Set("Content-Type", "application/json")
 
 	wire := openaiChatResponseWire{
