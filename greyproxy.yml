@@ -106,24 +106,42 @@ services:
       type: tcp
 
 # LLM proxy seed (providers + aliases). Inserted into the database only
-# on first start; after that, edit via the dashboard /api/llm/* endpoints.
+# on first start; after that, the database is authoritative and you edit
+# via the dashboard /api/llm/* endpoints. Changing this block later has
+# no effect unless the llm_providers/llm_aliases tables are empty.
 #
-# Uncomment and adjust to seed your environment.
-#
-# llm:
-#   providers:
-#     - name: openai-cloud
-#       type: openai
-#       base_url: https://api.openai.com
-#       api_key: env:OPENAI_API_KEY
-#     - name: ollama
-#       type: openai-compat
-#       base_url: http://localhost:11434/v1
-#   models:
-#     - name: fast
-#       target: openai-cloud/gpt-4o-mini
-#     - name: local
-#       target: ollama/llama3.2
+# api_key accepts a literal value or `env:NAME` to read from the process
+# environment at seed time. A provider whose env var is unset is created
+# without a key (fine for local backends like Ollama).
+llm:
+  providers:
+    - name: openai-cloud
+      type: openai
+      base_url: https://api.openai.com
+      api_key: env:OPENAI_API_KEY
+
+    - name: openrouter
+      type: openrouter
+      base_url: https://openrouter.ai/api/v1
+      api_key: env:OPENROUTER_API_KEY
+
+    # Any OpenAI-compatible local endpoint (Ollama, LM Studio, vLLM, …).
+    - name: ollama
+      type: openai-compat
+      base_url: http://localhost:11434/v1
+
+  # Aliases are the public model names clients send. Point them at any
+  # provider/model. Switching a backend is a one-line change here (or a
+  # click in the dashboard) with no agent reconfiguration.
+  models:
+    - name: fast
+      target: openai-cloud/gpt-4o-mini
+
+    - name: smart
+      target: openai-cloud/gpt-4o
+
+    - name: local
+      target: ollama/llama3.2
 
 # Static host mappings
 hosts:
