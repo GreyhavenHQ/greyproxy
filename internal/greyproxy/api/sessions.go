@@ -1,7 +1,9 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -121,10 +123,25 @@ func SessionsCreateHandler(s *Shared) gin.HandlerFunc {
 	}
 }
 
-// SessionsHeartbeatHandler resets the TTL for an active session.
+// SessionsHeartbeatHandler resets the TTL for an active session and, when
+// the request carries a JSON body, ingests filesystem events shipped by
+// greywall's --record-fs tracer. The body is optional: empty/no body is the
+// pre-fs-events behavior and must keep working.
 func SessionsHeartbeatHandler(s *Shared) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		sessionID := c.Param("id")
+
+		// Parse optional FsEvents payload. greywall posts either an empty
+		// body (no events queued) or a JSON object. We tolerate both and a
+		// malformed body without failing the TTL refresh — losing events is
+		// recoverable, losing the heartbeat is not.
+		var payload greyproxy.FsEventsPayload
+		raw, _ := io.ReadAll(c.Request.Body)
+		if len(raw) > 0 {
+			// Malformed bodies are tolerated: heartbeat must still refresh
+			// the TTL even if greywall ships a payload we cannot parse.
+			_ = json.Unmarshal(raw, &payload)
+		}
 
 		session, err := greyproxy.HeartbeatSession(s.DB, sessionID)
 		if err != nil {
@@ -136,6 +153,23 @@ func SessionsHeartbeatHandler(s *Shared) gin.HandlerFunc {
 			return
 		}
 
+		ingested := 0
+		if s.FsEvents != nil && (len(payload.Events) > 0 || payload.Dropped > 0) {
+			s.FsEvents.Ingest(sessionID, payload.Events, payload.Dropped)
+			ingested = len(payload.Events)
+
+			if s.Bus != nil && (len(payload.Events) > 0 || payload.Dropped > 0) {
+				s.Bus.Publish(greyproxy.Event{
+					Type: greyproxy.EventSessionFsEvents,
+					Data: greyproxy.FsEventsBatch{
+						SessionID: sessionID,
+						Events:    payload.Events,
+						Dropped:   payload.Dropped,
+					},
+				})
+			}
+		}
+
 		if s.Bus != nil {
 			s.Bus.Publish(greyproxy.Event{
 				Type: greyproxy.EventSessionHeartbeat,
@@ -143,12 +177,32 @@ func SessionsHeartbeatHandler(s *Shared) gin.HandlerFunc {
 			})
 		}
 
-		c.JSON(http.StatusOK, gin.H{
+		resp := gin.H{
 			"session_id": session.SessionID,
 			"expires_at": session.ExpiresAt.UTC().Format("2006-01-02T15:04:05Z"),
-		})
+		}
+		if ingested > 0 || payload.Dropped > 0 {
+			resp["fs_events_ingested"] = ingested
+			resp["fs_events_dropped"] = payload.Dropped
+		}
+		c.JSON(http.StatusOK, resp)
 	}
 }
+
+// SessionsFsEventsHandler returns the buffered filesystem events for a
+// session. The buffer is in-memory and FIFO; older entries are evicted
+// once the per-session ring fills up (reflected by truncated=true).
+func SessionsFsEventsHandler(s *Shared) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		sessionID := c.Param("id")
+		if s.FsEvents == nil {
+			c.JSON(http.StatusOK, greyproxy.FsEventsSnapshot{SessionID: sessionID})
+			return
+		}
+		c.JSON(http.StatusOK, s.FsEvents.Snapshot(sessionID))
+	}
+}
+
 
 // SessionsDeleteHandler removes a session and wipes credentials from DB and memory.
 func SessionsDeleteHandler(s *Shared) gin.HandlerFunc {
@@ -163,6 +217,9 @@ func SessionsDeleteHandler(s *Shared) gin.HandlerFunc {
 
 		if deleted && s.CredentialStore != nil {
 			s.CredentialStore.UnregisterSession(sessionID)
+		}
+		if deleted && s.FsEvents != nil {
+			s.FsEvents.Forget(sessionID)
 		}
 
 		c.JSON(http.StatusOK, gin.H{

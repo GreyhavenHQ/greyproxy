@@ -27,6 +27,7 @@ type Shared struct {
 	Settings        *greyproxy.SettingsManager
 	Assembler       *greyproxy.ConversationAssembler
 	CredentialStore *greyproxy.CredentialStore
+	FsEvents        *greyproxy.FsEventStore
 	AllowAll        AllowAllController
 	EncryptionKey   []byte
 	Version         string
@@ -132,6 +133,7 @@ func NewRouter(s *Shared, pathPrefix string) (*gin.Engine, *gin.RouterGroup) {
 		api.GET("/sessions", SessionsListHandler(s))
 		api.POST("/sessions", SessionsCreateHandler(s))
 		api.POST("/sessions/:id/heartbeat", SessionsHeartbeatHandler(s))
+		api.GET("/sessions/:id/fsevents", SessionsFsEventsHandler(s))
 		api.DELETE("/sessions/:id", SessionsDeleteHandler(s))
 
 		// Global credentials

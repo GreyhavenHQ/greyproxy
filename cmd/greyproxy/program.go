@@ -502,6 +502,10 @@ func (p *program) buildGreyproxyService() error {
 		}
 	}
 
+	// Filesystem event ring buffer (per-session). Receives FsEvents shipped
+	// by greywall in the heartbeat body when --record-fs is enabled.
+	shared.FsEvents = greyproxy.NewFsEventStore(0)
+
 	shared.ReloadCertFn = p.reloadConfig
 	shared.CertMtimeFn = func() time.Time {
 		p.certMtimeMu.Lock()

@@ -1042,13 +1042,83 @@
                         html += '</div>';
                         html += '</div>';
                     }
+                    // Filesystem activity (from greywall --record-fs heartbeats)
+                    html += '<div class="mt-2 pt-2 border-t border-border/50">';
+                    html += '<div class="flex items-center justify-between mb-1">';
+                    html += '<span class="text-xs font-medium text-muted-foreground">Filesystem activity</span>';
+                    html += '<span id="fsev-meta-' + escapeHtml(s.session_id) + '" class="text-xs text-muted-foreground"></span>';
+                    html += '</div>';
+                    html += '<div id="fsev-' + escapeHtml(s.session_id) + '" class="text-xs font-mono space-y-0.5 max-h-40 overflow-y-auto">';
+                    html += '<span class="text-muted-foreground">Loading...</span>';
+                    html += '</div>';
+                    html += '</div>';
                     html += '</div>';
                 });
                 html += '</div>';
                 el.innerHTML = html;
+                // Populate fs-event panels in parallel.
+                sessions.forEach(function(s) { loadFsEvents(s.session_id); });
             })
             .catch(function() {
                 document.getElementById('sessions-list').innerHTML = '<p class="text-sm text-red-600">Failed to load sessions.</p>';
+            });
+    }
+
+    // fsOpColor maps the FsEvent.Op string to a tailwind text color class.
+    function fsOpColor(op) {
+        switch (op) {
+            case 'open_read':  return 'text-blue-600 dark:text-blue-400';
+            case 'open_write':
+            case 'create':     return 'text-green-600 dark:text-green-400';
+            case 'unlink':     return 'text-red-600 dark:text-red-400';
+            case 'rename':
+            case 'link':
+            case 'symlink':    return 'text-amber-600 dark:text-amber-400';
+            case 'mkdir':      return 'text-purple-600 dark:text-purple-400';
+            default:           return 'text-muted-foreground';
+        }
+    }
+
+    function renderFsEvents(sessionID, snap) {
+        var el = document.getElementById('fsev-' + sessionID);
+        var meta = document.getElementById('fsev-meta-' + sessionID);
+        if (!el) return;
+        var events = (snap && snap.events) || [];
+        if (events.length === 0) {
+            el.innerHTML = '<span class="text-muted-foreground">No filesystem events. Launch greywall with --record-fs to populate.</span>';
+        } else {
+            // Render newest first, cap displayed lines at 100.
+            var lines = [];
+            var start = Math.max(0, events.length - 100);
+            for (var i = events.length - 1; i >= start; i--) {
+                var e = events[i];
+                var op = escapeHtml(e.op || '');
+                var path = escapeHtml(e.path || '');
+                var extra = '';
+                if (e.path2) extra += ' &rarr; ' + escapeHtml(e.path2);
+                if (e.errno) extra += ' <span class="text-red-600 dark:text-red-400">[errno ' + e.errno + ']</span>';
+                if (e.pid)   extra += ' <span class="text-muted-foreground">pid=' + e.pid + '</span>';
+                var ts = e.ts ? '<span class="text-muted-foreground">' + escapeHtml(e.ts.substr(11, 12)) + '</span> ' : '';
+                lines.push('<div class="truncate">' + ts + '<span class="' + fsOpColor(e.op) + ' font-semibold">' + op + '</span> ' + path + extra + '</div>');
+            }
+            el.innerHTML = lines.join('');
+        }
+        if (meta) {
+            var parts = [];
+            if (snap.total_events) parts.push(snap.total_events + ' total');
+            if (snap.dropped)      parts.push(snap.dropped + ' dropped');
+            if (snap.truncated)    parts.push('buffer wrapped');
+            meta.textContent = parts.join(' · ');
+        }
+    }
+
+    function loadFsEvents(sessionID) {
+        fetch(prefix + '/api/sessions/' + encodeURIComponent(sessionID) + '/fsevents')
+            .then(function(r) { return r.json(); })
+            .then(function(snap) { renderFsEvents(sessionID, snap); })
+            .catch(function() {
+                var el = document.getElementById('fsev-' + sessionID);
+                if (el) el.innerHTML = '<span class="text-red-600">Failed to load fs events.</span>';
             });
     }
 
@@ -1165,8 +1235,17 @@
     loadSessions();
     loadCredentials();
 
-    // Listen for session events to refresh
-    window.addEventListener('proxy:session-event', function() {
+    // Listen for session events to refresh. fs_events fire every heartbeat
+    // (up to once per minute per session) and only need the per-session
+    // panel refreshed — avoid re-rendering the whole list to keep the page
+    // calm. Other session.* types still trigger a full reload.
+    window.addEventListener('proxy:session-event', function(ev) {
+        var msg = ev && ev.detail;
+        if (msg && msg.type === 'session.fs_events') {
+            var sid = msg.data && msg.data.session_id;
+            if (sid) loadFsEvents(sid);
+            return;
+        }
         loadSessions();
     });
 
