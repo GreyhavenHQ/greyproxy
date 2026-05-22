@@ -1,0 +1,455 @@
+{{define "content"}}
+<div class="space-y-6" id="llm-page">
+
+    <div class="flex justify-between items-center">
+        <h1 class="text-2xl font-bold text-foreground">LLM Proxy</h1>
+    </div>
+
+    <!-- Gateway info banner -->
+    <div class="bg-card rounded-lg shadow-sm border border-border p-4">
+        <div class="flex items-start justify-between gap-4 flex-wrap">
+            <div>
+                <h2 class="text-sm font-semibold text-foreground">Gateway</h2>
+                <p class="mt-1 text-xs text-muted-foreground">
+                    Point any OpenAI-compatible client at
+                    <code class="px-1 py-0.5 rounded bg-muted text-foreground" id="gw-base">http://127.0.0.1:43054</code>
+                    and request a model by its alias name. Anthropic clients use
+                    <code class="px-1 py-0.5 rounded bg-muted text-foreground">/anthropic</code> (Phase 2).
+                </p>
+            </div>
+            <button onclick="copyCurl()" type="button"
+                class="inline-flex items-center px-3 py-1.5 border border-border text-xs font-medium rounded-md text-foreground bg-background hover:bg-muted">
+                Copy sample curl
+            </button>
+        </div>
+    </div>
+
+    <!-- Providers -->
+    <div class="bg-card rounded-lg shadow-sm border border-border">
+        <div class="flex justify-between items-center px-4 py-3 border-b border-border">
+            <h2 class="text-lg font-semibold text-foreground">Providers</h2>
+            <button onclick="showProviderModal()" type="button"
+                class="inline-flex items-center px-3 py-1.5 border border-transparent text-sm font-medium rounded-md text-primary-foreground bg-primary hover:bg-primary/90">
+                Add provider
+            </button>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="min-w-full text-sm">
+                <thead class="text-xs text-muted-foreground border-b border-border">
+                    <tr>
+                        <th class="text-left font-medium px-4 py-2">Name</th>
+                        <th class="text-left font-medium px-4 py-2">Type</th>
+                        <th class="text-left font-medium px-4 py-2">Base URL</th>
+                        <th class="text-left font-medium px-4 py-2">API key</th>
+                        <th class="text-left font-medium px-4 py-2">Enabled</th>
+                        <th class="text-right font-medium px-4 py-2">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="providers-tbody" class="divide-y divide-border">
+                    <tr><td colspan="6" class="px-4 py-6 text-center text-muted-foreground">Loading…</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Aliases / Models -->
+    <div class="bg-card rounded-lg shadow-sm border border-border">
+        <div class="flex justify-between items-center px-4 py-3 border-b border-border">
+            <h2 class="text-lg font-semibold text-foreground">Models <span class="text-muted-foreground font-normal text-sm">(aliases)</span></h2>
+            <button onclick="showAliasModal()" type="button"
+                class="inline-flex items-center px-3 py-1.5 border border-transparent text-sm font-medium rounded-md text-primary-foreground bg-primary hover:bg-primary/90">
+                Add model
+            </button>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="min-w-full text-sm">
+                <thead class="text-xs text-muted-foreground border-b border-border">
+                    <tr>
+                        <th class="text-left font-medium px-4 py-2">Alias</th>
+                        <th class="text-left font-medium px-4 py-2">Target</th>
+                        <th class="text-left font-medium px-4 py-2">Fallbacks</th>
+                        <th class="text-left font-medium px-4 py-2">Enabled</th>
+                        <th class="text-right font-medium px-4 py-2">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="aliases-tbody" class="divide-y divide-border">
+                    <tr><td colspan="5" class="px-4 py-6 text-center text-muted-foreground">Loading…</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Provider modal -->
+<div id="provider-modal" class="hidden fixed z-10 inset-0 overflow-y-auto">
+    <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+        <div class="fixed inset-0 bg-black bg-opacity-50" onclick="hideProviderModal()"></div>
+        <div class="inline-block align-bottom bg-card rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
+            <form id="provider-form" onsubmit="return submitProvider(event)">
+                <input type="hidden" id="provider-id">
+                <div class="bg-card px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+                    <h3 class="text-lg font-medium text-foreground" id="provider-modal-title">Add provider</h3>
+                    <div id="provider-error" class="hidden mt-3 text-sm text-red-600"></div>
+                    <div class="mt-4 space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-foreground">Name</label>
+                            <input type="text" id="provider-name" required placeholder="openai-cloud"
+                                class="mt-1 block w-full px-3 py-2 border border-border rounded-md bg-background focus:outline-none focus:ring-ring focus:border-ring">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-foreground">Type</label>
+                            <select id="provider-type"
+                                class="mt-1 block w-full pl-3 pr-10 py-2 border-border rounded-md bg-background focus:outline-none focus:ring-ring focus:border-ring"></select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-foreground">Base URL</label>
+                            <input type="text" id="provider-base-url" required placeholder="https://api.openai.com"
+                                class="mt-1 block w-full px-3 py-2 border border-border rounded-md bg-background focus:outline-none focus:ring-ring focus:border-ring">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-foreground">API key</label>
+                            <input type="password" id="provider-api-key" autocomplete="new-password" placeholder="sk-…"
+                                class="mt-1 block w-full px-3 py-2 border border-border rounded-md bg-background focus:outline-none focus:ring-ring focus:border-ring">
+                            <p class="mt-1 text-xs text-muted-foreground" id="provider-key-hint">Stored encrypted. Leave blank to keep the existing key when editing.</p>
+                        </div>
+                        <div class="flex items-center">
+                            <input type="checkbox" id="provider-enabled" checked
+                                class="h-4 w-4 text-primary focus:ring-ring border-border rounded">
+                            <label for="provider-enabled" class="ml-2 text-sm text-foreground">Enabled</label>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-secondary px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+                    <button type="submit" class="w-full inline-flex justify-center rounded-md border border-transparent px-4 py-2 bg-primary text-base font-medium text-primary-foreground hover:bg-primary/90 sm:ml-3 sm:w-auto sm:text-sm">Save</button>
+                    <button type="button" onclick="hideProviderModal()" class="mt-3 w-full inline-flex justify-center rounded-md border border-border px-4 py-2 bg-background text-base font-medium text-foreground hover:bg-muted sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Alias modal -->
+<div id="alias-modal" class="hidden fixed z-10 inset-0 overflow-y-auto">
+    <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+        <div class="fixed inset-0 bg-black bg-opacity-50" onclick="hideAliasModal()"></div>
+        <div class="inline-block align-bottom bg-card rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
+            <form id="alias-form" onsubmit="return submitAlias(event)">
+                <input type="hidden" id="alias-id">
+                <div class="bg-card px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+                    <h3 class="text-lg font-medium text-foreground" id="alias-modal-title">Add model</h3>
+                    <div id="alias-error" class="hidden mt-3 text-sm text-red-600"></div>
+                    <div class="mt-4 space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-foreground">Alias</label>
+                            <input type="text" id="alias-name" required placeholder="fast"
+                                class="mt-1 block w-full px-3 py-2 border border-border rounded-md bg-background focus:outline-none focus:ring-ring focus:border-ring">
+                            <p class="mt-1 text-xs text-muted-foreground">The public model name clients send.</p>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-foreground">Provider</label>
+                            <select id="alias-provider"
+                                class="mt-1 block w-full pl-3 pr-10 py-2 border-border rounded-md bg-background focus:outline-none focus:ring-ring focus:border-ring"></select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-foreground">Model ID</label>
+                            <input type="text" id="alias-model-id" required placeholder="gpt-4o-mini"
+                                class="mt-1 block w-full px-3 py-2 border border-border rounded-md bg-background focus:outline-none focus:ring-ring focus:border-ring">
+                            <p class="mt-1 text-xs text-muted-foreground">The model id as the provider knows it.</p>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-foreground">Fallbacks (optional)</label>
+                            <input type="text" id="alias-fallbacks" placeholder="openai-cloud/gpt-4o, ollama/llama3.2"
+                                class="mt-1 block w-full px-3 py-2 border border-border rounded-md bg-background focus:outline-none focus:ring-ring focus:border-ring">
+                            <p class="mt-1 text-xs text-muted-foreground">Comma-separated <code>provider/model</code> list, tried on failure.</p>
+                        </div>
+                        <div class="flex items-center">
+                            <input type="checkbox" id="alias-enabled" checked
+                                class="h-4 w-4 text-primary focus:ring-ring border-border rounded">
+                            <label for="alias-enabled" class="ml-2 text-sm text-foreground">Enabled</label>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-secondary px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+                    <button type="submit" class="w-full inline-flex justify-center rounded-md border border-transparent px-4 py-2 bg-primary text-base font-medium text-primary-foreground hover:bg-primary/90 sm:ml-3 sm:w-auto sm:text-sm">Save</button>
+                    <button type="button" onclick="hideAliasModal()" class="mt-3 w-full inline-flex justify-center rounded-md border border-border px-4 py-2 bg-background text-base font-medium text-foreground hover:bg-muted sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+// Phase 1.5 LLM settings — client-side CRUD against the already-tested
+// /api/llm/* JSON endpoints. No HTMX here; the API is JSON so plain fetch
+// is the lightest fit and avoids threading the store through the HTMX layer.
+const PREFIX = "{{.Prefix}}";
+const API = PREFIX + "/api/llm";
+
+// providerNames maps id -> name so the aliases table can show a readable
+// target instead of a numeric provider_id.
+let providerNames = {};
+
+function esc(s) {
+    return String(s == null ? "" : s)
+        .replaceAll("&", "&amp;").replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+}
+
+async function apiJSON(method, path, body) {
+    const opts = { method, headers: {} };
+    if (body !== undefined) {
+        opts.headers["Content-Type"] = "application/json";
+        opts.body = JSON.stringify(body);
+    }
+    const res = await fetch(API + path, opts);
+    let data = null;
+    try { data = await res.json(); } catch (e) { /* empty body */ }
+    if (!res.ok) {
+        const msg = (data && data.error) ? data.error : ("HTTP " + res.status);
+        throw new Error(msg);
+    }
+    return data;
+}
+
+// ---- Providers -----------------------------------------------------------
+
+async function loadProviders() {
+    const tbody = document.getElementById("providers-tbody");
+    try {
+        const data = await apiJSON("GET", "/providers");
+        const items = (data && data.items) || [];
+        providerNames = {};
+        items.forEach(p => { providerNames[p.id] = p.name; });
+        if (items.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" class="px-4 py-6 text-center text-muted-foreground">No providers yet. Add one to get started.</td></tr>';
+        } else {
+            tbody.innerHTML = items.map(providerRow).join("");
+        }
+    } catch (e) {
+        tbody.innerHTML = '<tr><td colspan="6" class="px-4 py-6 text-center text-red-600">' + esc(e.message) + '</td></tr>';
+    }
+    // Refresh the aliases table too, so provider names render correctly.
+    loadAliases();
+}
+
+function providerRow(p) {
+    const keyBadge = p.key_set
+        ? '<span class="text-xs px-2 py-0.5 rounded bg-primary/10 text-primary">' + esc(p.key_preview || "set") + '</span>'
+        : '<span class="text-xs text-muted-foreground">—</span>';
+    const enabled = p.enabled
+        ? '<span class="text-xs px-2 py-0.5 rounded bg-green-500/10 text-green-600">yes</span>'
+        : '<span class="text-xs px-2 py-0.5 rounded bg-muted text-muted-foreground">no</span>';
+    const pj = esc(JSON.stringify(p));
+    return '<tr>' +
+        '<td class="px-4 py-2 font-medium text-foreground">' + esc(p.name) + '</td>' +
+        '<td class="px-4 py-2 text-muted-foreground">' + esc(p.type) + '</td>' +
+        '<td class="px-4 py-2 text-muted-foreground">' + esc(p.base_url) + '</td>' +
+        '<td class="px-4 py-2">' + keyBadge + '</td>' +
+        '<td class="px-4 py-2">' + enabled + '</td>' +
+        '<td class="px-4 py-2 text-right whitespace-nowrap">' +
+            '<button class="text-xs text-primary hover:underline" onclick=\'editProvider(' + pj + ')\'>Edit</button>' +
+            '<button class="ml-3 text-xs text-red-600 hover:underline" onclick="deleteProvider(' + p.id + ',\'' + esc(p.name) + '\')">Delete</button>' +
+        '</td>' +
+    '</tr>';
+}
+
+async function populateProviderTypes(selected) {
+    const sel = document.getElementById("provider-type");
+    try {
+        const data = await apiJSON("GET", "/provider-types");
+        const items = (data && data.items) || [];
+        sel.innerHTML = items.map(t => '<option value="' + esc(t) + '">' + esc(t) + '</option>').join("");
+        if (selected) sel.value = selected;
+    } catch (e) { /* leave empty; create will validate */ }
+}
+
+function showProviderModal() {
+    document.getElementById("provider-form").reset();
+    document.getElementById("provider-id").value = "";
+    document.getElementById("provider-modal-title").textContent = "Add provider";
+    document.getElementById("provider-enabled").checked = true;
+    hideError("provider-error");
+    populateProviderTypes();
+    document.getElementById("provider-modal").classList.remove("hidden");
+}
+
+function editProvider(p) {
+    document.getElementById("provider-form").reset();
+    document.getElementById("provider-id").value = p.id;
+    document.getElementById("provider-modal-title").textContent = "Edit provider";
+    document.getElementById("provider-name").value = p.name;
+    document.getElementById("provider-base-url").value = p.base_url;
+    document.getElementById("provider-enabled").checked = !!p.enabled;
+    document.getElementById("provider-key-hint").textContent =
+        p.key_set ? "A key is set (" + (p.key_preview || "•••") + "). Leave blank to keep it." : "Stored encrypted.";
+    hideError("provider-error");
+    populateProviderTypes(p.type);
+    document.getElementById("provider-modal").classList.remove("hidden");
+}
+
+function hideProviderModal() { document.getElementById("provider-modal").classList.add("hidden"); }
+
+async function submitProvider(ev) {
+    ev.preventDefault();
+    const id = document.getElementById("provider-id").value;
+    const body = {
+        name: document.getElementById("provider-name").value.trim(),
+        type: document.getElementById("provider-type").value,
+        base_url: document.getElementById("provider-base-url").value.trim(),
+        enabled: document.getElementById("provider-enabled").checked,
+    };
+    const key = document.getElementById("provider-api-key").value;
+    if (key) body.api_key = key;
+    try {
+        if (id) await apiJSON("PUT", "/providers/" + id, body);
+        else await apiJSON("POST", "/providers", body);
+        hideProviderModal();
+        loadProviders();
+    } catch (e) {
+        showError("provider-error", e.message);
+    }
+    return false;
+}
+
+async function deleteProvider(id, name) {
+    if (!confirm("Delete provider \"" + name + "\"?")) return;
+    try {
+        await apiJSON("DELETE", "/providers/" + id);
+        loadProviders();
+    } catch (e) {
+        alert("Could not delete: " + e.message);
+    }
+}
+
+// ---- Aliases -------------------------------------------------------------
+
+async function loadAliases() {
+    const tbody = document.getElementById("aliases-tbody");
+    try {
+        const data = await apiJSON("GET", "/aliases");
+        const items = (data && data.items) || [];
+        if (items.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" class="px-4 py-6 text-center text-muted-foreground">No models yet.</td></tr>';
+        } else {
+            tbody.innerHTML = items.map(aliasRow).join("");
+        }
+    } catch (e) {
+        tbody.innerHTML = '<tr><td colspan="5" class="px-4 py-6 text-center text-red-600">' + esc(e.message) + '</td></tr>';
+    }
+}
+
+function aliasRow(a) {
+    const provName = providerNames[a.provider_id] || ("#" + a.provider_id);
+    const target = esc(provName) + "/" + esc(a.model_id);
+    const fb = (a.fallbacks && a.fallbacks.length) ? esc(a.fallbacks.join(", ")) : '<span class="text-muted-foreground">—</span>';
+    const enabled = a.enabled
+        ? '<span class="text-xs px-2 py-0.5 rounded bg-green-500/10 text-green-600">yes</span>'
+        : '<span class="text-xs px-2 py-0.5 rounded bg-muted text-muted-foreground">no</span>';
+    const aj = esc(JSON.stringify(a));
+    return '<tr>' +
+        '<td class="px-4 py-2 font-medium text-foreground">' + esc(a.name) + '</td>' +
+        '<td class="px-4 py-2 text-muted-foreground">' + target + '</td>' +
+        '<td class="px-4 py-2 text-muted-foreground">' + fb + '</td>' +
+        '<td class="px-4 py-2">' + enabled + '</td>' +
+        '<td class="px-4 py-2 text-right whitespace-nowrap">' +
+            '<button class="text-xs text-primary hover:underline" onclick=\'editAlias(' + aj + ')\'>Edit</button>' +
+            '<button class="ml-3 text-xs text-red-600 hover:underline" onclick="deleteAlias(' + a.id + ',\'' + esc(a.name) + '\')">Delete</button>' +
+        '</td>' +
+    '</tr>';
+}
+
+function populateAliasProviders(selectedId) {
+    const sel = document.getElementById("alias-provider");
+    const ids = Object.keys(providerNames);
+    sel.innerHTML = ids.map(id => '<option value="' + id + '">' + esc(providerNames[id]) + '</option>').join("");
+    if (selectedId) sel.value = selectedId;
+}
+
+function showAliasModal() {
+    if (Object.keys(providerNames).length === 0) {
+        alert("Add a provider first — a model alias points at one.");
+        return;
+    }
+    document.getElementById("alias-form").reset();
+    document.getElementById("alias-id").value = "";
+    document.getElementById("alias-modal-title").textContent = "Add model";
+    document.getElementById("alias-enabled").checked = true;
+    hideError("alias-error");
+    populateAliasProviders();
+    document.getElementById("alias-modal").classList.remove("hidden");
+}
+
+function editAlias(a) {
+    document.getElementById("alias-form").reset();
+    document.getElementById("alias-id").value = a.id;
+    document.getElementById("alias-modal-title").textContent = "Edit model";
+    document.getElementById("alias-name").value = a.name;
+    document.getElementById("alias-model-id").value = a.model_id;
+    document.getElementById("alias-fallbacks").value = (a.fallbacks || []).join(", ");
+    document.getElementById("alias-enabled").checked = !!a.enabled;
+    hideError("alias-error");
+    populateAliasProviders(a.provider_id);
+    document.getElementById("alias-modal").classList.remove("hidden");
+}
+
+function hideAliasModal() { document.getElementById("alias-modal").classList.add("hidden"); }
+
+async function submitAlias(ev) {
+    ev.preventDefault();
+    const id = document.getElementById("alias-id").value;
+    const fbRaw = document.getElementById("alias-fallbacks").value.trim();
+    const body = {
+        name: document.getElementById("alias-name").value.trim(),
+        provider_id: parseInt(document.getElementById("alias-provider").value, 10),
+        model_id: document.getElementById("alias-model-id").value.trim(),
+        fallbacks: fbRaw ? fbRaw.split(",").map(s => s.trim()).filter(Boolean) : [],
+        enabled: document.getElementById("alias-enabled").checked,
+    };
+    try {
+        if (id) await apiJSON("PUT", "/aliases/" + id, body);
+        else await apiJSON("POST", "/aliases", body);
+        hideAliasModal();
+        loadAliases();
+    } catch (e) {
+        showError("alias-error", e.message);
+    }
+    return false;
+}
+
+async function deleteAlias(id, name) {
+    if (!confirm("Delete model \"" + name + "\"?")) return;
+    try {
+        await apiJSON("DELETE", "/aliases/" + id);
+        loadAliases();
+    } catch (e) {
+        alert("Could not delete: " + e.message);
+    }
+}
+
+// ---- misc ----------------------------------------------------------------
+
+function showError(elID, msg) {
+    const el = document.getElementById(elID);
+    el.textContent = msg;
+    el.classList.remove("hidden");
+}
+function hideError(elID) {
+    const el = document.getElementById(elID);
+    el.textContent = "";
+    el.classList.add("hidden");
+}
+
+function copyCurl() {
+    const base = document.getElementById("gw-base").textContent;
+    const cmd = "curl " + base + "/v1/chat/completions \\\n" +
+        "  -H 'Content-Type: application/json' \\\n" +
+        "  -d '{\"model\":\"fast\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}'";
+    navigator.clipboard.writeText(cmd).then(
+        () => { /* copied */ },
+        () => { window.prompt("Copy this:", cmd); }
+    );
+}
+
+loadProviders();
+</script>
+{{end}}

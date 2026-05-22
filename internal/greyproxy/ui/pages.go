@@ -450,6 +450,7 @@ var (
 	settingsTmpl      = parseTemplate("base.html", "base.html", "settings.html")
 	activityTmpl      = parseTemplate("base.html", "base.html", "activity.html")
 	conversationsTmpl = parseTemplate("base.html", "base.html", "conversations.html")
+	llmTmpl           = parseTemplate("base.html", "base.html", "llm.html")
 
 	dashboardStatsTmpl = parseTemplate("dashboard_stats.html", "partials/dashboard_stats.html")
 	pendingListTmpl    = parseTemplate("pending_list.html", "partials/pending_list.html")
@@ -567,6 +568,15 @@ func RegisterPageRoutes(r *gin.RouterGroup, db *greyproxy.DB, bus *greyproxy.Eve
 			CacheBuster: cacheBuster,
 			Title:       "Conversations - Greyproxy",
 			Containers:  getContainers(db),
+		})
+	})
+
+	r.GET("/llm", func(c *gin.Context) {
+		_ = llmTmpl.Execute(c.Writer, PageData{
+			CurrentPath: c.Request.URL.Path,
+			Prefix:      prefix,
+			CacheBuster: cacheBuster,
+			Title:       "LLM Proxy - Greyproxy",
 		})
 	})
 }

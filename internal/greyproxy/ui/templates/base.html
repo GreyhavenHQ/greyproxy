@@ -170,6 +170,10 @@
                         class="{{if contains .CurrentPath "/conversations"}}border-primary text-foreground{{else}}border-transparent text-muted-foreground hover:border-border hover:text-foreground{{end}} inline-flex items-center px-1 pt-[2px] border-b-2 text-sm font-medium">
                         Conversations
                     </a>
+                    <a href="{{.Prefix}}/llm"
+                        class="{{if contains .CurrentPath "/llm"}}border-primary text-foreground{{else}}border-transparent text-muted-foreground hover:border-border hover:text-foreground{{end}} inline-flex items-center px-1 pt-[2px] border-b-2 text-sm font-medium">
+                        LLM
+                    </a>
                     <!-- Silent Mode button -->
                     <div class="relative self-center ml-1" id="allowall-menu-container">
                         <button id="allowall-btn" onclick="toggleAllowAllMenu()"
@@ -242,6 +246,10 @@
                     <a href="{{.Prefix}}/conversations"
                         class="{{if contains .CurrentPath "/conversations"}}bg-muted border-primary text-foreground{{else}}border-transparent text-muted-foreground hover:bg-muted hover:text-foreground{{end}} block pl-3 pr-4 py-2 border-l-4 text-base font-medium">
                         Conversations
+                    </a>
+                    <a href="{{.Prefix}}/llm"
+                        class="{{if contains .CurrentPath "/llm"}}bg-muted border-primary text-foreground{{else}}border-transparent text-muted-foreground hover:bg-muted hover:text-foreground{{end}} block pl-3 pr-4 py-2 border-l-4 text-base font-medium">
+                        LLM
                     </a>
                     <a href="{{.Prefix}}/settings"
                         class="{{if contains .CurrentPath "/settings"}}bg-muted border-primary text-foreground{{else}}border-transparent text-muted-foreground hover:bg-muted hover:text-foreground{{end}} block pl-3 pr-4 py-2 border-l-4 text-base font-medium">
