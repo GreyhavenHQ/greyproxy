@@ -323,6 +323,18 @@ func (s *Store) CreateAlias(in AliasInput) (*Alias, error) {
 	if in.ProviderID == 0 && (in.IsAuto == nil || !*in.IsAuto) {
 		return nil, fmt.Errorf("%w: provider_id required (non-auto alias)", ErrBadInput)
 	}
+	// Validate the provider reference at the application level: SQLite
+	// foreign keys aren't reliably enforced under the modernc driver, so
+	// we don't get a constraint error for a dangling provider_id. Catch
+	// it here to keep the alias table consistent.
+	if in.ProviderID != 0 {
+		if _, err := s.GetProvider(in.ProviderID); err != nil {
+			if errors.Is(err, ErrNotFound) {
+				return nil, fmt.Errorf("%w: provider %d does not exist", ErrBadInput, in.ProviderID)
+			}
+			return nil, err
+		}
+	}
 
 	enabled := 1
 	if in.Enabled != nil && !*in.Enabled {

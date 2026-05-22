@@ -75,10 +75,10 @@ func DecodeOpenAIChat(req *http.Request) (*ChatRequest, error) {
 func decodeOpenAIMessage(m openaiWireMessage) Message {
 	out := Message{Role: m.Role, Name: m.Name}
 
-	// Content is either a string or an array of parts. We accept both.
-	if m.Content == nil {
-		return out
-	}
+	// Content is either a string, an array of parts, or null (common for
+	// assistant messages that carry only tool_calls). A nil content must
+	// still fall through to the tool_calls handling below, so we only
+	// skip the content switch — never return early.
 	switch c := m.Content.(type) {
 	case string:
 		if c != "" {
