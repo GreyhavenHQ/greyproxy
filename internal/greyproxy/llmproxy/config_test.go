@@ -73,12 +73,12 @@ llm:
 	}
 }
 
-// TestEmbeddedYAML_SeedsCleanly loads the shipped greyproxy.yml the same
-// way cmd/greyproxy does and seeds a fresh DB from it. Catches drift
-// between the default config and the seed code (e.g. a provider type that
-// isn't a registered backend, or an alias pointing at an unknown
-// provider).
-func TestEmbeddedYAML_SeedsCleanly(t *testing.T) {
+// TestEmbeddedYAML_NoDefaultSeed loads the shipped greyproxy.yml the same
+// way cmd/greyproxy does and confirms it ships NO default providers or
+// aliases — operators configure those via the dashboard / API. Also
+// guards that the (commented-out) example block never accidentally
+// becomes an active seed again.
+func TestEmbeddedYAML_NoDefaultSeed(t *testing.T) {
 	path := filepath.Join("..", "..", "..", "greyproxy.yml")
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -94,26 +94,20 @@ func TestEmbeddedYAML_SeedsCleanly(t *testing.T) {
 	if err := v.UnmarshalKey("llm", &seed); err != nil {
 		t.Fatalf("unmarshal llm: %v", err)
 	}
-	if len(seed.Providers) == 0 {
-		t.Fatal("embedded greyproxy.yml has no llm.providers — the default block went missing")
+	if len(seed.Providers) != 0 {
+		t.Fatalf("embedded greyproxy.yml ships %d default providers; want 0", len(seed.Providers))
+	}
+	if len(seed.Models) != 0 {
+		t.Fatalf("embedded greyproxy.yml ships %d default models; want 0", len(seed.Models))
 	}
 
+	// Seeding from it must be a clean no-op.
 	s := newTestStore(t)
 	provs, aliases, err := s.Seed(seed)
 	if err != nil {
 		t.Fatalf("seed embedded config: %v", err)
 	}
-	if provs != len(seed.Providers) {
-		t.Fatalf("seeded %d providers, want %d", provs, len(seed.Providers))
+	if provs != 0 || aliases != 0 {
+		t.Fatalf("expected no-op seed, got provs=%d aliases=%d", provs, aliases)
 	}
-
-	// Every seeded provider must carry a non-empty base_url, and every
-	// non-auto alias must resolve to one of the seeded providers.
-	list, _ := s.ListProviders()
-	for _, p := range list {
-		if p.BaseURL == "" {
-			t.Errorf("provider %q seeded with empty base_url", p.Name)
-		}
-	}
-	t.Logf("embedded config seeded %d providers, %d aliases", provs, aliases)
 }

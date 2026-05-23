@@ -5,6 +5,9 @@
         <h1 class="text-2xl font-bold text-foreground">LLM Proxy</h1>
     </div>
 
+    <!-- Inline toast (no browser popups) -->
+    <div id="llm-toast" class="hidden rounded-md border px-4 py-2 text-sm"></div>
+
     <!-- Gateway info banner -->
     <div class="bg-card rounded-lg shadow-sm border border-border p-4">
         <div class="flex items-start justify-between gap-4 flex-wrap">
@@ -248,7 +251,7 @@ function providerRow(p) {
         '<td class="px-4 py-2">' + enabled + '</td>' +
         '<td class="px-4 py-2 text-right whitespace-nowrap">' +
             '<button class="text-xs text-primary hover:underline" onclick=\'editProvider(' + pj + ')\'>Edit</button>' +
-            '<button class="ml-3 text-xs text-red-600 hover:underline" onclick="deleteProvider(' + p.id + ',\'' + esc(p.name) + '\')">Delete</button>' +
+            '<button class="ml-3 text-xs text-red-600 hover:underline" onclick="askDelete(this,\'providers\',' + p.id + ',\'' + esc(p.name) + '\')">Delete</button>' +
         '</td>' +
     '</tr>';
 }
@@ -311,15 +314,6 @@ async function submitProvider(ev) {
     return false;
 }
 
-async function deleteProvider(id, name) {
-    if (!confirm("Delete provider \"" + name + "\"?")) return;
-    try {
-        await apiJSON("DELETE", "/providers/" + id);
-        loadProviders();
-    } catch (e) {
-        alert("Could not delete: " + e.message);
-    }
-}
 
 // ---- Aliases -------------------------------------------------------------
 
@@ -353,7 +347,7 @@ function aliasRow(a) {
         '<td class="px-4 py-2">' + enabled + '</td>' +
         '<td class="px-4 py-2 text-right whitespace-nowrap">' +
             '<button class="text-xs text-primary hover:underline" onclick=\'editAlias(' + aj + ')\'>Edit</button>' +
-            '<button class="ml-3 text-xs text-red-600 hover:underline" onclick="deleteAlias(' + a.id + ',\'' + esc(a.name) + '\')">Delete</button>' +
+            '<button class="ml-3 text-xs text-red-600 hover:underline" onclick="askDelete(this,\'aliases\',' + a.id + ',\'' + esc(a.name) + '\')">Delete</button>' +
         '</td>' +
     '</tr>';
 }
@@ -367,7 +361,7 @@ function populateAliasProviders(selectedId) {
 
 function showAliasModal() {
     if (Object.keys(providerNames).length === 0) {
-        alert("Add a provider first — a model alias points at one.");
+        toast("Add a provider first — a model alias points at one.", true);
         return;
     }
     document.getElementById("alias-form").reset();
@@ -416,13 +410,31 @@ async function submitAlias(ev) {
     return false;
 }
 
-async function deleteAlias(id, name) {
-    if (!confirm("Delete model \"" + name + "\"?")) return;
+// ---- inline delete confirm (no browser popup) -------------------------
+
+// askDelete swaps the row's action cell into an inline "Confirm / Cancel"
+// state. resource is the API path segment ("providers" | "aliases").
+function askDelete(btn, resource, id, name) {
+    const cell = btn.closest("td");
+    cell.dataset.prev = cell.innerHTML;
+    cell.innerHTML =
+        '<span class="text-xs text-muted-foreground mr-2">Delete “' + esc(name) + '”?</span>' +
+        '<button class="text-xs text-red-600 font-medium hover:underline" onclick="doDelete(this,\'' + resource + '\',' + id + ')">Confirm</button>' +
+        '<button class="ml-3 text-xs text-muted-foreground hover:underline" onclick="cancelDelete(this)">Cancel</button>';
+}
+
+function cancelDelete(btn) {
+    const cell = btn.closest("td");
+    if (cell.dataset.prev != null) cell.innerHTML = cell.dataset.prev;
+}
+
+async function doDelete(btn, resource, id) {
     try {
-        await apiJSON("DELETE", "/aliases/" + id);
-        loadAliases();
+        await apiJSON("DELETE", "/" + resource + "/" + id);
+        if (resource === "providers") loadProviders(); else loadAliases();
     } catch (e) {
-        alert("Could not delete: " + e.message);
+        toast(e.message, true);
+        cancelDelete(btn);
     }
 }
 
@@ -439,14 +451,27 @@ function hideError(elID) {
     el.classList.add("hidden");
 }
 
+let toastTimer = null;
+// toast shows an inline, auto-dismissing message at the top of the page.
+// Replaces the browser popups the page used to call.
+function toast(msg, isError) {
+    const el = document.getElementById("llm-toast");
+    el.textContent = msg;
+    el.className = "rounded-md border px-4 py-2 text-sm " + (isError
+        ? "border-red-500/40 bg-red-500/10 text-red-600"
+        : "border-green-500/40 bg-green-500/10 text-green-600");
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.add("hidden"), 4000);
+}
+
 function copyCurl() {
     const base = document.getElementById("gw-base").textContent;
     const cmd = "curl " + base + "/v1/chat/completions \\\n" +
         "  -H 'Content-Type: application/json' \\\n" +
         "  -d '{\"model\":\"fast\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}'";
     navigator.clipboard.writeText(cmd).then(
-        () => { /* copied */ },
-        () => { window.prompt("Copy this:", cmd); }
+        () => toast("Sample curl copied to clipboard.", false),
+        () => toast("Could not copy automatically — check clipboard permissions.", true)
     );
 }
 

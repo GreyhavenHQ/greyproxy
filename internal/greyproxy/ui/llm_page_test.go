@@ -29,10 +29,19 @@ func TestLLMPageRoute(t *testing.T) {
 		`/api/llm`,           // JS targets the management API
 		"Add provider",       // providers CTA
 		"Add model",          // aliases CTA
+		"llm-toast",          // inline toast (popup-free errors)
+		"askDelete(",         // inline delete confirm (no confirm() popup)
 	}
 	for _, want := range checks {
 		if !strings.Contains(body, want) {
 			t.Errorf("llm page missing %q", want)
+		}
+	}
+
+	// No browser popups: the page must not call alert()/confirm()/prompt().
+	for _, banned := range []string{"alert(", "confirm(", "prompt("} {
+		if strings.Contains(body, banned) {
+			t.Errorf("llm page uses a browser popup %q — use the inline toast/confirm instead", banned)
 		}
 	}
 }
