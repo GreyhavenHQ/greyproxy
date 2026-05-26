@@ -103,6 +103,7 @@ func NewRouter(s *Shared, pathPrefix string) (*gin.Engine, *gin.RouterGroup) {
 
 		api.GET("/transactions", TransactionsListHandler(s))
 		api.GET("/transactions/:id", TransactionsDetailHandler(s))
+		api.GET("/transactions/:id/fsevents", TransactionsFsEventsHandler(s))
 
 		// Conversations (LLM conversation dissection)
 		api.GET("/conversations", ConversationsListHandler(s))

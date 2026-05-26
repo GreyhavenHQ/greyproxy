@@ -89,3 +89,25 @@ func TransactionsDetailHandler(s *Shared) gin.HandlerFunc {
 		c.JSON(http.StatusOK, txn.ToJSON(true))
 	}
 }
+
+// TransactionsFsEventsHandler returns the filesystem events the
+// correlator attributed to this transaction. Used by the Activity
+// page's expanded HTTP detail row to inline the agent's fs activity
+// next to the API call that caused it.
+func TransactionsFsEventsHandler(s *Shared) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+			return
+		}
+		var events []greyproxy.FsEvent
+		if s.FsEvents != nil {
+			events = s.FsEvents.EventsByTransaction(id)
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"transaction_id": id,
+			"events":         events,
+		})
+	}
+}

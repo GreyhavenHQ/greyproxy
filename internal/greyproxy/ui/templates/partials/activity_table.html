@@ -164,6 +164,12 @@
                             <div id="act-body-{{.ID}}">
                                 <span class="text-xs text-muted-foreground">Loading request/response details...</span>
                             </div>
+                            {{if eq .Kind "http"}}
+                            <div id="act-fsevents-{{.ID}}" class="hidden mt-3 pt-3 border-t border-border">
+                                <div class="text-xs font-semibold text-muted-foreground mb-1">Filesystem activity attributed to this request</div>
+                                <div id="act-fsevents-body-{{.ID}}" class="text-xs font-mono space-y-0.5 max-h-60 overflow-y-auto"></div>
+                            </div>
+                            {{end}}
                         </div>
                     {{end}}
                 </td>
@@ -209,6 +215,12 @@
                 fetch('{{.Prefix}}/api/transactions/' + id)
                     .then(function(r) { return r.json(); })
                     .then(function(txn) { renderHttpDetail(id, txn); });
+                // Load fs events the correlator attributed to this tx,
+                // in parallel with the body fetch above.
+                fetch('{{.Prefix}}/api/transactions/' + id + '/fsevents')
+                    .then(function(r) { return r.json(); })
+                    .then(function(data) { renderHttpFsEvents(id, data.events || []); })
+                    .catch(function() {});
             }
         } else {
             details.classList.add('hidden');
@@ -245,6 +257,58 @@
 
         if (!html) html = '<span class="text-xs text-muted-foreground">No body captured</span>';
         el.innerHTML = html;
+    }
+
+    // fsOpColor / fsSevClass mirror the styling the old Active Sessions
+    // panel used so an operator who learned to read the old transcript
+    // sees the same color cues here.
+    function fsOpColor(op) {
+        switch (op) {
+            case 'open_read':  return 'text-blue-600 dark:text-blue-400';
+            case 'open_write':
+            case 'create':     return 'text-green-600 dark:text-green-400';
+            case 'unlink':     return 'text-red-600 dark:text-red-400';
+            case 'rename':
+            case 'link':
+            case 'symlink':    return 'text-amber-600 dark:text-amber-400';
+            case 'mkdir':      return 'text-purple-600 dark:text-purple-400';
+            default:           return 'text-muted-foreground';
+        }
+    }
+    function fsSevRowClass(sev) {
+        switch (sev) {
+            case 'critical': return 'border-l-2 border-red-500 pl-1.5 bg-red-50 dark:bg-red-950/30';
+            case 'warn':     return 'border-l-2 border-amber-500 pl-1.5 bg-amber-50/60 dark:bg-amber-950/20';
+            default:         return '';
+        }
+    }
+
+    // renderHttpFsEvents fills the per-transaction fs-events sub-panel.
+    // Empty list is rendered as a single muted line so the operator can
+    // tell "loaded, none attributed" apart from "still loading".
+    function renderHttpFsEvents(txID, events) {
+        var wrap = document.getElementById('act-fsevents-' + txID);
+        var body = document.getElementById('act-fsevents-body-' + txID);
+        if (!wrap || !body) return;
+        wrap.classList.remove('hidden');
+        if (!events || events.length === 0) {
+            body.innerHTML = '<span class="text-muted-foreground">No filesystem events attributed to this transaction.</span>';
+            return;
+        }
+        var lines = [];
+        for (var i = 0; i < events.length; i++) {
+            var e = events[i];
+            var op = actEscapeHtml(e.op || '');
+            var path = actEscapeHtml(e.path || '');
+            var extra = '';
+            if (e.path2) extra += ' &rarr; ' + actEscapeHtml(e.path2);
+            if (e.errno) extra += ' <span class="text-red-600 dark:text-red-400">[errno ' + e.errno + ']</span>';
+            if (e.pid)   extra += ' <span class="text-muted-foreground">pid=' + e.pid + '</span>';
+            var ts = e.ts ? '<span class="text-muted-foreground">' + actEscapeHtml(e.ts.substr(11, 12)) + '</span> ' : '';
+            var rowCls = fsSevRowClass(e.severity);
+            lines.push('<div class="truncate ' + rowCls + '">' + ts + '<span class="' + fsOpColor(e.op) + ' font-semibold">' + op + '</span> ' + path + extra + '</div>');
+        }
+        body.innerHTML = lines.join('');
     }
 
     // Render a headers section with a table view and a raw toggle
