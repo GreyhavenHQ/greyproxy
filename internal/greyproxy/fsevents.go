@@ -14,17 +14,21 @@ const EventSessionFsAlert = "session.fs_alert"
 
 // FsEvent mirrors the greywall sandbox.FsEvent wire format. It describes a
 // single filesystem operation observed inside a sandboxed agent and is
-// shipped to greyproxy in the heartbeat body. Severity and Tags are added
-// server-side by the classifier on ingest; greywall does not send them.
+// shipped to greyproxy in the heartbeat body. Severity, Tags, and
+// TransactionID are added server-side on ingest; greywall does not send
+// them. TransactionID links the event back to the last completed
+// http_transactions row in the same session, so the dashboard can render
+// fs activity grouped by API round trip.
 type FsEvent struct {
-	Ts       string   `json:"ts"`
-	Op       string   `json:"op"`
-	Path     string   `json:"path"`
-	Path2    string   `json:"path2,omitempty"`
-	PID      int      `json:"pid,omitempty"`
-	Errno    int      `json:"errno,omitempty"`
-	Severity string   `json:"severity,omitempty"`
-	Tags     []string `json:"tags,omitempty"`
+	Ts            string   `json:"ts"`
+	Op            string   `json:"op"`
+	Path          string   `json:"path"`
+	Path2         string   `json:"path2,omitempty"`
+	PID           int      `json:"pid,omitempty"`
+	Errno         int      `json:"errno,omitempty"`
+	Severity      string   `json:"severity,omitempty"`
+	Tags          []string `json:"tags,omitempty"`
+	TransactionID int64    `json:"transaction_id,omitempty"`
 }
 
 // FsEventsPayload is the optional JSON body of a heartbeat request.
@@ -118,12 +122,19 @@ func (r *fsRing) snapshot() []FsEvent {
 	return out
 }
 
+// FsCorrelator looks up the most recent http_transactions row that
+// completed at or before the given event timestamp for the session.
+// Returns 0 when no transaction has completed yet (event happened before
+// the wrapped app's first API call).
+type FsCorrelator func(sessionID, eventTs string) int64
+
 // FsEventStore holds per-session ring buffers. Safe for concurrent use.
 type FsEventStore struct {
 	mu         sync.RWMutex
 	rings      map[string]*fsRing
 	cap        int
 	classifier *FsEventClassifier // optional; nil disables classification
+	correlator FsCorrelator       // optional; nil disables transaction linking
 }
 
 // NewFsEventStore creates a store with the given per-session ring capacity.
@@ -143,6 +154,17 @@ func NewFsEventStore(perSessionCap int) *FsEventStore {
 func (s *FsEventStore) SetClassifier(c *FsEventClassifier) {
 	s.mu.Lock()
 	s.classifier = c
+	s.mu.Unlock()
+}
+
+// SetCorrelator installs a function that maps each ingested event to
+// the http_transactions row that immediately preceded it. The returned
+// id is stamped onto the event's TransactionID field before it lands in
+// the ring buffer, so dashboard and WebSocket subscribers see the link
+// in the same place they read every other field. Pass nil to disable.
+func (s *FsEventStore) SetCorrelator(fn FsCorrelator) {
+	s.mu.Lock()
+	s.correlator = fn
 	s.mu.Unlock()
 }
 
@@ -187,6 +209,9 @@ func (s *FsEventStore) Ingest(sessionID string, events []FsEvent, dropped uint64
 			e.Tags = c.Tags
 		} else if e.Severity == "" {
 			e.Severity = SeverityInfo
+		}
+		if s.correlator != nil && e.TransactionID == 0 {
+			e.TransactionID = s.correlator(sessionID, e.Ts)
 		}
 		switch e.Severity {
 		case SeverityCritical:

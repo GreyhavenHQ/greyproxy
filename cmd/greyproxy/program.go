@@ -516,6 +516,27 @@ func (p *program) buildGreyproxyService() error {
 		shared.FsEvents.SetClassifier(classifier)
 	}
 
+	// Wire the SQL-backed correlator so each ingested event is linked
+	// back to the most recent http_transactions row that completed
+	// before it. Returns 0 on lookup miss so events from agent startup
+	// (before any API call) cleanly indicate "unattributed."
+	shared.FsEvents.SetCorrelator(func(sessionID, ts string) int64 {
+		if sessionID == "" || ts == "" {
+			return 0
+		}
+		var id int64
+		err := shared.DB.ReadDB().QueryRow(
+			`SELECT id FROM http_transactions
+			   WHERE session_id = ? AND timestamp <= datetime(?)
+			   ORDER BY timestamp DESC, id DESC LIMIT 1`,
+			sessionID, ts,
+		).Scan(&id)
+		if err != nil {
+			return 0 // including sql.ErrNoRows
+		}
+		return id
+	})
+
 	shared.ReloadCertFn = p.reloadConfig
 	shared.CertMtimeFn = func() time.Time {
 		p.certMtimeMu.Lock()
