@@ -97,6 +97,27 @@
     document.getElementById('traffic-filter-form').addEventListener('input', updateTrafficResetButton);
     updateTrafficResetButton();
 
+    // Auto-expand a transaction row when arriving via a #txn-N hash —
+    // the fs-events panel on the settings page links here so users can
+    // pivot from a filesystem event straight to the API call that
+    // caused it. The traffic table loads asynchronously via htmx, so we
+    // wait for afterSwap before touching the DOM, then run once per
+    // hash to avoid re-toggling if the user collapses the row.
+    var __txnHashHandled = '';
+    document.body.addEventListener('htmx:afterSwap', function(ev) {
+        if (!ev.target || ev.target.id !== 'traffic-table') return;
+        var m = (location.hash || '').match(/^#txn-(\d+)$/);
+        if (!m) return;
+        if (__txnHashHandled === m[1]) return;
+        var row = document.getElementById('txn-details-' + m[1]);
+        if (!row) return; // transaction not in the current page; user can filter
+        __txnHashHandled = m[1];
+        if (row.classList.contains('hidden')) {
+            toggleTxnDetails(m[1]);
+        }
+        row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    });
+
     function toggleTxnDetails(id) {
         var details = document.getElementById('txn-details-' + id);
         var icon = document.getElementById('txn-icon-' + id);

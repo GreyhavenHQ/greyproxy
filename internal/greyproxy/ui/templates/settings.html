@@ -1102,6 +1102,18 @@
         return out;
     }
 
+    // fsTxChip renders the http_transactions link stamped onto each fs event
+    // server-side. Clicking jumps to the traffic page with the row pre-
+    // expanded (see the htmx:afterSwap handler in traffic.html). Returns
+    // empty when the event was not attributed to any transaction (e.g.
+    // happened during agent startup before any API call).
+    function fsTxChip(txID) {
+        if (!txID) return '';
+        var id = encodeURIComponent(String(txID));
+        var href = prefix + '/traffic#txn-' + id;
+        return ' <a href="' + href + '" class="inline-flex items-center px-1 rounded text-[10px] bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-800 ml-1 align-middle hover:underline" title="Open transaction in Traffic view">tx #' + escapeHtml(String(txID)) + '</a>';
+    }
+
     function renderFsEvents(sessionID, snap) {
         var el = document.getElementById('fsev-' + sessionID);
         var meta = document.getElementById('fsev-meta-' + sessionID);
@@ -1122,6 +1134,7 @@
                 if (e.path2) extra += ' &rarr; ' + escapeHtml(e.path2);
                 if (e.errno) extra += ' <span class="text-red-600 dark:text-red-400">[errno ' + e.errno + ']</span>';
                 if (e.pid)   extra += ' <span class="text-muted-foreground">pid=' + e.pid + '</span>';
+                extra += fsTxChip(e.transaction_id);
                 extra += fsTagChips(e.tags);
                 var ts = e.ts ? '<span class="text-muted-foreground">' + escapeHtml(e.ts.substr(11, 12)) + '</span> ' : '';
                 var rowCls = fsRowClass(e.severity);
