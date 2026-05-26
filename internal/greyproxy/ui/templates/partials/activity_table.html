@@ -62,7 +62,9 @@
                         {{end}}
                     {{end}}
                 </td>
-                <td class="px-3 py-2 whitespace-nowrap text-xs text-foreground">{{formatTime .Timestamp}}</td>
+                <td class="px-3 py-2 whitespace-nowrap text-xs text-foreground">
+                    <span class="text-muted-foreground font-mono mr-1" title="Activity row id ({{.Kind}}#{{.ID}})">#{{.ID}}</span>{{formatTime .Timestamp}}
+                </td>
                 <td class="px-3 py-2 truncate">
                     <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-primary/10 text-primary cursor-pointer hover:underline hover:bg-primary/20"
                           onclick="event.stopPropagation(); filterActivityByContainer('{{.ContainerName}}')">{{.ContainerName}}</span>
@@ -259,6 +261,37 @@
         el.innerHTML = html;
     }
 
+    // fsIsRenderNoise reports whether a path is uninteresting plumbing
+    // — controlling-terminal opens, dtrace shim, /dev/null, the PTY
+    // master/slave devices — so we hide it from the per-transaction
+    // panel. Patterns cover Linux and macOS PTY naming so the same
+    // filter works regardless of which OS the wrapped agent runs on:
+    //
+    //   macOS  /dev/ttys<N>     PTY slave
+    //   Linux  /dev/pts/<N>     PTY slave
+    //   both   /dev/ptmx        PTY master
+    //   both   /dev/tty         controlling-tty alias
+    //
+    // The events still hit the ring buffer and the heartbeat — this is
+    // a viewer-side filter only.
+    var fsTtysRe   = /^\/dev\/ttys\d+$/;
+    var fsPtsRe    = /^\/dev\/pts\/\d+$/;
+    var fsNoisePaths = {
+        '/dev/tty': true,
+        '/dev/ptmx': true,
+        '/dev/null': true,
+        '/dev/dtracehelper': true,
+        '/dev/random': true,
+        '/dev/urandom': true,
+    };
+    function fsIsRenderNoise(path) {
+        if (!path) return false;
+        if (fsNoisePaths[path]) return true;
+        if (fsTtysRe.test(path)) return true;
+        if (fsPtsRe.test(path)) return true;
+        return false;
+    }
+
     // fsOpColor / fsSevClass mirror the styling the old Active Sessions
     // panel used so an operator who learned to read the old transcript
     // sees the same color cues here.
@@ -284,8 +317,12 @@
     }
 
     // renderHttpFsEvents fills the per-transaction fs-events sub-panel.
-    // Empty list is rendered as a single muted line so the operator can
-    // tell "loaded, none attributed" apart from "still loading".
+    // Filters render-noise paths (PTY devices, dtrace shim, /dev/null,
+    // etc.) and reports the hidden count in a footer so an operator
+    // who suspects something interesting got swept up can see at a
+    // glance how many lines were dropped. Empty list is rendered as a
+    // single muted line so 'loaded, none attributed' is distinguishable
+    // from 'still loading'.
     function renderHttpFsEvents(txID, events) {
         var wrap = document.getElementById('act-fsevents-' + txID);
         var body = document.getElementById('act-fsevents-body-' + txID);
@@ -296,8 +333,10 @@
             return;
         }
         var lines = [];
+        var noiseCount = 0;
         for (var i = 0; i < events.length; i++) {
             var e = events[i];
+            if (fsIsRenderNoise(e.path)) { noiseCount++; continue; }
             var op = actEscapeHtml(e.op || '');
             var path = actEscapeHtml(e.path || '');
             var extra = '';
@@ -307,6 +346,13 @@
             var ts = e.ts ? '<span class="text-muted-foreground">' + actEscapeHtml(e.ts.substr(11, 12)) + '</span> ' : '';
             var rowCls = fsSevRowClass(e.severity);
             lines.push('<div class="truncate ' + rowCls + '">' + ts + '<span class="' + fsOpColor(e.op) + ' font-semibold">' + op + '</span> ' + path + extra + '</div>');
+        }
+        if (lines.length === 0 && noiseCount > 0) {
+            body.innerHTML = '<span class="text-muted-foreground">' + noiseCount + ' event' + (noiseCount === 1 ? '' : 's') + ' hidden (PTY / dev plumbing).</span>';
+            return;
+        }
+        if (noiseCount > 0) {
+            lines.push('<div class="text-muted-foreground italic">' + noiseCount + ' noise event' + (noiseCount === 1 ? '' : 's') + ' hidden (PTY / dev plumbing)</div>');
         }
         body.innerHTML = lines.join('');
     }
