@@ -518,18 +518,66 @@ func (p *program) buildGreyproxyService() error {
 
 	// Wire the SQL-backed correlator so each ingested event is linked
 	// back to the most recent http_transactions row that completed
-	// before it. Returns 0 on lookup miss so events from agent startup
-	// (before any API call) cleanly indicate "unattributed."
+	// before it. http_transactions.session_id is the *agent* session
+	// (extracted from API request bodies, e.g. Anthropic
+	// metadata.user_id), not the greywall sandbox session that ships
+	// fs events — those identifiers don't intersect. The shared
+	// linkage between the two systems is container_name plus the
+	// sandbox session's lifetime window, so we look that up via the
+	// sessions table.
+	//
+	// Two greywall sessions wrapping the same container concurrently
+	// would still cross-attribute; flagged as a follow-up. For the
+	// common one-agent-at-a-time case this returns the right id.
+	type sessionCtx struct {
+		container string
+		createdAt string
+	}
+	var (
+		sessionCacheMu sync.Mutex
+		sessionCache   = map[string]sessionCtx{}
+	)
 	shared.FsEvents.SetCorrelator(func(sessionID, ts string) int64 {
 		if sessionID == "" || ts == "" {
 			return 0
 		}
+		sessionCacheMu.Lock()
+		sc, ok := sessionCache[sessionID]
+		sessionCacheMu.Unlock()
+		if !ok {
+			var container, createdAt string
+			err := shared.DB.ReadDB().QueryRow(
+				`SELECT container_name, created_at FROM sessions WHERE session_id = ?`,
+				sessionID,
+			).Scan(&container, &createdAt)
+			if err != nil {
+				return 0
+			}
+			sc = sessionCtx{container: container, createdAt: createdAt}
+			sessionCacheMu.Lock()
+			sessionCache[sessionID] = sc
+			sessionCacheMu.Unlock()
+		}
+		if sc.container == "" {
+			return 0
+		}
+		// Both bound params get wrapped in datetime() to normalize their
+		// format: Go's sqlite driver returns DATETIME columns as
+		// RFC3339 ('2026-05-26T21:30:13Z'), but the stored
+		// http_transactions.timestamp uses SQLite's space-separated
+		// canonical form ('2026-05-26 21:30:13'). Comparing the two as
+		// raw strings fails (lexicographic order treats 'T' > ' '), so
+		// datetime() coerces both inputs to the same canonical form.
+		// The column itself is already canonical so we leave it bare to
+		// keep the index on `timestamp` usable.
 		var id int64
 		err := shared.DB.ReadDB().QueryRow(
 			`SELECT id FROM http_transactions
-			   WHERE session_id = ? AND timestamp <= datetime(?)
+			   WHERE container_name = ?
+			     AND timestamp >= datetime(?)
+			     AND timestamp <= datetime(?)
 			   ORDER BY timestamp DESC, id DESC LIMIT 1`,
-			sessionID, ts,
+			sc.container, sc.createdAt, ts,
 		).Scan(&id)
 		if err != nil {
 			return 0 // including sql.ErrNoRows
