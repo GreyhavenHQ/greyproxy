@@ -305,6 +305,10 @@
             case 'link':
             case 'symlink':    return 'text-amber-600 dark:text-amber-400';
             case 'mkdir':      return 'text-purple-600 dark:text-purple-400';
+            // exec is a process-image swap, not a file op — give it a
+            // distinct color so the transition stands out in the
+            // chronological per-tx panel.
+            case 'exec':       return 'text-indigo-600 dark:text-indigo-400';
             default:           return 'text-muted-foreground';
         }
     }
