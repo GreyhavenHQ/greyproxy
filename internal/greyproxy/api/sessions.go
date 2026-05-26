@@ -154,19 +154,35 @@ func SessionsHeartbeatHandler(s *Shared) gin.HandlerFunc {
 		}
 
 		ingested := 0
+		maxSeverity := greyproxy.SeverityInfo
+		var alertCount int
 		if s.FsEvents != nil && (len(payload.Events) > 0 || payload.Dropped > 0) {
-			s.FsEvents.Ingest(sessionID, payload.Events, payload.Dropped)
+			result := s.FsEvents.Ingest(sessionID, payload.Events, payload.Dropped)
 			ingested = len(payload.Events)
+			maxSeverity = result.MaxSeverity
+			alertCount = len(result.AlertEvents)
 
 			if s.Bus != nil && (len(payload.Events) > 0 || payload.Dropped > 0) {
+				// Ship the classified copy on the bus so subscribers see
+				// severity/tags without re-running classification.
 				s.Bus.Publish(greyproxy.Event{
 					Type: greyproxy.EventSessionFsEvents,
 					Data: greyproxy.FsEventsBatch{
 						SessionID: sessionID,
-						Events:    payload.Events,
+						Events:    result.Stored,
 						Dropped:   payload.Dropped,
 					},
 				})
+				if len(result.AlertEvents) > 0 {
+					s.Bus.Publish(greyproxy.Event{
+						Type: greyproxy.EventSessionFsAlert,
+						Data: greyproxy.FsEventsAlert{
+							SessionID:   sessionID,
+							Events:      result.AlertEvents,
+							MaxSeverity: result.MaxSeverity,
+						},
+					})
+				}
 			}
 		}
 
@@ -184,6 +200,10 @@ func SessionsHeartbeatHandler(s *Shared) gin.HandlerFunc {
 		if ingested > 0 || payload.Dropped > 0 {
 			resp["fs_events_ingested"] = ingested
 			resp["fs_events_dropped"] = payload.Dropped
+			if alertCount > 0 {
+				resp["fs_events_alerts"] = alertCount
+				resp["fs_events_max_severity"] = maxSeverity
+			}
 		}
 		c.JSON(http.StatusOK, resp)
 	}

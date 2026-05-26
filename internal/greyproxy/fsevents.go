@@ -7,16 +7,24 @@ import (
 // Event type for filesystem activity received from greywall.
 const EventSessionFsEvents = "session.fs_events"
 
+// EventSessionFsAlert fires when a heartbeat delivers at least one event
+// classified warn or critical. Dashboards use this to raise toasts /
+// notifications even when the user is not actively viewing the session.
+const EventSessionFsAlert = "session.fs_alert"
+
 // FsEvent mirrors the greywall sandbox.FsEvent wire format. It describes a
 // single filesystem operation observed inside a sandboxed agent and is
-// shipped to greyproxy in the heartbeat body.
+// shipped to greyproxy in the heartbeat body. Severity and Tags are added
+// server-side by the classifier on ingest; greywall does not send them.
 type FsEvent struct {
-	Ts    string `json:"ts"`
-	Op    string `json:"op"`
-	Path  string `json:"path"`
-	Path2 string `json:"path2,omitempty"`
-	PID   int    `json:"pid,omitempty"`
-	Errno int    `json:"errno,omitempty"`
+	Ts       string   `json:"ts"`
+	Op       string   `json:"op"`
+	Path     string   `json:"path"`
+	Path2    string   `json:"path2,omitempty"`
+	PID      int      `json:"pid,omitempty"`
+	Errno    int      `json:"errno,omitempty"`
+	Severity string   `json:"severity,omitempty"`
+	Tags     []string `json:"tags,omitempty"`
 }
 
 // FsEventsPayload is the optional JSON body of a heartbeat request.
@@ -34,6 +42,15 @@ type FsEventsBatch struct {
 	Dropped   uint64    `json:"dropped,omitempty"`
 }
 
+// FsEventsAlert is the bus payload published when one or more events in a
+// batch were classified warn or critical. It carries only the alarming
+// subset so subscribers don't have to filter.
+type FsEventsAlert struct {
+	SessionID string    `json:"session_id"`
+	Events    []FsEvent `json:"events"`
+	MaxSeverity string  `json:"max_severity"`
+}
+
 // FsEventsSnapshot is the wire form returned by GET /api/sessions/:id/fsevents.
 type FsEventsSnapshot struct {
 	SessionID    string    `json:"session_id"`
@@ -43,6 +60,11 @@ type FsEventsSnapshot struct {
 	TotalEvents  uint64    `json:"total_events"`   // cumulative events received for this session
 	BufferLimit  int       `json:"buffer_limit"`   // ring capacity
 	BufferLength int       `json:"buffer_length"`  // current count of live entries
+	// Cumulative counts of severity-tagged events seen since session start.
+	// "Critical" includes only events whose severity is critical; "warn"
+	// covers warn only. Both reset on session delete.
+	CriticalCount uint64 `json:"critical_count"`
+	WarnCount     uint64 `json:"warn_count"`
 }
 
 // DefaultFsEventBufferCap is the per-session ring buffer capacity. Chosen
@@ -58,6 +80,8 @@ type fsRing struct {
 	cap       int
 	dropped   uint64 // cumulative
 	total     uint64 // cumulative
+	critical  uint64 // cumulative count of severity=critical events
+	warn      uint64 // cumulative count of severity=warn events
 	truncated bool
 }
 
@@ -96,9 +120,10 @@ func (r *fsRing) snapshot() []FsEvent {
 
 // FsEventStore holds per-session ring buffers. Safe for concurrent use.
 type FsEventStore struct {
-	mu      sync.RWMutex
-	rings   map[string]*fsRing
-	cap     int
+	mu         sync.RWMutex
+	rings      map[string]*fsRing
+	cap        int
+	classifier *FsEventClassifier // optional; nil disables classification
 }
 
 // NewFsEventStore creates a store with the given per-session ring capacity.
@@ -113,11 +138,37 @@ func NewFsEventStore(perSessionCap int) *FsEventStore {
 	}
 }
 
-// Ingest appends events for sessionID and records the dropped delta reported
-// by greywall (events the tracer threw away before they reached greyproxy).
-func (s *FsEventStore) Ingest(sessionID string, events []FsEvent, dropped uint64) {
+// SetClassifier installs a classifier so every ingested event is tagged
+// with severity + tags before being stored. Pass nil to disable.
+func (s *FsEventStore) SetClassifier(c *FsEventClassifier) {
+	s.mu.Lock()
+	s.classifier = c
+	s.mu.Unlock()
+}
+
+// FsEventIngestResult reports what happened on an ingest call so callers can
+// decide whether to publish a session.fs_alert. Alerting only makes sense
+// when at least one event was actually classified warn or critical.
+type FsEventIngestResult struct {
+	// Stored is the ingested events after classification — same slice
+	// length as the input but with Severity/Tags filled in.
+	Stored []FsEvent
+	// AlertEvents is the subset of Stored whose severity is warn or
+	// critical. Empty when nothing alarming was observed.
+	AlertEvents []FsEvent
+	// MaxSeverity is the highest severity in this batch, or "info" if
+	// the batch was clean.
+	MaxSeverity string
+}
+
+// Ingest appends events for sessionID, classifies them, and records the
+// dropped delta reported by greywall (events the tracer threw away before
+// they reached greyproxy). The returned FsEventIngestResult lets the caller
+// decide whether to surface an alert.
+func (s *FsEventStore) Ingest(sessionID string, events []FsEvent, dropped uint64) FsEventIngestResult {
+	res := FsEventIngestResult{MaxSeverity: SeverityInfo}
 	if sessionID == "" || (len(events) == 0 && dropped == 0) {
-		return
+		return res
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -127,10 +178,31 @@ func (s *FsEventStore) Ingest(sessionID string, events []FsEvent, dropped uint64
 		r = newFsRing(s.cap)
 		s.rings[sessionID] = r
 	}
+
+	classified := make([]FsEvent, 0, len(events))
 	for _, e := range events {
+		if s.classifier != nil {
+			c := s.classifier.Classify(e)
+			e.Severity = c.Severity
+			e.Tags = c.Tags
+		} else if e.Severity == "" {
+			e.Severity = SeverityInfo
+		}
+		switch e.Severity {
+		case SeverityCritical:
+			r.critical++
+			res.AlertEvents = append(res.AlertEvents, e)
+		case SeverityWarn:
+			r.warn++
+			res.AlertEvents = append(res.AlertEvents, e)
+		}
+		res.MaxSeverity = maxSeverity(res.MaxSeverity, e.Severity)
 		r.push(e)
+		classified = append(classified, e)
 	}
 	r.dropped += dropped
+	res.Stored = classified
+	return res
 }
 
 // Snapshot returns a FIFO copy of the session's buffer plus cumulative
@@ -148,13 +220,15 @@ func (s *FsEventStore) Snapshot(sessionID string) FsEventsSnapshot {
 		}
 	}
 	return FsEventsSnapshot{
-		SessionID:    sessionID,
-		Events:       r.snapshot(),
-		Dropped:      r.dropped,
-		Truncated:    r.truncated,
-		TotalEvents:  r.total,
-		BufferLimit:  r.cap,
-		BufferLength: r.size,
+		SessionID:     sessionID,
+		Events:        r.snapshot(),
+		Dropped:       r.dropped,
+		Truncated:     r.truncated,
+		TotalEvents:   r.total,
+		BufferLimit:   r.cap,
+		BufferLength:  r.size,
+		CriticalCount: r.critical,
+		WarnCount:     r.warn,
 	}
 }
 

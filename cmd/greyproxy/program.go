@@ -505,6 +505,16 @@ func (p *program) buildGreyproxyService() error {
 	// Filesystem event ring buffer (per-session). Receives FsEvents shipped
 	// by greywall in the heartbeat body when --record-fs is enabled.
 	shared.FsEvents = greyproxy.NewFsEventStore(0)
+	classifierPath := filepath.Join(greyproxyDataHome(), "fsevent-classifier.yml")
+	if classifier, cerr := greyproxy.NewFsEventClassifier(classifierPath); cerr != nil {
+		log.Warnf("fsevent classifier load failed (%v); using built-in defaults only", cerr)
+		// Re-init without the override so we still get the baseline.
+		if fallback, fbErr := greyproxy.NewFsEventClassifier(""); fbErr == nil {
+			shared.FsEvents.SetClassifier(fallback)
+		}
+	} else {
+		shared.FsEvents.SetClassifier(classifier)
+	}
 
 	shared.ReloadCertFn = p.reloadConfig
 	shared.CertMtimeFn = func() time.Time {

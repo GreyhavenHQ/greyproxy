@@ -1046,7 +1046,10 @@
                     html += '<div class="mt-2 pt-2 border-t border-border/50">';
                     html += '<div class="flex items-center justify-between mb-1">';
                     html += '<span class="text-xs font-medium text-muted-foreground">Filesystem activity</span>';
+                    html += '<span class="flex items-center gap-2">';
+                    html += '<span id="fsev-alert-' + escapeHtml(s.session_id) + '" class="text-xs"></span>';
                     html += '<span id="fsev-meta-' + escapeHtml(s.session_id) + '" class="text-xs text-muted-foreground"></span>';
+                    html += '</span>';
                     html += '</div>';
                     html += '<div id="fsev-' + escapeHtml(s.session_id) + '" class="text-xs font-mono space-y-0.5 max-h-40 overflow-y-auto">';
                     html += '<span class="text-muted-foreground">Loading...</span>';
@@ -1079,9 +1082,30 @@
         }
     }
 
+    // fsRowClass returns the row-level tailwind classes for a severity.
+    // Critical rows get a red left bar and a faint red wash so they stand
+    // out even when scrolled. Warn rows get amber. Info rows are plain.
+    function fsRowClass(sev) {
+        switch (sev) {
+            case 'critical': return 'border-l-2 border-red-500 pl-1.5 bg-red-50 dark:bg-red-950/30';
+            case 'warn':     return 'border-l-2 border-amber-500 pl-1.5 bg-amber-50/60 dark:bg-amber-950/20';
+            default:         return '';
+        }
+    }
+
+    function fsTagChips(tags) {
+        if (!tags || tags.length === 0) return '';
+        var out = ' ';
+        for (var i = 0; i < tags.length; i++) {
+            out += '<span class="inline-flex items-center px-1 rounded text-[10px] bg-background border border-border ml-1 align-middle">' + escapeHtml(tags[i]) + '</span>';
+        }
+        return out;
+    }
+
     function renderFsEvents(sessionID, snap) {
         var el = document.getElementById('fsev-' + sessionID);
         var meta = document.getElementById('fsev-meta-' + sessionID);
+        var alertEl = document.getElementById('fsev-alert-' + sessionID);
         if (!el) return;
         var events = (snap && snap.events) || [];
         if (events.length === 0) {
@@ -1098,10 +1122,20 @@
                 if (e.path2) extra += ' &rarr; ' + escapeHtml(e.path2);
                 if (e.errno) extra += ' <span class="text-red-600 dark:text-red-400">[errno ' + e.errno + ']</span>';
                 if (e.pid)   extra += ' <span class="text-muted-foreground">pid=' + e.pid + '</span>';
+                extra += fsTagChips(e.tags);
                 var ts = e.ts ? '<span class="text-muted-foreground">' + escapeHtml(e.ts.substr(11, 12)) + '</span> ' : '';
-                lines.push('<div class="truncate">' + ts + '<span class="' + fsOpColor(e.op) + ' font-semibold">' + op + '</span> ' + path + extra + '</div>');
+                var rowCls = fsRowClass(e.severity);
+                lines.push('<div class="truncate ' + rowCls + '">' + ts + '<span class="' + fsOpColor(e.op) + ' font-semibold">' + op + '</span> ' + path + extra + '</div>');
             }
             el.innerHTML = lines.join('');
+        }
+        if (alertEl) {
+            var crit = snap.critical_count || 0;
+            var warn = snap.warn_count || 0;
+            var pieces = [];
+            if (crit) pieces.push('<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-red-100 text-red-700 dark:bg-red-950/60 dark:text-red-300">&#9888; ' + crit + ' critical</span>');
+            if (warn) pieces.push('<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300">' + warn + ' warn</span>');
+            alertEl.innerHTML = pieces.join(' ');
         }
         if (meta) {
             var parts = [];
@@ -1241,7 +1275,7 @@
     // calm. Other session.* types still trigger a full reload.
     window.addEventListener('proxy:session-event', function(ev) {
         var msg = ev && ev.detail;
-        if (msg && msg.type === 'session.fs_events') {
+        if (msg && (msg.type === 'session.fs_events' || msg.type === 'session.fs_alert')) {
             var sid = msg.data && msg.data.session_id;
             if (sid) loadFsEvents(sid);
             return;
