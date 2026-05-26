@@ -239,6 +239,34 @@ var migrations = []string{
 	// returned by the middleware in its hello response. NULL for middlewares
 	// that did not declare a name; the UI falls back to middleware_url.
 	`ALTER TABLE middleware_events ADD COLUMN middleware_name TEXT;`,
+
+	// Migration 15: fs_events — persistent record of filesystem activity
+	// shipped by greywall heartbeats. Mirrors the in-memory ring buffer
+	// (FsEventStore) but survives restarts so the Activity dashboard can
+	// render fs context for historical http_transactions rows. The ring
+	// stays in place for the live snapshot / WebSocket path; this table
+	// is the system of record for "what did the agent touch around
+	// transaction N", and is what the per-tx Activity panel queries.
+	//
+	// transaction_id is nullable: events that arrive before the wrapped
+	// agent makes any API call are stored as unattributed (NULL) so the
+	// raw stream is never lost, and a future re-correlation pass can
+	// fill them in if needed.
+	`CREATE TABLE IF NOT EXISTS fs_events (
+		id              INTEGER PRIMARY KEY AUTOINCREMENT,
+		ts              TEXT    NOT NULL,
+		session_id      TEXT    NOT NULL,
+		transaction_id  INTEGER,
+		op              TEXT    NOT NULL,
+		path            TEXT    NOT NULL,
+		path2           TEXT,
+		pid             INTEGER,
+		errno           INTEGER,
+		severity        TEXT,
+		tags            TEXT
+	);
+	CREATE INDEX IF NOT EXISTS idx_fs_events_session_ts ON fs_events(session_id, ts);
+	CREATE INDEX IF NOT EXISTS idx_fs_events_tx ON fs_events(transaction_id);`,
 }
 
 func runMigrations(db *sql.DB) error {

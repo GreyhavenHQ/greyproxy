@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -161,6 +162,18 @@ func SessionsHeartbeatHandler(s *Shared) gin.HandlerFunc {
 			ingested = len(payload.Events)
 			maxSeverity = result.MaxSeverity
 			alertCount = len(result.AlertEvents)
+
+			// Persist to SQLite so the per-tx Activity panel can render
+			// fs activity for transactions long after the in-memory ring
+			// has evicted them. Best-effort: a write failure here must
+			// not fail the heartbeat (the TTL refresh is more important
+			// than not losing fs events), but it does want surfacing in
+			// the logs so it doesn't go unnoticed.
+			if len(result.Stored) > 0 && s.DB != nil {
+				if err := greyproxy.InsertFsEventsBatch(s.DB, sessionID, result.Stored); err != nil {
+					fmt.Fprintf(os.Stderr, "[heartbeat] fs_events persist failed sid=%s: %v\n", sessionID, err)
+				}
+			}
 
 			if s.Bus != nil && (len(payload.Events) > 0 || payload.Dropped > 0) {
 				// Ship the classified copy on the bus so subscribers see

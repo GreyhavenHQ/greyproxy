@@ -1,16 +1,8 @@
 package greyproxy
 
 import (
-	"sort"
 	"sync"
 )
-
-// sortFsEventsByTs sorts events in place by their RFC3339Nano timestamp.
-// Used when merging events from multiple sessions for a single
-// transaction id so the dashboard renders them in real-time order.
-func sortFsEventsByTs(events []FsEvent) {
-	sort.Slice(events, func(i, j int) bool { return events[i].Ts < events[j].Ts })
-}
 
 // Event type for filesystem activity received from greywall.
 const EventSessionFsEvents = "session.fs_events"
@@ -236,42 +228,6 @@ func (s *FsEventStore) Ingest(sessionID string, events []FsEvent, dropped uint64
 	r.dropped += dropped
 	res.Stored = classified
 	return res
-}
-
-// EventsByTransaction returns every event currently in any session's
-// ring whose TransactionID matches txID, in chronological order. Used
-// by the Activity page to render the fs activity that the correlator
-// attributed to a given http_transactions row, inline with the
-// transaction's expanded detail view. Returns an empty slice when no
-// match is found or txID is 0.
-//
-// Complexity is O(total live events). With the default ring cap of
-// 1024 per session and typically a handful of sessions, that's well
-// under a millisecond. A reverse index keyed by txID would help if
-// the dashboard ever pulls this on a tight loop, but a linear scan
-// is fine for the click-to-expand flow.
-func (s *FsEventStore) EventsByTransaction(txID int64) []FsEvent {
-	if txID == 0 {
-		return nil
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	var out []FsEvent
-	for _, r := range s.rings {
-		for _, e := range r.snapshot() {
-			if e.TransactionID == txID {
-				out = append(out, e)
-			}
-		}
-	}
-	// snapshot() is already FIFO per session; if events arrive from
-	// multiple sessions we sort by Ts to keep the resulting list in
-	// real-time order. Ts is RFC3339Nano so a plain string compare
-	// preserves chronology.
-	if len(out) > 1 {
-		sortFsEventsByTs(out)
-	}
-	return out
 }
 
 // Snapshot returns a FIFO copy of the session's buffer plus cumulative
