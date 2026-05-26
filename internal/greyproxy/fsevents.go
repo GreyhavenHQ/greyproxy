@@ -26,6 +26,11 @@ type FsEvent struct {
 	Path2         string   `json:"path2,omitempty"`
 	PID           int      `json:"pid,omitempty"`
 	Errno         int      `json:"errno,omitempty"`
+	// Exe is the absolute path of the binary that was running in PID
+	// when the event was captured. greywall populates it from the ES
+	// event's process.executable.path on macOS. Empty on Linux until
+	// the strace tracer learns to look it up.
+	Exe           string   `json:"exe,omitempty"`
 	Severity      string   `json:"severity,omitempty"`
 	Tags          []string `json:"tags,omitempty"`
 	TransactionID int64    `json:"transaction_id,omitempty"`

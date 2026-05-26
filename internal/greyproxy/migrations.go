@@ -267,6 +267,15 @@ var migrations = []string{
 	);
 	CREATE INDEX IF NOT EXISTS idx_fs_events_session_ts ON fs_events(session_id, ts);
 	CREATE INDEX IF NOT EXISTS idx_fs_events_tx ON fs_events(transaction_id);`,
+
+	// Migration 16: fs_events.exe — absolute path of the binary running
+	// in pid at the moment of the event. Lets the Activity dashboard
+	// label per-event lines with the actual program (e.g. distinguish
+	// claude.exe's own reads from those of an osascript helper claude
+	// spawned). Nullable because old rows were inserted before greywall
+	// captured it, and because the Linux tracer does not yet populate
+	// the field.
+	`ALTER TABLE fs_events ADD COLUMN exe TEXT;`,
 }
 
 func runMigrations(db *sql.DB) error {

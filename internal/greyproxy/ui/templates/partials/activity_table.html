@@ -327,6 +327,19 @@
     // glance how many lines were dropped. Empty list is rendered as a
     // single muted line so 'loaded, none attributed' is distinguishable
     // from 'still loading'.
+    // fsExeChip renders the binary that was running when an event was
+    // captured, as a small muted basename chip. Full path lives in the
+    // tooltip so it stays available without taking column space. Empty
+    // when the event arrived from a tracer that does not yet capture
+    // exe (e.g. Linux strace), or from an older greywall build.
+    function fsExeChip(exe) {
+        if (!exe) return '';
+        var basename = exe;
+        var slash = exe.lastIndexOf('/');
+        if (slash >= 0) basename = exe.substring(slash + 1);
+        return ' <span class="inline-flex items-center px-1 rounded text-[10px] bg-background border border-border ml-1 align-middle text-muted-foreground" title="' + actEscapeHtml(exe) + '">' + actEscapeHtml(basename) + '</span>';
+    }
+
     function renderHttpFsEvents(txID, events) {
         var wrap = document.getElementById('act-fsevents-' + txID);
         var body = document.getElementById('act-fsevents-body-' + txID);
@@ -347,6 +360,7 @@
             if (e.path2) extra += ' &rarr; ' + actEscapeHtml(e.path2);
             if (e.errno) extra += ' <span class="text-red-600 dark:text-red-400">[errno ' + e.errno + ']</span>';
             if (e.pid)   extra += ' <span class="text-muted-foreground">pid=' + e.pid + '</span>';
+            extra += fsExeChip(e.exe);
             var ts = e.ts ? '<span class="text-muted-foreground">' + actEscapeHtml(e.ts.substr(11, 12)) + '</span> ' : '';
             var rowCls = fsSevRowClass(e.severity);
             lines.push('<div class="truncate ' + rowCls + '">' + ts + '<span class="' + fsOpColor(e.op) + ' font-semibold">' + op + '</span> ' + path + extra + '</div>');

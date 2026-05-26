@@ -29,8 +29,8 @@ func InsertFsEventsBatch(dbConn *DB, sessionID string, events []FsEvent) error {
 	defer func() { _ = tx.Rollback() }()
 
 	stmt, err := tx.Prepare(`INSERT INTO fs_events
-		(ts, session_id, transaction_id, op, path, path2, pid, errno, severity, tags)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		(ts, session_id, transaction_id, op, path, path2, pid, errno, exe, severity, tags)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return fmt.Errorf("prepare fs_events insert: %w", err)
 	}
@@ -54,6 +54,10 @@ func InsertFsEventsBatch(dbConn *DB, sessionID string, events []FsEvent) error {
 		if e.Errno != 0 {
 			errno = sql.NullInt64{Int64: int64(e.Errno), Valid: true}
 		}
+		var exe sql.NullString
+		if e.Exe != "" {
+			exe = sql.NullString{String: e.Exe, Valid: true}
+		}
 		var sev sql.NullString
 		if e.Severity != "" {
 			sev = sql.NullString{String: e.Severity, Valid: true}
@@ -64,7 +68,7 @@ func InsertFsEventsBatch(dbConn *DB, sessionID string, events []FsEvent) error {
 				tags = sql.NullString{String: string(b), Valid: true}
 			}
 		}
-		if _, err := stmt.Exec(e.Ts, sessionID, txID, e.Op, e.Path, path2, pid, errno, sev, tags); err != nil {
+		if _, err := stmt.Exec(e.Ts, sessionID, txID, e.Op, e.Path, path2, pid, errno, exe, sev, tags); err != nil {
 			return fmt.Errorf("insert fs_event: %w", err)
 		}
 	}
@@ -82,7 +86,7 @@ func QueryFsEventsByTransaction(dbConn *DB, txID int64) ([]FsEvent, error) {
 	if txID <= 0 {
 		return []FsEvent{}, nil
 	}
-	rows, err := dbConn.ReadDB().Query(`SELECT ts, session_id, transaction_id, op, path, path2, pid, errno, severity, tags
+	rows, err := dbConn.ReadDB().Query(`SELECT ts, session_id, transaction_id, op, path, path2, pid, errno, exe, severity, tags
 		FROM fs_events
 		WHERE transaction_id = ?
 		ORDER BY ts ASC, id ASC`, txID)
@@ -100,10 +104,11 @@ func QueryFsEventsByTransaction(dbConn *DB, txID int64) ([]FsEvent, error) {
 			path2     sql.NullString
 			pid       sql.NullInt64
 			errno     sql.NullInt64
+			exe       sql.NullString
 			sev       sql.NullString
 			tags      sql.NullString
 		)
-		if err := rows.Scan(&e.Ts, &sessionID, &txCol, &e.Op, &e.Path, &path2, &pid, &errno, &sev, &tags); err != nil {
+		if err := rows.Scan(&e.Ts, &sessionID, &txCol, &e.Op, &e.Path, &path2, &pid, &errno, &exe, &sev, &tags); err != nil {
 			return nil, fmt.Errorf("scan fs_event: %w", err)
 		}
 		if txCol.Valid {
@@ -117,6 +122,9 @@ func QueryFsEventsByTransaction(dbConn *DB, txID int64) ([]FsEvent, error) {
 		}
 		if errno.Valid {
 			e.Errno = int(errno.Int64)
+		}
+		if exe.Valid {
+			e.Exe = exe.String
 		}
 		if sev.Valid {
 			e.Severity = sev.String
