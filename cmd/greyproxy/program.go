@@ -570,19 +570,45 @@ func (p *program) buildGreyproxyService() error {
 		// datetime() coerces both inputs to the same canonical form.
 		// The column itself is already canonical so we leave it bare to
 		// keep the index on `timestamp` usable.
-		var id int64
-		err := shared.DB.ReadDB().QueryRow(
-			`SELECT id FROM http_transactions
-			   WHERE container_name = ?
-			     AND timestamp >= datetime(?)
-			     AND timestamp <= datetime(?)
-			   ORDER BY timestamp DESC, id DESC LIMIT 1`,
-			sc.container, sc.createdAt, ts,
-		).Scan(&id)
-		if err != nil {
-			return 0 // including sql.ErrNoRows
+		//
+		// Two-step lookup. The conversation assembler runs per-
+		// provider dissectors against every http_transactions row and
+		// stamps conversation_id only on rows that parse as a real
+		// agent API call. So conversation_id IS NOT NULL is a strong
+		// structural signal of "agent driver, not telemetry side-
+		// channel" — preferring those rows fixes the failure mode
+		// where a Datadog log POST that completes between a real
+		// Anthropic response and the agent's resulting fs activity
+		// steals attribution.
+		//
+		// The fallback (any-tx) handles the race where the assembler
+		// hasn't yet scanned the most recent transaction: its
+		// conversation_id is still NULL but it is the actual driver.
+		// In that case the only thing we can do is attribute to it
+		// anyway and let the assembler retroactively put it in a
+		// conversation. Per-tx attribution may be slightly off until
+		// then; the per-conversation view will catch up once the
+		// assembler runs.
+		findLatest := func(requireConv bool) (int64, error) {
+			q := `SELECT id FROM http_transactions
+			        WHERE container_name = ?
+			          AND timestamp >= datetime(?)
+			          AND timestamp <= datetime(?)`
+			if requireConv {
+				q += ` AND conversation_id IS NOT NULL`
+			}
+			q += ` ORDER BY timestamp DESC, id DESC LIMIT 1`
+			var id int64
+			err := shared.DB.ReadDB().QueryRow(q, sc.container, sc.createdAt, ts).Scan(&id)
+			return id, err
 		}
-		return id
+		if id, err := findLatest(true); err == nil {
+			return id
+		}
+		if id, err := findLatest(false); err == nil {
+			return id
+		}
+		return 0
 	})
 
 	shared.ReloadCertFn = p.reloadConfig
