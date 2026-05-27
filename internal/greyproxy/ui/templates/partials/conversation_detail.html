@@ -78,16 +78,6 @@
                     <span>{{derefInt .DurationMs}}ms</span>
                     {{end}}
                     <span>{{.APICallsInTurn}} {{pluralize .APICallsInTurn "call" "calls"}}</span>
-                    <!-- Filesystem-activity badge. Populated by
-                         populateTurnFsSummaries() so the count and color
-                         match the per-turn drill-down strip below.
-                         Stays hidden when the turn has no attributed
-                         events so the header doesn't grow placeholder
-                         chrome on every turn. -->
-                    <span class="turn-fs-badge hidden inline-flex items-center gap-1 px-1.5 py-0.5 rounded font-medium" title="Filesystem activity">
-                        <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" /></svg>
-                        <span class="turn-fs-badge-text"></span>
-                    </span>
                 </div>
             </div>
 
@@ -129,7 +119,11 @@
 
                     {{if hasStepField . "tool_calls"}}
                     {{range stepToolCalls .}}
-                        <div class="tool-call-card rounded border border-border/70 overflow-hidden transition-colors hover:border-border" data-tool-expanded="false">
+                        <div class="tool-call-card rounded border border-border/70 overflow-hidden transition-colors hover:border-border"
+                             data-tool-expanded="false"
+                             data-tool-name="{{index . "tool"}}"
+                             data-tool-file-path="{{toolFilePath .}}"
+                             data-tool-tx-id="{{if index . "transaction_id"}}{{index . "transaction_id"}}{{end}}">
                             <!-- Collapsed view (default): icon + tool name + summary - clickable -->
                             <div class="tool-call-header flex items-center gap-1.5 px-2 py-1.5 cursor-pointer select-none" onclick="toggleToolCall(this.parentElement)">
                                 <!-- Tool icon -->
@@ -184,6 +178,16 @@
                                 </span>
                             </div>
 
+                            <!-- Inline filesystem activity tail.
+                                 Populated by populateToolFsTails().
+                                 Tools claim events with the same
+                                 transaction_id; for Read/Edit/Write
+                                 the path must also match file_path.
+                                 The pass-order is in the JS so a Bash
+                                 in the same tx as a Read doesn't
+                                 swallow the Read's file event. -->
+                            <div class="tool-call-fs hidden border-t border-border/30 bg-background/40 text-[10px] font-mono"></div>
+
                             <!-- Expanded view (hidden by default) -->
                             <div class="tool-call-body hidden border-t border-border/50 bg-muted/20">
                                 <!-- Input section -->
@@ -214,23 +218,6 @@
             </div>
             {{end}}
 
-            <!-- Per-turn filesystem activity summary. Populated by
-                 renderConvFsEvents() once the fs events for the whole
-                 conversation are fetched; the JS filters events by
-                 the data-tx-ids list on the parent turn element.
-                 Empty utility classes on the wrapper (border-l-4 etc.)
-                 receive the tone classes from JS so reads / writes /
-                 deletes look distinct in the timeline. -->
-            <div class="turn-fs-summary hidden border-t border-l-4 text-xs">
-                <button type="button" class="turn-fs-toggle w-full px-3 py-2 flex items-center justify-between text-left hover:brightness-95">
-                    <span class="flex items-center gap-2 min-w-0">
-                        <svg class="h-3.5 w-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" /></svg>
-                        <span class="turn-fs-headline font-medium truncate"></span>
-                    </span>
-                    <svg class="turn-fs-chevron h-3.5 w-3.5 flex-shrink-0 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" /></svg>
-                </button>
-                <div class="turn-fs-body hidden px-3 pb-2 font-mono space-y-0.5 max-h-72 overflow-y-auto"></div>
-            </div>
         </div>
         {{end}}
     </div>

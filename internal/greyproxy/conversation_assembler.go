@@ -998,7 +998,15 @@ func buildRoundsFromMessages(messages []dissector.Message, scaffolding *Scaffold
 			if msg.Role == "assistant" {
 				apiCalls++
 				summary := getAssistantSummary(msg)
-				step := map[string]any{"type": "assistant"}
+				// assistant_index is 1-based within this turn so the
+				// caller can pair the step to the matching
+				// turnReqs[idx-1].txnID after rounds are assembled.
+				// That mapping is the only way to know which tx
+				// actually produced a given tool_use, which the
+				// dashboard needs to scope per-tool fs activity
+				// correctly when one turn contains multiple
+				// assistant messages.
+				step := map[string]any{"type": "assistant", "assistant_index": apiCalls}
 				if t, ok := summary["thinking"]; ok {
 					step["thinking_preview"] = t
 				}
@@ -1212,6 +1220,26 @@ func assembleConversation(sessionID string, entries []transactionEntry) assemble
 
 		for _, e := range turnReqs {
 			turn.requestIDs = append(turn.requestIDs, e.txnID)
+		}
+
+		// Pair assistant steps with the transaction that produced
+		// them. Within a turn the Nth assistant message comes from
+		// the Nth http_transactions row in turnReqs (cumulative-history
+		// requests with one new response each). The dashboard reads
+		// these transaction_id stamps to scope per-tool fs activity
+		// to the right tx instead of the whole turn.
+		for _, step := range turn.steps {
+			idx, _ := step["assistant_index"].(int)
+			if idx < 1 || idx > len(turnReqs) {
+				continue
+			}
+			txnID := turnReqs[idx-1].txnID
+			step["transaction_id"] = txnID
+			if tcs, ok := step["tool_calls"].([]map[string]any); ok {
+				for _, tc := range tcs {
+					tc["transaction_id"] = txnID
+				}
+			}
 		}
 
 		if len(turnReqs) > 0 {

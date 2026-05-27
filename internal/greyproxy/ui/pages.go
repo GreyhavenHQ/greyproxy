@@ -62,6 +62,25 @@ var funcMap = template.FuncMap{
 	},
 	"contains": strings.Contains,
 	"join":     strings.Join,
+	"toolFilePath": func(tc map[string]any) string {
+		// Extract the file_path argument from a tool call's input.
+		// Returns "" when the tool didn't operate on a single named
+		// file (Bash, Grep, WebFetch, etc.); the caller uses the
+		// returned string to populate a data-attribute the dashboard
+		// reads to pull matching fs events under the tool card.
+		inputRaw, _ := tc["input_preview"].(string)
+		if inputRaw == "" {
+			return ""
+		}
+		var input map[string]any
+		if err := json.Unmarshal([]byte(inputRaw), &input); err != nil {
+			return ""
+		}
+		if fp, ok := input["file_path"].(string); ok {
+			return fp
+		}
+		return ""
+	},
 	"txIDsCSV": func(v any) string {
 		// Render a Turn's RequestIDs (any, typically []any of float64
 		// after JSON unmarshal) as a comma-separated string suitable
