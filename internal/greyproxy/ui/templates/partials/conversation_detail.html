@@ -78,6 +78,16 @@
                     <span>{{derefInt .DurationMs}}ms</span>
                     {{end}}
                     <span>{{.APICallsInTurn}} {{pluralize .APICallsInTurn "call" "calls"}}</span>
+                    <!-- Filesystem-activity badge. Populated by
+                         populateTurnFsSummaries() so the count and color
+                         match the per-turn drill-down strip below.
+                         Stays hidden when the turn has no attributed
+                         events so the header doesn't grow placeholder
+                         chrome on every turn. -->
+                    <span class="turn-fs-badge hidden inline-flex items-center gap-1 px-1.5 py-0.5 rounded font-medium" title="Filesystem activity">
+                        <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" /></svg>
+                        <span class="turn-fs-badge-text"></span>
+                    </span>
                 </div>
             </div>
 
@@ -207,11 +217,17 @@
             <!-- Per-turn filesystem activity summary. Populated by
                  renderConvFsEvents() once the fs events for the whole
                  conversation are fetched; the JS filters events by
-                 the data-tx-ids list on the parent turn element. -->
-            <div class="turn-fs-summary hidden border-t border-border bg-muted/10 text-xs">
-                <button type="button" class="turn-fs-toggle w-full px-3 py-1.5 flex items-center justify-between text-left hover:bg-muted/30">
-                    <span class="turn-fs-headline text-muted-foreground"></span>
-                    <svg class="turn-fs-chevron h-3 w-3 text-muted-foreground transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" /></svg>
+                 the data-tx-ids list on the parent turn element.
+                 Empty utility classes on the wrapper (border-l-4 etc.)
+                 receive the tone classes from JS so reads / writes /
+                 deletes look distinct in the timeline. -->
+            <div class="turn-fs-summary hidden border-t border-l-4 text-xs">
+                <button type="button" class="turn-fs-toggle w-full px-3 py-2 flex items-center justify-between text-left hover:brightness-95">
+                    <span class="flex items-center gap-2 min-w-0">
+                        <svg class="h-3.5 w-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" /></svg>
+                        <span class="turn-fs-headline font-medium truncate"></span>
+                    </span>
+                    <svg class="turn-fs-chevron h-3.5 w-3.5 flex-shrink-0 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" /></svg>
                 </button>
                 <div class="turn-fs-body hidden px-3 pb-2 font-mono space-y-0.5 max-h-72 overflow-y-auto"></div>
             </div>

@@ -244,29 +244,107 @@ function renderConvFsEvents() {
         return '<div class="truncate">' + ts + '<span class="' + opColor(e.op) + ' font-semibold">' + op + '</span> ' + path + extra + '</div>';
     }
 
-    // Build a one-line summary like "12 events: 8 reads, 3 writes, 1 exec"
-    // for the collapsed per-turn header. Ops are bucketed into coarse
-    // categories so the headline stays scannable even when the underlying
-    // ops list is large.
-    function summarizeOps(events) {
-        var reads = 0, writes = 0, deletes = 0, execs = 0, other = 0;
+    // Bucket events by coarse op category and return per-bucket
+    // counts plus the most frequently touched paths in each bucket.
+    // The buckets match the color / intensity scheme used by the
+    // header badge below so a single pass over the events feeds both
+    // the inline summary line and the badge.
+    function bucketizeFsEvents(events) {
+        var b = {
+            read:   { count: 0, paths: {} },
+            write:  { count: 0, paths: {} }, // includes create
+            del:    { count: 0, paths: {} },
+            exec:   { count: 0, paths: {} },
+            other:  { count: 0, paths: {} },
+        };
+        function bump(slot, path) {
+            slot.count++;
+            if (path) slot.paths[path] = (slot.paths[path] || 0) + 1;
+        }
         events.forEach(function(e) {
             switch (e.op) {
-                case 'open_read':                       reads++;   break;
-                case 'open_write': case 'create':       writes++;  break;
-                case 'unlink':                          deletes++; break;
-                case 'exec':                            execs++;   break;
-                default:                                other++;   break;
+                case 'open_read':                       bump(b.read,  e.path); break;
+                case 'open_write': case 'create':       bump(b.write, e.path); break;
+                case 'unlink':                          bump(b.del,   e.path); break;
+                case 'exec':                            bump(b.exec,  e.path); break;
+                default:                                bump(b.other, e.path); break;
             }
         });
-        var parts = [];
-        if (reads)   parts.push(reads   + (reads   === 1 ? ' read'   : ' reads'));
-        if (writes)  parts.push(writes  + (writes  === 1 ? ' write'  : ' writes'));
-        if (deletes) parts.push(deletes + (deletes === 1 ? ' delete' : ' deletes'));
-        if (execs)   parts.push(execs   + ' exec');
-        if (other)   parts.push(other   + ' other');
-        return events.length + ' event' + (events.length === 1 ? '' : 's') +
-            (parts.length ? ': ' + parts.join(', ') : '');
+        return b;
+    }
+
+    // Pick the N most frequently touched basenames from a bucket so
+    // the preview line can name the substance of the activity. We use
+    // basenames (not full paths) because the preview must fit on one
+    // line; the full paths are visible in the expanded drill-down.
+    function topBasenames(slot, n) {
+        var entries = Object.keys(slot.paths).map(function(p) {
+            return { p: p, n: slot.paths[p] };
+        });
+        entries.sort(function(a, b) { return b.n - a.n; });
+        var out = [];
+        for (var i = 0; i < entries.length && out.length < n; i++) {
+            var p = entries[i].p;
+            var slash = p.lastIndexOf('/');
+            var name = slash >= 0 ? p.substring(slash + 1) : p;
+            if (!name) continue;
+            if (out.indexOf(name) < 0) out.push(name);
+        }
+        return out;
+    }
+
+    // Build a content-rich preview line like:
+    //   "8 reads (README.md, package.json, …)  3 writes (foo.ts)  1 exec"
+    // The point is to surface what the agent actually touched, not just
+    // a count, so an operator can decide at a glance whether to expand
+    // the strip for the full event list.
+    function summarizeFsEvents(events) {
+        if (!events.length) return '';
+        var b = bucketizeFsEvents(events);
+        function part(slot, singular, plural) {
+            if (!slot.count) return '';
+            var names = topBasenames(slot, 3);
+            var head = slot.count + ' ' + (slot.count === 1 ? singular : plural);
+            if (!names.length) return head;
+            var more = Object.keys(slot.paths).length > names.length ? ', …' : '';
+            return head + ' (' + names.join(', ') + more + ')';
+        }
+        var pieces = [
+            part(b.read,  'read',   'reads'),
+            part(b.write, 'write',  'writes'),
+            part(b.del,   'delete', 'deletes'),
+            part(b.exec,  'exec',   'execs'),
+        ].filter(Boolean);
+        if (b.other.count) pieces.push(b.other.count + ' other');
+        return pieces.join('  •  ');
+    }
+
+    // Decide visual tone (color intensity) from the bucketized counts.
+    // Deletes are the loudest signal (file removal), writes are
+    // notable, read-only activity is gray plumbing. Returns both the
+    // tight badge classes for the turn header and the wider strip
+    // classes for the inline summary so the two stay visually
+    // related — the strip reads as the badge expanded.
+    function fsBadgeTone(b) {
+        if (b.del.count > 0) {
+            return {
+                label:  'destructive',
+                badge:  'bg-red-100 text-red-700 dark:bg-red-950/60 dark:text-red-300',
+                strip:  'border-red-500 bg-red-50 text-red-900 dark:bg-red-950/30 dark:text-red-100',
+            };
+        }
+        if (b.write.count > 0) {
+            return {
+                label:  'writes',
+                badge:  'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300',
+                strip:  'border-amber-500 bg-amber-50 text-amber-900 dark:bg-amber-950/30 dark:text-amber-100',
+            };
+        }
+        return {
+            label:  'read-only',
+            badge:  'bg-muted text-muted-foreground',
+            strip:  'border-blue-400 bg-blue-50/60 text-blue-900 dark:bg-blue-950/30 dark:text-blue-100',
+        };
     }
 
     // Group a flat event list by transaction id, preserving insertion
@@ -304,10 +382,10 @@ function renderConvFsEvents() {
 
     // Wire per-turn summary panels: for each turn element that lists a
     // set of tx ids in data-tx-ids, pick the matching events from the
-    // conversation-wide list, render a collapsed summary, and bind a
-    // click-to-expand handler. Turns whose linked transactions have no
-    // attributed fs events stay hidden so the conversation timeline
-    // doesn't grow empty rows.
+    // conversation-wide list, render a header badge + collapsed
+    // content-rich preview, and bind a click-to-expand handler. Turns
+    // whose linked transactions have no attributed fs events stay
+    // hidden so the conversation timeline doesn't grow empty rows.
     function populateTurnFsSummaries(allEvents) {
         var turns = document.querySelectorAll('#conv-detail [data-tx-ids]');
         turns.forEach(function(turnEl) {
@@ -318,15 +396,42 @@ function renderConvFsEvents() {
             var matching = allEvents.filter(function(e) { return ids[String(e.transaction_id || 0)]; });
             if (matching.length === 0) return;
 
+            var b      = bucketizeFsEvents(matching);
+            var tone   = fsBadgeTone(b);
             var panel  = turnEl.querySelector('.turn-fs-summary');
             var line   = turnEl.querySelector('.turn-fs-headline');
             var body   = turnEl.querySelector('.turn-fs-body');
             var chev   = turnEl.querySelector('.turn-fs-chevron');
             var toggle = turnEl.querySelector('.turn-fs-toggle');
-            if (!panel || !line || !body || !toggle) return;
+            var badge  = turnEl.querySelector('.turn-fs-badge');
+            var badgeT = turnEl.querySelector('.turn-fs-badge-text');
 
-            line.textContent = summarizeOps(matching);
+            // Header badge: always-visible chip in the turn header so
+            // the operator notices fs activity while scrolling without
+            // needing to look at the bottom of the turn.
+            if (badge && badgeT) {
+                badgeT.textContent = matching.length + ' fs';
+                badge.className = 'turn-fs-badge inline-flex items-center gap-1 px-1.5 py-0.5 rounded font-medium ' + tone.badge;
+                badge.setAttribute('title', 'Filesystem activity: ' + tone.label + ' — click for details');
+                badge.addEventListener('click', function(ev) {
+                    ev.stopPropagation();
+                    if (body && body.classList.contains('hidden')) {
+                        body.classList.remove('hidden');
+                        if (chev) chev.style.transform = 'rotate(90deg)';
+                    }
+                    if (panel) panel.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+                });
+                badge.style.cursor = 'pointer';
+            }
+
+            if (!panel || !line || !body || !toggle) return;
+            line.textContent = summarizeFsEvents(matching);
             body.innerHTML = renderGroupedEvents(groupByTx(matching));
+            // Apply tone classes to the wrapper so reads (blue),
+            // writes (amber), and deletes (red) read as distinct
+            // bands in the timeline — the strip is no longer just
+            // muted plumbing.
+            panel.className = 'turn-fs-summary border-t border-l-4 text-xs ' + tone.strip;
             panel.classList.remove('hidden');
             toggle.addEventListener('click', function() {
                 var open = body.classList.toggle('hidden');
