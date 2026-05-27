@@ -78,23 +78,32 @@ func InsertFsEventsBatch(dbConn *DB, sessionID string, events []FsEvent) error {
 	return nil
 }
 
-// QueryFsEventsByTransaction returns every persisted fs event linked to
-// the given http_transactions row, in chronological order. Returns an
-// empty slice (never nil) when no events match, so JSON encoders
-// produce [] instead of null.
-func QueryFsEventsByTransaction(dbConn *DB, txID int64) ([]FsEvent, error) {
-	if txID <= 0 {
+// QueryFsEventsByConversation returns every fs event linked to any
+// http_transactions row whose conversation_id matches. The conversation
+// view uses this so an operator reading the prompt/response thread can
+// see the agent's filesystem activity inline with the API calls that
+// drove it, without clicking through to the Activity page once per
+// transaction.
+func QueryFsEventsByConversation(dbConn *DB, conversationID string) ([]FsEvent, error) {
+	if conversationID == "" {
 		return []FsEvent{}, nil
 	}
-	rows, err := dbConn.ReadDB().Query(`SELECT ts, session_id, transaction_id, op, path, path2, pid, errno, exe, severity, tags
-		FROM fs_events
-		WHERE transaction_id = ?
-		ORDER BY ts ASC, id ASC`, txID)
+	rows, err := dbConn.ReadDB().Query(`SELECT fs.ts, fs.session_id, fs.transaction_id, fs.op, fs.path, fs.path2, fs.pid, fs.errno, fs.exe, fs.severity, fs.tags
+		FROM fs_events fs
+		INNER JOIN http_transactions t ON fs.transaction_id = t.id
+		WHERE t.conversation_id = ?
+		ORDER BY fs.ts ASC, fs.id ASC`, conversationID)
 	if err != nil {
-		return nil, fmt.Errorf("query fs_events by tx: %w", err)
+		return nil, fmt.Errorf("query fs_events by conversation: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
+	return scanFsEventRows(rows)
+}
 
+// scanFsEventRows is the shared row-iteration body for the two query
+// functions above. Keeping it in one place means a future column
+// addition only requires changing one Scan call.
+func scanFsEventRows(rows *sql.Rows) ([]FsEvent, error) {
 	out := make([]FsEvent, 0)
 	for rows.Next() {
 		var (
@@ -130,7 +139,6 @@ func QueryFsEventsByTransaction(dbConn *DB, txID int64) ([]FsEvent, error) {
 			e.Severity = sev.String
 		}
 		if tags.Valid && tags.String != "" {
-			// Tolerate non-JSON legacy data: fall back to a single tag.
 			if strings.HasPrefix(tags.String, "[") {
 				_ = json.Unmarshal([]byte(tags.String), &e.Tags)
 			} else {
@@ -143,4 +151,23 @@ func QueryFsEventsByTransaction(dbConn *DB, txID int64) ([]FsEvent, error) {
 		return nil, fmt.Errorf("iterate fs_events: %w", err)
 	}
 	return out, nil
+}
+
+// QueryFsEventsByTransaction returns every persisted fs event linked to
+// the given http_transactions row, in chronological order. Returns an
+// empty slice (never nil) when no events match, so JSON encoders
+// produce [] instead of null.
+func QueryFsEventsByTransaction(dbConn *DB, txID int64) ([]FsEvent, error) {
+	if txID <= 0 {
+		return []FsEvent{}, nil
+	}
+	rows, err := dbConn.ReadDB().Query(`SELECT ts, session_id, transaction_id, op, path, path2, pid, errno, exe, severity, tags
+		FROM fs_events
+		WHERE transaction_id = ?
+		ORDER BY ts ASC, id ASC`, txID)
+	if err != nil {
+		return nil, fmt.Errorf("query fs_events by tx: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	return scanFsEventRows(rows)
 }

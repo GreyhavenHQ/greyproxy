@@ -109,6 +109,7 @@ func NewRouter(s *Shared, pathPrefix string) (*gin.Engine, *gin.RouterGroup) {
 		api.GET("/conversations", ConversationsListHandler(s))
 		api.GET("/conversations/:id", ConversationsDetailHandler(s))
 		api.GET("/conversations/:id/subagents", ConversationsSubagentsHandler(s))
+		api.GET("/conversations/:id/fsevents", ConversationsFsEventsHandler(s))
 
 		// Dissectors (available decoders)
 		api.GET("/dissectors", DissectorsListHandler())

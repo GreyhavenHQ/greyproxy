@@ -221,6 +221,104 @@
         {{end}}
     </div>
     {{end}}
+
+    <!-- Filesystem activity attributed to this conversation -->
+    <div id="conv-fsevents-wrap"
+         data-conv-id="{{.Conv.ID}}"
+         data-prefix="{{$.Prefix}}"
+         class="mt-4 pt-3 border-t border-border">
+        <div class="text-xs font-semibold text-muted-foreground mb-1">Filesystem activity</div>
+        <div id="conv-fsevents-body" class="text-xs font-mono space-y-0.5 max-h-96 overflow-y-auto">
+            <span class="text-muted-foreground">Loading...</span>
+        </div>
+    </div>
+    <script>
+    (function() {
+        var wrap = document.getElementById('conv-fsevents-wrap');
+        if (!wrap) return;
+        var convID = wrap.getAttribute('data-conv-id') || '';
+        var prefix = wrap.getAttribute('data-prefix') || '';
+        if (!convID) return;
+
+        function esc(s) {
+            return String(s == null ? '' : s)
+                .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+                .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+        }
+        function opColor(op) {
+            switch (op) {
+                case 'open_read':  return 'text-blue-600 dark:text-blue-400';
+                case 'open_write':
+                case 'create':     return 'text-green-600 dark:text-green-400';
+                case 'unlink':     return 'text-red-600 dark:text-red-400';
+                case 'rename':
+                case 'link':
+                case 'symlink':    return 'text-amber-600 dark:text-amber-400';
+                case 'mkdir':      return 'text-purple-600 dark:text-purple-400';
+                case 'exec':       return 'text-indigo-600 dark:text-indigo-400';
+                default:           return 'text-muted-foreground';
+            }
+        }
+        function exeChip(exe) {
+            if (!exe) return '';
+            var slash = exe.lastIndexOf('/');
+            var base = slash >= 0 ? exe.substring(slash + 1) : exe;
+            return ' <span class="inline-flex items-center px-1 rounded text-[10px] bg-background border border-border ml-1 align-middle text-muted-foreground" title="' + esc(exe) + '">' + esc(base) + '</span>';
+        }
+
+        fetch(prefix + '/api/conversations/' + encodeURIComponent(convID) + '/fsevents')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                var body = document.getElementById('conv-fsevents-body');
+                var events = (data && data.events) || [];
+                if (events.length === 0) {
+                    body.innerHTML = '<span class="text-muted-foreground">No filesystem events attributed to this conversation.</span>';
+                    return;
+                }
+                // Group by transaction_id, preserving chronological
+                // order of the first event per group. Within a group,
+                // events stay in arrival order (already sorted by ts
+                // server-side).
+                var groups = [];
+                var byTx = {};
+                events.forEach(function(e) {
+                    var tx = e.transaction_id || 0;
+                    if (!byTx.hasOwnProperty(tx)) {
+                        byTx[tx] = [];
+                        groups.push(tx);
+                    }
+                    byTx[tx].push(e);
+                });
+                var html = '';
+                groups.forEach(function(tx) {
+                    var list = byTx[tx];
+                    html += '<div class="mt-2"><div class="text-[10px] font-semibold text-muted-foreground mb-0.5">';
+                    if (tx) {
+                        html += '<a href="' + prefix + '/activity?kind=http#act-http-' + tx + '" class="hover:underline">tx #' + tx + '</a>';
+                    } else {
+                        html += 'unattributed';
+                    }
+                    html += ' &middot; ' + list.length + ' event' + (list.length === 1 ? '' : 's') + '</div>';
+                    list.forEach(function(e) {
+                        var op = esc(e.op || '');
+                        var path = esc(e.path || '');
+                        var extra = '';
+                        if (e.path2) extra += ' &rarr; ' + esc(e.path2);
+                        if (e.pid) extra += ' <span class="text-muted-foreground">pid=' + e.pid + '</span>';
+                        extra += exeChip(e.exe);
+                        var ts = e.ts ? '<span class="text-muted-foreground">' + esc(e.ts.substr(11, 12)) + '</span> ' : '';
+                        html += '<div class="truncate">' + ts + '<span class="' + opColor(e.op) + ' font-semibold">' + op + '</span> ' + path + extra + '</div>';
+                    });
+                    html += '</div>';
+                });
+                body.innerHTML = html;
+            })
+            .catch(function() {
+                var body = document.getElementById('conv-fsevents-body');
+                if (body) body.innerHTML = '<span class="text-red-600">Failed to load filesystem events.</span>';
+            });
+    })();
+    </script>
 </div>
 
 {{end}}

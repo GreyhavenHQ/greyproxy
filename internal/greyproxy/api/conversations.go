@@ -75,3 +75,24 @@ func ConversationsSubagentsHandler(s *Shared) gin.HandlerFunc {
 		c.JSON(http.StatusOK, gin.H{"items": items})
 	}
 }
+
+// ConversationsFsEventsHandler returns the filesystem events for every
+// http_transactions row whose conversation_id matches this
+// conversation. The Conversations dashboard uses this to inline the
+// agent's fs activity at the bottom of a thread so an operator
+// reviewing prompts/responses can also see "what did the agent
+// actually touch?" without clicking through to Activity.
+func ConversationsFsEventsHandler(s *Shared) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		id := c.Param("id")
+		events, err := greyproxy.QueryFsEventsByConversation(s.DB, id)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"conversation_id": id,
+			"events":          events,
+		})
+	}
+}
