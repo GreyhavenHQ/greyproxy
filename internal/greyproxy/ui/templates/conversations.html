@@ -229,49 +229,124 @@ function renderConvFsEvents() {
         var base = slash >= 0 ? exe.substring(slash + 1) : exe;
         return ' <span class="inline-flex items-center px-1 rounded text-[10px] bg-background border border-border ml-1 align-middle text-muted-foreground" title="' + esc(exe) + '">' + esc(base) + '</span>';
     }
+    // Render a single event line. Shared between the per-turn inline
+    // panels and the bottom "all events" panel so the format stays
+    // identical and a path I can read in one place reads the same in
+    // the other.
+    function renderFsLine(e) {
+        var op = esc(e.op || '');
+        var path = esc(e.path || '');
+        var extra = '';
+        if (e.path2) extra += ' &rarr; ' + esc(e.path2);
+        if (e.pid) extra += ' <span class="text-muted-foreground">pid=' + e.pid + '</span>';
+        extra += exeChip(e.exe);
+        var ts = e.ts ? '<span class="text-muted-foreground">' + esc(e.ts.substr(11, 12)) + '</span> ' : '';
+        return '<div class="truncate">' + ts + '<span class="' + opColor(e.op) + ' font-semibold">' + op + '</span> ' + path + extra + '</div>';
+    }
+
+    // Build a one-line summary like "12 events: 8 reads, 3 writes, 1 exec"
+    // for the collapsed per-turn header. Ops are bucketed into coarse
+    // categories so the headline stays scannable even when the underlying
+    // ops list is large.
+    function summarizeOps(events) {
+        var reads = 0, writes = 0, deletes = 0, execs = 0, other = 0;
+        events.forEach(function(e) {
+            switch (e.op) {
+                case 'open_read':                       reads++;   break;
+                case 'open_write': case 'create':       writes++;  break;
+                case 'unlink':                          deletes++; break;
+                case 'exec':                            execs++;   break;
+                default:                                other++;   break;
+            }
+        });
+        var parts = [];
+        if (reads)   parts.push(reads   + (reads   === 1 ? ' read'   : ' reads'));
+        if (writes)  parts.push(writes  + (writes  === 1 ? ' write'  : ' writes'));
+        if (deletes) parts.push(deletes + (deletes === 1 ? ' delete' : ' deletes'));
+        if (execs)   parts.push(execs   + ' exec');
+        if (other)   parts.push(other   + ' other');
+        return events.length + ' event' + (events.length === 1 ? '' : 's') +
+            (parts.length ? ': ' + parts.join(', ') : '');
+    }
+
+    // Group a flat event list by transaction id, preserving insertion
+    // order of the first event per tx (so the timeline reads naturally).
+    function groupByTx(events) {
+        var groups = [];
+        var byTx = {};
+        events.forEach(function(e) {
+            var tx = e.transaction_id || 0;
+            if (!byTx.hasOwnProperty(tx)) {
+                byTx[tx] = [];
+                groups.push(tx);
+            }
+            byTx[tx].push(e);
+        });
+        return { order: groups, byTx: byTx };
+    }
+
+    function renderGroupedEvents(grouped) {
+        var html = '';
+        grouped.order.forEach(function(tx) {
+            var list = grouped.byTx[tx];
+            html += '<div class="mt-2"><div class="text-[10px] font-semibold text-muted-foreground mb-0.5">';
+            if (tx) {
+                html += '<a href="' + prefix + '/activity?kind=http#act-http-' + tx + '" class="hover:underline">tx #' + tx + '</a>';
+            } else {
+                html += 'unattributed';
+            }
+            html += ' &middot; ' + list.length + ' event' + (list.length === 1 ? '' : 's') + '</div>';
+            list.forEach(function(e) { html += renderFsLine(e); });
+            html += '</div>';
+        });
+        return html;
+    }
+
+    // Wire per-turn summary panels: for each turn element that lists a
+    // set of tx ids in data-tx-ids, pick the matching events from the
+    // conversation-wide list, render a collapsed summary, and bind a
+    // click-to-expand handler. Turns whose linked transactions have no
+    // attributed fs events stay hidden so the conversation timeline
+    // doesn't grow empty rows.
+    function populateTurnFsSummaries(allEvents) {
+        var turns = document.querySelectorAll('#conv-detail [data-tx-ids]');
+        turns.forEach(function(turnEl) {
+            var raw = turnEl.getAttribute('data-tx-ids') || '';
+            if (!raw) return;
+            var ids = {};
+            raw.split(',').forEach(function(s) { if (s) ids[s.trim()] = true; });
+            var matching = allEvents.filter(function(e) { return ids[String(e.transaction_id || 0)]; });
+            if (matching.length === 0) return;
+
+            var panel  = turnEl.querySelector('.turn-fs-summary');
+            var line   = turnEl.querySelector('.turn-fs-headline');
+            var body   = turnEl.querySelector('.turn-fs-body');
+            var chev   = turnEl.querySelector('.turn-fs-chevron');
+            var toggle = turnEl.querySelector('.turn-fs-toggle');
+            if (!panel || !line || !body || !toggle) return;
+
+            line.textContent = summarizeOps(matching);
+            body.innerHTML = renderGroupedEvents(groupByTx(matching));
+            panel.classList.remove('hidden');
+            toggle.addEventListener('click', function() {
+                var open = body.classList.toggle('hidden');
+                if (chev) chev.style.transform = open ? 'rotate(0deg)' : 'rotate(90deg)';
+            });
+        });
+    }
+
     fetch(prefix + '/api/conversations/' + encodeURIComponent(convID) + '/fsevents')
         .then(function(r) { return r.json(); })
         .then(function(data) {
             var body = document.getElementById('conv-fsevents-body');
             if (!body) return;
             var events = (data && data.events) || [];
+            populateTurnFsSummaries(events);
             if (events.length === 0) {
                 body.innerHTML = '<span class="text-muted-foreground">No filesystem events attributed to this conversation.</span>';
                 return;
             }
-            var groups = [];
-            var byTx = {};
-            events.forEach(function(e) {
-                var tx = e.transaction_id || 0;
-                if (!byTx.hasOwnProperty(tx)) {
-                    byTx[tx] = [];
-                    groups.push(tx);
-                }
-                byTx[tx].push(e);
-            });
-            var html = '';
-            groups.forEach(function(tx) {
-                var list = byTx[tx];
-                html += '<div class="mt-2"><div class="text-[10px] font-semibold text-muted-foreground mb-0.5">';
-                if (tx) {
-                    html += '<a href="' + prefix + '/activity?kind=http#act-http-' + tx + '" class="hover:underline">tx #' + tx + '</a>';
-                } else {
-                    html += 'unattributed';
-                }
-                html += ' &middot; ' + list.length + ' event' + (list.length === 1 ? '' : 's') + '</div>';
-                list.forEach(function(e) {
-                    var op = esc(e.op || '');
-                    var path = esc(e.path || '');
-                    var extra = '';
-                    if (e.path2) extra += ' &rarr; ' + esc(e.path2);
-                    if (e.pid) extra += ' <span class="text-muted-foreground">pid=' + e.pid + '</span>';
-                    extra += exeChip(e.exe);
-                    var ts = e.ts ? '<span class="text-muted-foreground">' + esc(e.ts.substr(11, 12)) + '</span> ' : '';
-                    html += '<div class="truncate">' + ts + '<span class="' + opColor(e.op) + ' font-semibold">' + op + '</span> ' + path + extra + '</div>';
-                });
-                html += '</div>';
-            });
-            body.innerHTML = html;
+            body.innerHTML = renderGroupedEvents(groupByTx(events));
         })
         .catch(function() {
             var body = document.getElementById('conv-fsevents-body');

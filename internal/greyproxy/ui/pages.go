@@ -62,6 +62,31 @@ var funcMap = template.FuncMap{
 	},
 	"contains": strings.Contains,
 	"join":     strings.Join,
+	"txIDsCSV": func(v any) string {
+		// Render a Turn's RequestIDs (any, typically []any of float64
+		// after JSON unmarshal) as a comma-separated string suitable
+		// for an HTML data-attribute. Used by the per-turn fs-events
+		// summary on the conversation detail page; the JS side parses
+		// the attribute back into a set of tx ids to filter against.
+		slice, ok := v.([]any)
+		if !ok || len(slice) == 0 {
+			return ""
+		}
+		parts := make([]string, 0, len(slice))
+		for _, x := range slice {
+			switch n := x.(type) {
+			case float64:
+				parts = append(parts, fmt.Sprintf("%d", int64(n)))
+			case int64:
+				parts = append(parts, fmt.Sprintf("%d", n))
+			case int:
+				parts = append(parts, fmt.Sprintf("%d", n))
+			case string:
+				parts = append(parts, n)
+			}
+		}
+		return strings.Join(parts, ",")
+	},
 	"add": func(a, b int) int {
 		return a + b
 	},

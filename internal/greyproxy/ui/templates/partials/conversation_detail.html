@@ -61,7 +61,7 @@
     {{if .Conv.Turns}}
     <div class="space-y-3">
         {{range .Conv.Turns}}
-        <div class="border border-border rounded-lg overflow-hidden">
+        <div class="border border-border rounded-lg overflow-hidden" data-turn-number="{{.TurnNumber}}" data-tx-ids="{{txIDsCSV .RequestIDs}}">
             <!-- Turn header -->
             <div class="bg-muted/30 px-3 py-2 flex items-center justify-between border-b border-border">
                 <div class="flex items-center gap-2">
@@ -203,6 +203,18 @@
                 {{end}}
             </div>
             {{end}}
+
+            <!-- Per-turn filesystem activity summary. Populated by
+                 renderConvFsEvents() once the fs events for the whole
+                 conversation are fetched; the JS filters events by
+                 the data-tx-ids list on the parent turn element. -->
+            <div class="turn-fs-summary hidden border-t border-border bg-muted/10 text-xs">
+                <button type="button" class="turn-fs-toggle w-full px-3 py-1.5 flex items-center justify-between text-left hover:bg-muted/30">
+                    <span class="turn-fs-headline text-muted-foreground"></span>
+                    <svg class="turn-fs-chevron h-3 w-3 text-muted-foreground transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" /></svg>
+                </button>
+                <div class="turn-fs-body hidden px-3 pb-2 font-mono space-y-0.5 max-h-72 overflow-y-auto"></div>
+            </div>
         </div>
         {{end}}
     </div>
