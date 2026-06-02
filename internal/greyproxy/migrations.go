@@ -239,6 +239,12 @@ var migrations = []string{
 	// returned by the middleware in its hello response. NULL for middlewares
 	// that did not declare a name; the UI falls back to middleware_url.
 	`ALTER TABLE middleware_events ADD COLUMN middleware_name TEXT;`,
+
+	// Migration 15: Index http_transactions.container_name to speed up the
+	// container filter on the pending page. Without it, the DISTINCT
+	// container_name lookup full-scans http_transactions (BLOB-heavy), which
+	// made GET /pending take ~30s on large databases.
+	`CREATE INDEX IF NOT EXISTS idx_http_transactions_container ON http_transactions(container_name);`,
 }
 
 func runMigrations(db *sql.DB) error {
