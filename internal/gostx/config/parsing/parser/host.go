@@ -75,6 +75,31 @@ func walkAddresses(cfg *config.Config, host string) {
 	}
 }
 
+// DashboardHost returns the host to use when building the dashboard
+// click-to-open URL for a listener bound to addr. Loopback and unspecified
+// binds (0.0.0.0 / ::) are reachable from localhost, so the stable
+// "localhost" name is preferred over the concrete listen IP; only an
+// explicit non-loopback bind forces the URL onto that remote address.
+// Non-loopback IPv6 addresses are returned bracketed so the caller can
+// embed the result directly in a URL.
+func DashboardHost(addr string) string {
+	if addr == "" {
+		return "localhost"
+	}
+	h, _, err := net.SplitHostPort(addr)
+	if err != nil || h == "" {
+		return "localhost"
+	}
+	ip := net.ParseIP(h)
+	if ip == nil || ip.IsLoopback() || ip.IsUnspecified() {
+		return "localhost"
+	}
+	if ip.To4() == nil {
+		return "[" + h + "]"
+	}
+	return h
+}
+
 // IsUnspecifiedBind returns true when addr binds to all interfaces
 // (0.0.0.0 / ::), so callers can warn the operator at startup.
 func IsUnspecifiedBind(addr string) bool {
