@@ -192,6 +192,30 @@ services:
 	}
 }
 
+func TestDashboardHost(t *testing.T) {
+	tests := []struct {
+		name string
+		addr string
+		want string
+	}{
+		{"loopback ipv4", "127.0.0.1:43080", "localhost"},
+		{"unnamed bare port", ":43080", "localhost"},
+		{"unspecified ipv4", "0.0.0.0:43080", "localhost"},
+		{"unspecified ipv6", "[::]:43080", "localhost"},
+		{"loopback ipv6", "[::1]:43080", "localhost"},
+		{"explicit lan ipv4", "100.64.0.1:43080", "100.64.0.1"},
+		{"explicit lan ipv6 bracketed", "[2001:db8::1]:43080", "[2001:db8::1]"},
+		{"empty addr", "", "localhost"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := DashboardHost(tc.addr); got != tc.want {
+				t.Errorf("DashboardHost(%q) = %q, want %q", tc.addr, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestParseHostFlag(t *testing.T) {
 	tests := []struct {
 		name    string

@@ -448,8 +448,14 @@ func (p *program) buildGreyproxyService() error {
 		log.Warnf("failed to load user settings: %v", err)
 	}
 
-	// Build dashboard URL for notification click-to-open.
-	dashboardURL := "http://localhost" + gaCfg.Addr + strings.TrimRight(gaCfg.PathPrefix, "/") + "/pending"
+	// Build dashboard URL for notification click-to-open. See DashboardHost in
+	// the parser package for why the URL host follows the resolved bind.
+	_, port, err := net.SplitHostPort(gaCfg.Addr)
+	if err != nil {
+		port = "43080"
+	}
+	dashboardURL := fmt.Sprintf("http://%s:%s%s/pending",
+		parser.DashboardHost(gaCfg.Addr), port, strings.TrimRight(gaCfg.PathPrefix, "/"))
 	resolvedSettings := shared.Settings.Get()
 	shared.Notifier = greyproxy.NewNotifier(shared.Bus, shared.DB, resolvedSettings.NotificationsEnabled, dashboardURL)
 
