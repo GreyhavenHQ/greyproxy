@@ -29,6 +29,7 @@ type mitmSettingsResp struct {
 
 type notificationSettingsResp struct {
 	Enabled         bool   `json:"enabled"`
+	BrowserEnabled  bool   `json:"browserEnabled"`
 	Available       bool   `json:"available"`
 	Backend         string `json:"backend"`
 	InstallHint     string `json:"installHint,omitempty"`
@@ -63,6 +64,7 @@ func buildSettingsResponse(s *Shared) settingsResponse {
 		Conversations:   conversationsSettingsResp{Enabled: resolved.ConversationsEnabled},
 		Notifications: notificationSettingsResp{
 			Enabled:         resolved.NotificationsEnabled,
+			BrowserEnabled:  resolved.BrowserNotificationsEnabled,
 			Available:       info.Available,
 			Backend:         info.Backend,
 			InstallHint:     info.InstallHint,
@@ -84,7 +86,8 @@ func SettingsUpdateHandler(s *Shared) gin.HandlerFunc {
 		var body struct {
 			Theme         *string `json:"theme"`
 			Notifications *struct {
-				Enabled *bool `json:"enabled"`
+				Enabled        *bool `json:"enabled"`
+				BrowserEnabled *bool `json:"browserEnabled"`
 			} `json:"notifications"`
 			Mitm *struct {
 				Enabled *bool `json:"enabled"`
@@ -110,6 +113,9 @@ func SettingsUpdateHandler(s *Shared) gin.HandlerFunc {
 		}
 		if body.Notifications != nil && body.Notifications.Enabled != nil {
 			patch.NotificationsEnabled = body.Notifications.Enabled
+		}
+		if body.Notifications != nil && body.Notifications.BrowserEnabled != nil {
+			patch.BrowserNotificationsEnabled = body.Notifications.BrowserEnabled
 		}
 		if body.Mitm != nil && body.Mitm.Enabled != nil {
 			patch.MitmEnabled = body.Mitm.Enabled

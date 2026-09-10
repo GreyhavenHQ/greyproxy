@@ -288,6 +288,35 @@ func handleClientCommands(client *wsClient, s *Shared, log logger.Logger) {
 				"timestamp":     time.Now().UTC().Format(time.RFC3339),
 			})
 
+		case "release_notifications":
+			if !client.notifClaimed {
+				_ = client.send(gin.H{
+					"type":      "error",
+					"error":     "notifications not claimed by this connection",
+					"timestamp": time.Now().UTC().Format(time.RFC3339),
+				})
+				continue
+			}
+			if s.Notifier == nil {
+				_ = client.send(gin.H{
+					"type":      "error",
+					"error":     "notifier not available",
+					"timestamp": time.Now().UTC().Format(time.RFC3339),
+				})
+				continue
+			}
+			client.notifClaimed = false
+			count := s.Notifier.ReleaseNotifications()
+			s.Bus.Publish(greyproxy.Event{
+				Type: greyproxy.EventNotificationClaimsChanged,
+				Data: map[string]any{"active_claims": count},
+			})
+			_ = client.send(gin.H{
+				"type":          "notification_released",
+				"active_claims": count,
+				"timestamp":     time.Now().UTC().Format(time.RFC3339),
+			})
+
 		default:
 			_ = client.send(gin.H{
 				"type":      "error",

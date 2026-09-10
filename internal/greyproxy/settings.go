@@ -10,20 +10,22 @@ import (
 // UserSettings stores user-overridden settings. Only non-nil fields
 // have been explicitly set by the user and will be persisted to disk.
 type UserSettings struct {
-	Theme                *string  `json:"theme,omitempty"`
-	NotificationsEnabled *bool    `json:"notificationsEnabled,omitempty"`
-	MitmEnabled          *bool    `json:"mitmEnabled,omitempty"`
-	ConversationsEnabled *bool    `json:"conversationsEnabled,omitempty"`
-	RedactedHeaders      []string `json:"redactedHeaders,omitempty"`
+	Theme                       *string  `json:"theme,omitempty"`
+	NotificationsEnabled        *bool    `json:"notificationsEnabled,omitempty"`
+	BrowserNotificationsEnabled *bool    `json:"browserNotificationsEnabled,omitempty"`
+	MitmEnabled                 *bool    `json:"mitmEnabled,omitempty"`
+	ConversationsEnabled        *bool    `json:"conversationsEnabled,omitempty"`
+	RedactedHeaders             []string `json:"redactedHeaders,omitempty"`
 }
 
 // ResolvedSettings is the fully resolved settings with defaults applied.
 type ResolvedSettings struct {
-	Theme                string   `json:"theme"`
-	NotificationsEnabled bool     `json:"notificationsEnabled"`
-	MitmEnabled          bool     `json:"mitmEnabled"`
-	ConversationsEnabled bool     `json:"conversationsEnabled"`
-	RedactedHeaders      []string `json:"redactedHeaders"`
+	Theme                       string   `json:"theme"`
+	NotificationsEnabled        bool     `json:"notificationsEnabled"`
+	BrowserNotificationsEnabled bool     `json:"browserNotificationsEnabled"`
+	MitmEnabled                 bool     `json:"mitmEnabled"`
+	ConversationsEnabled        bool     `json:"conversationsEnabled"`
+	RedactedHeaders             []string `json:"redactedHeaders"`
 }
 
 // SettingsManager handles loading and saving user settings, merging
@@ -102,17 +104,21 @@ func (m *SettingsManager) Get() ResolvedSettings {
 
 func (m *SettingsManager) resolve() ResolvedSettings {
 	s := ResolvedSettings{
-		Theme:                "system",
-		NotificationsEnabled: m.defaultNotificationsEnabled,
-		MitmEnabled:          true, // MITM enabled by default
-		ConversationsEnabled: true, // Conversation tracking enabled by default
-		RedactedHeaders:      DefaultRedactedHeaders,
+		Theme:                       "system",
+		NotificationsEnabled:        m.defaultNotificationsEnabled,
+		BrowserNotificationsEnabled: false,
+		MitmEnabled:                 true, // MITM enabled by default
+		ConversationsEnabled:        true, // Conversation tracking enabled by default
+		RedactedHeaders:             DefaultRedactedHeaders,
 	}
 	if m.user.Theme != nil {
 		s.Theme = *m.user.Theme
 	}
 	if m.user.NotificationsEnabled != nil {
 		s.NotificationsEnabled = *m.user.NotificationsEnabled
+	}
+	if m.user.BrowserNotificationsEnabled != nil {
+		s.BrowserNotificationsEnabled = *m.user.BrowserNotificationsEnabled
 	}
 	if m.user.MitmEnabled != nil {
 		s.MitmEnabled = *m.user.MitmEnabled
@@ -149,6 +155,10 @@ func (m *SettingsManager) Update(patch UserSettings) (ResolvedSettings, error) {
 		old := m.resolve().NotificationsEnabled
 		m.user.NotificationsEnabled = patch.NotificationsEnabled
 		notifChanged = old != *patch.NotificationsEnabled
+	}
+
+	if patch.BrowserNotificationsEnabled != nil {
+		m.user.BrowserNotificationsEnabled = patch.BrowserNotificationsEnabled
 	}
 
 	var mitmChanged bool
@@ -190,7 +200,7 @@ func (m *SettingsManager) Update(patch UserSettings) (ResolvedSettings, error) {
 }
 
 func (m *SettingsManager) save() error {
-	if m.user.Theme == nil && m.user.NotificationsEnabled == nil && m.user.MitmEnabled == nil && m.user.ConversationsEnabled == nil && m.user.RedactedHeaders == nil {
+	if m.user.Theme == nil && m.user.NotificationsEnabled == nil && m.user.BrowserNotificationsEnabled == nil && m.user.MitmEnabled == nil && m.user.ConversationsEnabled == nil && m.user.RedactedHeaders == nil {
 		return nil
 	}
 

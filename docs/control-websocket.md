@@ -102,6 +102,22 @@ Every change to the claim count is broadcast to all connected clients:
 
 The current claim count is also visible via REST at `GET /api/notifications`.
 
+### `release_notifications`
+
+Release a notification claim held by this connection, without closing the WebSocket. This is the inverse of `claim_notifications` and lets a companion app stop handling notifications while staying connected.
+
+```json
+{"command": "release_notifications"}
+```
+
+Response:
+
+```json
+{"type": "notification_released", "active_claims": 0, "timestamp": "..."}
+```
+
+Releasing when this connection holds no claim returns an error.
+
 ## Events
 
 Events flow from server to client and carry a `type` plus a `data` field. The table below lists the events a companion app is likely to care about.

@@ -346,6 +346,7 @@
                 ws.onopen = function() {
                     reconnectDelay = 1000;
                     fetchPendingCount();
+                    window.dispatchEvent(new CustomEvent('proxy:ws-open'));
                 };
 
                 ws.onmessage = function(event) {
@@ -381,8 +382,211 @@
                 ws.onerror = function() { ws.close(); };
             }
 
+            // Send a JSON command over the active WebSocket connection.
+            // Used by the browser-notification manager to claim/release
+            // notification handling.
+            window.__greyproxySend = function(obj) {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify(obj));
+                }
+            };
+
             fetchPendingCount();
             connect();
+        })();
+    </script>
+
+    <script>
+        // Browser-native notifications. When enabled, the dashboard claims
+        // notification handling over the control WebSocket (suppressing OS
+        // desktop notifications) and shows browser notifications for new
+        // pending requests. This works even when greyproxy runs in a
+        // container where notify-send / terminal-notifier are unavailable.
+        (function() {
+            var prefix = '{{.Prefix}}';
+            var browserNotifEnabled = false;
+            var browserNotifClaimed = false;
+
+            // Client-side cooldown mirroring the server notifier's
+            // notifyCooldown. A single pending request emits both
+            // pending_request.created and waiters.changed (previous_count 0),
+            // so we dedupe them against the same key.
+            var notifyCooldown = 30 * 1000;
+            var lastNotified = {};
+
+            function notificationsSupported() {
+                return typeof window.Notification !== 'undefined';
+            }
+
+            function permissionGranted() {
+                return notificationsSupported() && window.Notification.permission === 'granted';
+            }
+
+            function sendClaim() {
+                if (window.__greyproxySend) {
+                    browserNotifClaimed = true;
+                    window.__greyproxySend({ command: 'claim_notifications' });
+                }
+            }
+
+            function sendRelease() {
+                if (window.__greyproxySend && browserNotifClaimed) {
+                    browserNotifClaimed = false;
+                    window.__greyproxySend({ command: 'release_notifications' });
+                }
+            }
+
+            function claimIfNeeded() {
+                if (browserNotifEnabled && permissionGranted() && !browserNotifClaimed) {
+                    sendClaim();
+                }
+            }
+
+            function applyEnabled(enabled) {
+                browserNotifEnabled = enabled;
+                if (enabled) {
+                    claimIfNeeded();
+                } else {
+                    sendRelease();
+                }
+                window.dispatchEvent(new CustomEvent('proxy:browser-notifications-changed', { detail: { enabled: enabled } }));
+            }
+
+            function persist(enabled) {
+                fetch(prefix + '/api/settings', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ notifications: { browserEnabled: enabled } })
+                }).then(function(r) { return r.json(); }).then(function() {
+                    applyEnabled(enabled);
+                }).catch(function() {
+                    showToast('Failed to save browser notifications setting', 'error');
+                });
+            }
+
+            // Called by the Settings toggle (a user gesture, so permission
+            // can be requested here reliably).
+            window.setBrowserNotificationsEnabled = function(enabled) {
+                if (!enabled) {
+                    persist(false);
+                    return;
+                }
+                if (!notificationsSupported()) {
+                    showToast('Browser notifications are not supported in this browser', 'error');
+                    return;
+                }
+                if (window.Notification.permission === 'granted') {
+                    persist(true);
+                } else if (window.Notification.permission === 'denied') {
+                    showToast('Notification permission is blocked — allow notifications for this site in your browser settings', 'error');
+                } else {
+                    window.Notification.requestPermission().then(function(perm) {
+                        if (perm === 'granted') {
+                            persist(true);
+                        } else {
+                            showToast('Notification permission denied', 'error');
+                        }
+                    });
+                }
+            };
+
+            // Build a stable cooldown key. Matches the server notifier's
+            // pendingKey (container|host|port) using the raw destination host,
+            // so pending_request.created and waiters.changed for the same
+            // connection dedupe against each other.
+            function pendingKey(container, host, port) {
+                return (container || '') + '|' + (host || '') + '|' + port;
+            }
+
+            function withinCooldown(key) {
+                var last = lastNotified[key];
+                return !!last && (Date.now() - last) < notifyCooldown;
+            }
+
+            function recordNotified(key) {
+                lastNotified[key] = Date.now();
+                // Prune stale entries so a long-lived tab doesn't grow the map.
+                var cutoff = Date.now() - (2 * notifyCooldown);
+                Object.keys(lastNotified).forEach(function(k) {
+                    if (lastNotified[k] < cutoff) delete lastNotified[k];
+                });
+            }
+
+            // Show a browser notification for a pending event.
+            function showBrowserNotification(msg) {
+                var data = msg && msg.data ? msg.data : {};
+                var key;
+                var body;
+                var href = null;
+                var tag = null;
+
+                if (msg.type === 'pending_request.created') {
+                    key = pendingKey(data.container_name, data.destination_host, data.destination_port);
+                    if (withinCooldown(key)) return;
+                    var host = data.resolved_hostname || data.destination_host || '';
+                    body = (data.container_name || 'Unknown') + ' wants to connect to ' + host + ':' + (data.destination_port != null ? data.destination_port : '');
+                    href = prefix + '/pending?highlight=' + encodeURIComponent(data.id);
+                    tag = 'greyproxy-pending-' + data.id;
+                } else if (msg.type === 'waiters.changed' && data.previous_count === 0) {
+                    key = pendingKey(data.container_name, data.host, data.port);
+                    if (withinCooldown(key)) return;
+                    body = (data.container_name || 'Unknown') + ' wants to connect to ' + (data.host || '') + ':' + (data.port != null ? data.port : '');
+                    href = prefix + '/pending';
+                    tag = 'greyproxy-pending-' + (data.container_name || '') + '-' + (data.host || '') + '-' + (data.port != null ? data.port : '');
+                } else {
+                    return;
+                }
+
+                recordNotified(key);
+
+                var notif;
+                try {
+                    notif = new window.Notification('GreyProxy', {
+                        body: body,
+                        tag: tag,
+                        requireInteraction: true
+                    });
+                } catch (err) {
+                    // Some browsers reject requireInteraction without a
+                    // service worker; fall back to a plain notification.
+                    notif = new window.Notification('GreyProxy', { body: body, tag: tag });
+                }
+
+                if (href) {
+                    notif.onclick = function() {
+                        window.focus();
+                        window.location.href = href;
+                        notif.close();
+                    };
+                }
+            }
+
+            window.addEventListener('proxy:pending-event', function(e) {
+                if (!browserNotifEnabled || !permissionGranted()) return;
+                showBrowserNotification(e.detail);
+            });
+
+            // Re-claim after a WebSocket (re)connect.
+            window.addEventListener('proxy:ws-open', function() {
+                browserNotifClaimed = false;
+                claimIfNeeded();
+            });
+
+            // On unload the WebSocket closes and the claim is auto-released
+            // by the server, so no explicit release is required here.
+
+            // Initialize from persisted settings.
+            fetch(prefix + '/api/settings')
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    var enabled = !!(data.notifications && data.notifications.browserEnabled);
+                    browserNotifEnabled = enabled;
+                    if (enabled && permissionGranted()) {
+                        claimIfNeeded();
+                    }
+                    window.dispatchEvent(new CustomEvent('proxy:browser-notifications-changed', { detail: { enabled: enabled } }));
+                })
+                .catch(function() {});
         })();
     </script>
 

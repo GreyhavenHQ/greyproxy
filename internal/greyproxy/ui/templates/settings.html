@@ -106,6 +106,23 @@
                     </div>
                 </div>
             </div>
+
+            <!-- Browser notifications -->
+            <div class="mt-6 pt-6 border-t border-border">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="font-medium">Browser Notifications</p>
+                        <p class="text-sm text-muted-foreground">Show notifications in this browser when requests are pending</p>
+                    </div>
+                    <button id="browser-notif-toggle-btn" type="button" onclick="toggleBrowserNotifSetting()"
+                        class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-background cursor-pointer bg-muted"
+                        role="switch" aria-checked="false">
+                        <span id="browser-notif-toggle-dot"
+                            class="inline-block h-4 w-4 transform rounded-full bg-white transition-transform translate-x-1"></span>
+                    </button>
+                </div>
+                <div id="browser-notif-status" class="mt-3 text-sm"></div>
+            </div>
         </div>
     </div>
 
@@ -673,6 +690,70 @@
         })
         .catch(function() {});
     };
+
+    // --- Browser Notifications ---
+    var browserNotifEnabled = false;
+    var browserNotifSupported = typeof window.Notification !== 'undefined';
+
+    function updateBrowserNotifToggle(enabled) {
+        browserNotifEnabled = enabled;
+        var btn = document.getElementById('browser-notif-toggle-btn');
+        var dot = document.getElementById('browser-notif-toggle-dot');
+
+        if (!browserNotifSupported) {
+            btn.disabled = true;
+            btn.classList.add('opacity-50', 'cursor-not-allowed');
+            btn.classList.remove('cursor-pointer', 'bg-primary');
+            btn.classList.add('bg-muted');
+            dot.classList.remove('translate-x-5');
+            dot.classList.add('translate-x-1');
+            btn.setAttribute('aria-checked', 'false');
+        } else {
+            btn.disabled = false;
+            btn.classList.remove('opacity-50', 'cursor-not-allowed');
+            btn.classList.add('cursor-pointer');
+            btn.setAttribute('aria-checked', String(enabled));
+            if (enabled) {
+                btn.classList.add('bg-primary');
+                btn.classList.remove('bg-muted');
+                dot.classList.add('translate-x-5');
+                dot.classList.remove('translate-x-1');
+            } else {
+                btn.classList.remove('bg-primary');
+                btn.classList.add('bg-muted');
+                dot.classList.remove('translate-x-5');
+                dot.classList.add('translate-x-1');
+            }
+        }
+        updateBrowserNotifStatus(enabled);
+    }
+
+    function updateBrowserNotifStatus(enabled) {
+        var statusEl = document.getElementById('browser-notif-status');
+        if (!browserNotifSupported) {
+            statusEl.innerHTML = '<span class="text-muted-foreground">Browser notifications are not supported in this browser.</span>';
+            return;
+        }
+        var perm = window.Notification.permission;
+        if (perm === 'denied') {
+            statusEl.innerHTML = '<span class="text-yellow-600 dark:text-yellow-500">Notification permission is blocked. Allow notifications for this site in your browser settings, then enable the toggle again.</span>';
+        } else if (enabled && perm === 'granted') {
+            statusEl.innerHTML = '<span class="text-[var(--color-green)]">Enabled &middot; notifications will appear while this dashboard is open.</span>';
+        } else if (enabled && perm === 'default') {
+            statusEl.innerHTML = '<span class="text-muted-foreground">Permission needed &middot; toggle again to grant notification permission.</span>';
+        } else {
+            statusEl.innerHTML = '<span class="text-muted-foreground">Disabled. When enabled, this dashboard handles notifications itself and shows alerts in your browser.</span>';
+        }
+    }
+
+    window.toggleBrowserNotifSetting = function() {
+        if (!browserNotifSupported) return;
+        window.setBrowserNotificationsEnabled(!browserNotifEnabled);
+    };
+
+    window.addEventListener('proxy:browser-notifications-changed', function(e) {
+        updateBrowserNotifToggle(!!(e.detail && e.detail.enabled));
+    });
 
     // --- Advanced / Maintenance ---
     window.redactHeaders = function() {
@@ -1431,6 +1512,7 @@
             updateThemeButtons(data.theme);
             updateNotifToggle(data.notifications.enabled, data.notifications.available);
             updateNotifStatus(data.notifications);
+            updateBrowserNotifToggle(data.notifications.browserEnabled);
             updateMitmToggle(data.mitm.enabled);
             updateConvToggle(data.conversations.enabled);
         })

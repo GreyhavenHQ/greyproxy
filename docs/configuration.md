@@ -162,6 +162,7 @@ Some settings are not part of the YAML file and are managed at runtime from the 
 |---------|-------------|
 | `theme` | UI theme for the dashboard. |
 | `notificationsEnabled` | Overrides `greyproxy.notifications.enabled`. |
+| `browserNotificationsEnabled` | Whether the dashboard shows browser-native notifications for pending requests. When enabled, the dashboard claims notification handling over the control WebSocket (suppressing OS desktop notifications) and shows alerts in the browser — useful when greyproxy runs in a container where `notify-send` / `terminal-notifier` are unavailable. |
 | `mitmEnabled` | Whether HTTPS interception is active. |
 | `conversationsEnabled` | Whether the LLM conversation assembler is running. |
 | `redactedHeaders` | Extra header patterns to redact in stored transactions. See [Header Redaction](./header-redaction). |
