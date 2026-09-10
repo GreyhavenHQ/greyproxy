@@ -154,7 +154,9 @@ GET /api/settings
 PUT /api/settings
 ```
 
-Accepts partial updates. Recognized fields include `theme`, `notificationsEnabled`, `mitmEnabled`, `conversationsEnabled`, and `redactedHeaders`. See [Configuration](./configuration) for details.
+Accepts partial updates. Recognized fields include `theme`, `notificationsEnabled`, `browserNotificationsEnabled`, `mitmEnabled`, `conversationsEnabled`, and `redactedHeaders`. See [Configuration](./configuration) for details.
+
+Browser notifications can also be toggled via the nested `notifications.browserEnabled` field, e.g. `PUT /api/settings` with `{"notifications": {"browserEnabled": true}}`. When enabled, the dashboard claims notification handling over the control WebSocket and shows browser-native notifications for pending requests — useful when greyproxy runs in a container where `notify-send` / `terminal-notifier` are unavailable.
 
 ## Certificate Management
 
